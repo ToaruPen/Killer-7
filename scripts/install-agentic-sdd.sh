@@ -166,6 +166,8 @@ should_exclude_rel() {
     shift
     local pat
     for pat in "$@"; do
+        # shellcheck disable=SC2053
+        # We intentionally allow glob matching for exclude patterns.
         if [[ "$rel" == $pat ]]; then
             return 0
         fi

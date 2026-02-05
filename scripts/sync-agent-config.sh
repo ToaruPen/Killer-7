@@ -440,7 +440,7 @@ confirm_sync() {
         esac
     done
     echo ""
-    read -p "続行しますか？ (y/N): " response
+    read -r -p "続行しますか？ (y/N): " response
     case "$response" in
         [yY][eE][sS]|[yY])
             return 0
