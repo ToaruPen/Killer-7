@@ -18,6 +18,27 @@ Killer-7は、GitHub PRを入力として、複数観点のLLMレビューを自
 - 実装はGitHub Issuesで進行します（EpicのIssue分割に準拠）
 - 次に進めるコマンド: `/estimation` → `/impl` または `/tdd`
 
+## 成果物
+
+- 出力先: `./.ai-review/`
+- 最低限の実行メタ: `./.ai-review/run.json`
+
+## 終了コード
+
+- 0: 成功
+- 1: Blocked（前提条件不足。ユーザー対応が必要）
+- 2: 実行失敗（入力不正/実行時エラー）
+
+## Docker（開発中の最小動作）
+
+```bash
+docker build -t killer-7 .
+
+# カレントに成果物を出す（所有権を合わせたい場合は -u を付ける）
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/work -w /work killer-7 \
+  review --repo owner/name --pr 123
+```
+
 ## 想定する使い方（v1）
 
 Killer-7は開発PCとは別PCでも運用でき、GitHub上のPRを入力にレビューを実行します。

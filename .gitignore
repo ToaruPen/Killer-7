@@ -5,3 +5,6 @@
 .venv/
 .opencode/
 .codex/
+
+# Killer-7 artifacts
+.ai-review/
