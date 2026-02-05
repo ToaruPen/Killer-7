@@ -1,0 +1,7 @@
+# Agentic-SDD
+.agent/agents/*.local.md
+.claude/settings.local.json
+.agentic-sdd/
+.venv/
+.opencode/
+.codex/

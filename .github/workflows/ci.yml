@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements-agentic-sdd.txt
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: |
+          shellcheck scripts/*.sh scripts/agentic-sdd
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-agentic-sdd.txt
+          python -m pip install ruff bandit
+
+      - name: pip check
+        run: |
+          python -m pip check
+
+      - name: Python compile check
+        run: |
+          python -m compileall -q scripts
+
+      - name: ruff (scripts)
+        run: |
+          ruff check scripts
+          ruff format --check scripts
+
+      - name: ruff (app code only)
+        run: |
+          if [ -d killer_7 ]; then
+            ruff check killer_7
+            ruff format --check killer_7
+          else
+            echo "skip: killer_7/ not found"
+          fi
+
+      - name: Epic config extraction
+        run: |
+          python scripts/extract-epic-config.py docs/epics/killer-7-epic.md --pretty > /tmp/killer-7-epic-config.json
+
+      - name: Project config dry-run
+        run: |
+          python scripts/generate-project-config.py docs/epics/killer-7-epic.md --dry-run
+
+      - name: bandit (app code only)
+        run: |
+          if [ -d killer_7 ]; then
+            bandit -r killer_7 -ll
+          else
+            echo "skip: killer_7/ not found"
+          fi
