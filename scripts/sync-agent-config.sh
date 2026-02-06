@@ -319,7 +319,7 @@ EOF
 ---
 description: Reviews PRs/issues with Agentic-SDD DoD and sync-docs
 mode: subagent
-model: openai/gpt-5.2-codex
+model: openai/gpt-5.3-codex
 reasoningEffort: high
 temperature: 0.1
 tools:
