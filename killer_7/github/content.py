@@ -40,7 +40,9 @@ class TextFilesResult:
 class GitHubContentFetcher:
     """Fetch repo file contents for a given ref with allowlist support."""
 
-    def __init__(self, *, gh: GhClient | None = None, max_bytes: int = DEFAULT_MAX_BYTES):
+    def __init__(
+        self, *, gh: GhClient | None = None, max_bytes: int = DEFAULT_MAX_BYTES
+    ):
         self._gh = gh or GhClient.from_env()
         self._max_bytes = int(max_bytes)
         if self._max_bytes < 1:
@@ -67,7 +69,9 @@ class GitHubContentFetcher:
             warnings.extend(r.warnings)
             if r.text is not None:
                 contents_by_path[normalize_repo_relative_path(p)] = r.text
-        return TextFilesResult(contents_by_path=contents_by_path, warnings=tuple(warnings))
+        return TextFilesResult(
+            contents_by_path=contents_by_path, warnings=tuple(warnings)
+        )
 
     def fetch_text_file(self, *, repo: str, ref: str, path: str) -> FileContentResult:
         p = normalize_repo_relative_path(path)
