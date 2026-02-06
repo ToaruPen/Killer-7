@@ -65,7 +65,22 @@ class GitHubContentFetcher:
         contents_by_path: dict[str, str] = {}
         warnings: list[ContentWarning] = []
         for p in paths:
-            r = self.fetch_text_file(repo=repo, ref=ref, path=p)
+            try:
+                r = self.fetch_text_file(repo=repo, ref=ref, path=p)
+            except ExecFailureError as exc:
+                # Keep collecting other SoT files even if one path fails unexpectedly.
+                # This matches AC3: skip failures and record warnings.
+                normalized = normalize_repo_relative_path(p)
+                safe_path = normalized or (p or "").strip()
+                warnings.append(
+                    ContentWarning(
+                        kind="fetch_failed",
+                        path=safe_path,
+                        message=str(exc),
+                    )
+                )
+                continue
+
             warnings.extend(r.warnings)
             if r.text is not None:
                 contents_by_path[normalize_repo_relative_path(p)] = r.text
@@ -108,7 +123,22 @@ class GitHubContentFetcher:
             self._content_cache[key] = res
             return res
 
-        data = self._gh.repo_contents(repo=repo, path=p, ref=ref)
+        try:
+            data = self._gh.repo_contents(repo=repo, path=p, ref=ref)
+        except ExecFailureError as exc:
+            # Contents fetch failures should not crash SoT collection; record and skip.
+            res = FileContentResult(
+                text=None,
+                warnings=(
+                    ContentWarning(
+                        kind="fetch_failed",
+                        path=p,
+                        message=str(exc),
+                    ),
+                ),
+            )
+            self._content_cache[key] = res
+            return res
         warnings: list[ContentWarning] = []
 
         item_type = (data.get("type") or "").strip()

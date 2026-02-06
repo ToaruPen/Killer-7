@@ -60,6 +60,15 @@ if args[:1] == ["api"]:
             sys.stdout.write(json.dumps(files))
         raise SystemExit(0)
 
+    # SoT collection (Issue #4) calls commit/tree endpoints.
+    if "/commits/" in endpoint:
+        sys.stdout.write(json.dumps({"commit": {"tree": {"sha": "TREE123"}}}))
+        raise SystemExit(0)
+
+    if "/git/trees/" in endpoint:
+        sys.stdout.write(json.dumps({"truncated": False, "tree": []}))
+        raise SystemExit(0)
+
 sys.stderr.write("fake gh: unsupported args: " + " ".join(args) + "\\n")
 raise SystemExit(2)
 """,

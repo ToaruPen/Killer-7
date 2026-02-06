@@ -11,9 +11,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from .artifacts import write_pr_input_artifacts
+from .artifacts import (
+    write_allowlist_paths_json,
+    write_content_warnings_json,
+    write_pr_input_artifacts,
+    write_sot_md,
+    write_warnings_txt,
+)
 from .errors import BlockedError, ExecFailureError, ExitCode
+from .github.content import ContentWarning, GitHubContentFetcher
 from .github.pr_input import fetch_pr_input
+from .sot.allowlist import default_sot_allowlist
+from .sot.collect import build_sot_markdown
 
 
 def now_utc_z() -> str:
@@ -97,6 +106,81 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = ensure_artifacts_dir(os.getcwd())
     pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
     artifacts = write_pr_input_artifacts(out_dir, pr_input)
+
+    # Collect SoT from PR branch (ref=head sha) using allowlist.
+    allowlist = default_sot_allowlist()
+    fetcher = GitHubContentFetcher()
+
+    sot_paths: list[str] = []
+    content_warning_objs: list[ContentWarning] = []
+
+    try:
+        sot_paths = fetcher.resolve_allowlist_paths(
+            repo=args.repo, ref=pr_input.head_sha, allowlist=allowlist
+        )
+    except ExecFailureError as exc:
+        # Allow the overall command to succeed even if SoT collection fails.
+        # This matches AC3's intent: record a warning and continue.
+        content_warning_objs.append(
+            ContentWarning(
+                kind="allowlist_resolve_failed",
+                path="",
+                message=str(exc),
+            )
+        )
+        sot_paths = []
+
+    allowlist_paths_json = write_allowlist_paths_json(out_dir, sot_paths)
+
+    contents_by_path: dict[str, str] = {}
+    try:
+        fetched = fetcher.fetch_text_files(
+            repo=args.repo, ref=pr_input.head_sha, paths=sot_paths
+        )
+        contents_by_path = dict(fetched.contents_by_path)
+        content_warning_objs.extend(list(fetched.warnings))
+    except ExecFailureError as exc:
+        content_warning_objs.append(
+            ContentWarning(
+                kind="fetch_text_files_failed",
+                path="",
+                message=str(exc),
+            )
+        )
+        contents_by_path = {}
+
+    content_warnings_payload: list[object] = list(content_warning_objs)
+    content_warnings_json = write_content_warnings_json(
+        out_dir, content_warnings_payload
+    )
+
+    sot_md, sot_warnings = build_sot_markdown(contents_by_path, max_lines=250)
+    sot_md_path = write_sot_md(out_dir, sot_md)
+
+    def one_line(value: object) -> str:
+        s = "" if value is None else str(value)
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        s = s.replace("\n", "\\n")
+        s = s.replace("\t", "\\t")
+        return s
+
+    warning_lines: list[str] = []
+    warning_lines.extend(sot_warnings)
+    for w in content_warning_objs:
+        extra: list[str] = []
+        if w.size_bytes is not None:
+            extra.append(f"size_bytes={w.size_bytes}")
+        if w.limit_bytes is not None:
+            extra.append(f"limit_bytes={w.limit_bytes}")
+        tail = (" " + " ".join(extra)) if extra else ""
+
+        warning_lines.append(
+            "content_warning"
+            f" kind={one_line(w.kind)}"
+            f" path={one_line(w.path)}"
+            f" message={one_line(w.message)}{tail}"
+        )
+    warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
     return {
         "action": "review",
         "repo": args.repo,
@@ -108,6 +192,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 artifacts["changed_files_tsv"], os.getcwd()
             ),
             "meta_json": os.path.relpath(artifacts["meta_json"], os.getcwd()),
+            "allowlist_paths_json": os.path.relpath(allowlist_paths_json, os.getcwd()),
+            "content_warnings_json": os.path.relpath(
+                content_warnings_json, os.getcwd()
+            ),
+            "sot_md": os.path.relpath(sot_md_path, os.getcwd()),
+            "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
         },
     }
 
