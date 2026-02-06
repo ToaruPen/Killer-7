@@ -5,6 +5,7 @@ All artifacts are written under `./.ai-review/`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 from datetime import datetime, timezone
@@ -80,4 +81,60 @@ def write_pr_input_artifacts(out_dir: str, pr_input: PrInput) -> dict[str, str]:
         "diff_patch": write_diff_patch(out_dir, pr_input.diff_patch),
         "changed_files_tsv": write_changed_files_tsv(out_dir, pr_input.changed_files),
         "meta_json": write_meta_json(out_dir, pr_input),
+    }
+
+
+def write_allowlist_paths_json(out_dir: str, paths: list[str]) -> str:
+    path = os.path.join(out_dir, "allowlist-paths.json")
+    stable_paths = sorted(set(paths))
+    payload = {
+        "schema_version": 1,
+        "generated_at": now_utc_z(),
+        "paths": stable_paths,
+    }
+    _atomic_write_json(path, payload)
+    return path
+
+
+def write_content_warnings_json(out_dir: str, warnings: list[object]) -> str:
+    """Write content warnings as JSON.
+
+    The caller can pass either:
+    - ContentWarning dataclasses (from killer_7.github.content)
+    - Mapping objects (e.g. dict) with matching keys
+    """
+
+    path = os.path.join(out_dir, "content-warnings.json")
+
+    items = [_warning_to_json_dict(w) for w in warnings]
+
+    payload = {
+        "schema_version": 1,
+        "generated_at": now_utc_z(),
+        "warnings": items,
+    }
+    _atomic_write_json(path, payload)
+    return path
+
+
+def _warning_to_json_dict(w: object) -> dict[str, object]:
+    if isinstance(w, Mapping):
+        kind = w.get("kind", "")
+        p = w.get("path", "")
+        msg = w.get("message", "")
+        size = w.get("size_bytes", None)
+        limit = w.get("limit_bytes", None)
+    else:
+        kind = getattr(w, "kind", "")
+        p = getattr(w, "path", "")
+        msg = getattr(w, "message", "")
+        size = getattr(w, "size_bytes", None)
+        limit = getattr(w, "limit_bytes", None)
+
+    return {
+        "kind": "" if kind is None else str(kind),
+        "path": "" if p is None else str(p),
+        "message": "" if msg is None else str(msg),
+        "size_bytes": size if isinstance(size, int) else None,
+        "limit_bytes": limit if isinstance(limit, int) else None,
     }

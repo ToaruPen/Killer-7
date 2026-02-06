@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any
 
@@ -108,3 +109,55 @@ class GhClient:
             return [x for x in pages if isinstance(x, dict)]
 
         raise ExecFailureError("Unexpected JSON shape from `gh api`")
+
+    def api_json(self, *, endpoint: str) -> Any:
+        """Call `gh api` and parse JSON output."""
+
+        raw = self._run(["api", endpoint])
+        try:
+            return json.loads(raw or "null")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+
+    def repo_commit_tree_sha(self, *, repo: str, ref: str) -> str:
+        endpoint = f"repos/{repo}/commits/{quote(ref, safe='')}"
+        data = self.api_json(endpoint=endpoint)
+        if not isinstance(data, dict):
+            raise ExecFailureError("Unexpected JSON shape from commit API")
+
+        commit = data.get("commit")
+        if not isinstance(commit, dict):
+            raise ExecFailureError("Missing commit object in commit API output")
+
+        tree = commit.get("tree")
+        if not isinstance(tree, dict):
+            raise ExecFailureError("Missing commit.tree object in commit API output")
+
+        sha = tree.get("sha")
+        tree_sha = (sha or "").strip() if isinstance(sha, str) else ""
+        if not tree_sha:
+            raise ExecFailureError("Missing commit.tree.sha in commit API output")
+        return tree_sha
+
+    def repo_tree_recursive(self, *, repo: str, tree_sha: str) -> list[dict[str, Any]]:
+        endpoint = f"repos/{repo}/git/trees/{quote(tree_sha, safe='')}?recursive=1"
+        data = self.api_json(endpoint=endpoint)
+        if not isinstance(data, dict):
+            raise ExecFailureError("Unexpected JSON shape from tree API")
+        if data.get("truncated") is True:
+            raise ExecFailureError(
+                "Tree API response was truncated; cannot safely resolve allowlist from partial tree"
+            )
+        tree = data.get("tree")
+        if not isinstance(tree, list):
+            raise ExecFailureError("Missing tree list in tree API output")
+        return [x for x in tree if isinstance(x, dict)]
+
+    def repo_contents(self, *, repo: str, path: str, ref: str) -> dict[str, Any]:
+        p = quote(path, safe="/")
+        r = quote(ref, safe="")
+        endpoint = f"repos/{repo}/contents/{p}?ref={r}"
+        data = self.api_json(endpoint=endpoint)
+        if not isinstance(data, dict):
+            raise ExecFailureError("Unexpected JSON shape from contents API")
+        return data
