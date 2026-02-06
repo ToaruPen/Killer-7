@@ -671,7 +671,10 @@ case "$review_engine" in
       "$codex_bin" exec
       --sandbox read-only
       -m "$model"
-      -c "reasoning.effort=\"${effort}\""
+      # Codex CLI expects the reasoning effort under `model_reasoning_effort`
+      # (matches ~/.codex/config.toml). Using a mismatched key silently falls
+      # back to the global default, which makes env overrides appear ignored.
+      -c "model_reasoning_effort=\"${effort}\""
       --output-last-message "$tmp_json"
       --output-schema "$schema_path"
       -

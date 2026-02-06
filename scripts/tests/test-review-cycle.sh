@@ -159,9 +159,21 @@ if [[ ${1:-} != "exec" ]]; then
 fi
 shift
 
+expected_effort="${EXPECTED_MODEL_REASONING_EFFORT:-${REASONING_EFFORT:-}}"
+seen_expected=0
+
 out=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -c|--config)
+      # Ensure review-cycle passes reasoning effort via the correct Codex config key.
+      # If this is wrong/missing, Codex will fall back to ~/.codex/config.toml and
+      # the env override appears ignored.
+      if [[ -n "$expected_effort" && "$2" == "model_reasoning_effort=\"${expected_effort}\"" ]]; then
+        seen_expected=1
+      fi
+      shift 2
+      ;;
     --output-last-message)
       out="$2"
       shift 2
@@ -177,6 +189,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 cat >/dev/null || true
+
+if [[ -n "$expected_effort" && "$seen_expected" -ne 1 ]]; then
+  echo "missing -c model_reasoning_effort=\"${expected_effort}\"" >&2
+  exit 2
+fi
 
 if [[ -z "$out" ]]; then
   echo "missing --output-last-message" >&2
