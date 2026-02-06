@@ -60,7 +60,9 @@ class TestGlob(unittest.TestCase):
         ]
 
         self.assertEqual(filter_paths_by_globs(paths, ["docs/*.md"]), ["docs/a.md"])
-        self.assertEqual(filter_paths_by_globs(paths, ["docs/*/c.md"]), ["docs/sub/c.md"])
+        self.assertEqual(
+            filter_paths_by_globs(paths, ["docs/*/c.md"]), ["docs/sub/c.md"]
+        )
 
     def test_normalize_repo_relative_path_rejects_dot_segments(self) -> None:
         from killer_7.glob import filter_paths_by_globs, normalize_repo_relative_path

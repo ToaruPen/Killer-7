@@ -84,6 +84,19 @@ def write_pr_input_artifacts(out_dir: str, pr_input: PrInput) -> dict[str, str]:
     }
 
 
+def write_sot_md(out_dir: str, content: str) -> str:
+    path = os.path.join(out_dir, "sot.md")
+    _atomic_write_text(path, (content or "").rstrip("\n"))
+    return path
+
+
+def write_warnings_txt(out_dir: str, warnings: list[str]) -> str:
+    path = os.path.join(out_dir, "warnings.txt")
+    lines = [str(x) for x in warnings if str(x).strip()]
+    _atomic_write_text(path, "\n".join(lines))
+    return path
+
+
 def write_allowlist_paths_json(out_dir: str, paths: list[str]) -> str:
     path = os.path.join(out_dir, "allowlist-paths.json")
     stable_paths = sorted(set(paths))

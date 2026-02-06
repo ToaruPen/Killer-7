@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import json
 import os
 import tempfile
 import unittest
@@ -130,6 +128,21 @@ if "/contents/" in endpoint:
         )
         raise SystemExit(0)
 
+    if endpoint.endswith("/contents/docs/bad.txt?ref=deadbeef"):
+        # Invalid base64 -> should be handled as a warning by fetch_text_files.
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": 4,
+                    "path": "docs/bad.txt",
+                    "content": "!!!not_base64!!!",
+                }
+            )
+        )
+        raise SystemExit(0)
+
 sys.stderr.write("fake gh: unsupported endpoint: " + endpoint + "\\n")
 raise SystemExit(2)
 """,
@@ -153,10 +166,18 @@ class TestGitHubContent(unittest.TestCase):
             ref = "deadbeef"
             allowlist = ["docs/**/*.md", "README.md", "docs/big.txt", "docs/empty.txt"]
 
-            paths = fetcher.resolve_allowlist_paths(repo=repo, ref=ref, allowlist=allowlist)
+            paths = fetcher.resolve_allowlist_paths(
+                repo=repo, ref=ref, allowlist=allowlist
+            )
             self.assertEqual(
                 paths,
-                ["README.md", "docs/a.md", "docs/big.txt", "docs/empty.txt", "docs/sub/c.md"],
+                [
+                    "README.md",
+                    "docs/a.md",
+                    "docs/big.txt",
+                    "docs/empty.txt",
+                    "docs/sub/c.md",
+                ],
             )
 
             result = fetcher.fetch_text_files(repo=repo, ref=ref, paths=paths)
@@ -225,6 +246,52 @@ class TestGitHubContent(unittest.TestCase):
 
             labels = counter.read_text(encoding="utf-8").splitlines()
             self.assertEqual(labels.count("contents"), 1)
+
+    def test_fetch_text_file_failure_is_a_warning(self) -> None:
+        """Missing/permission errors should not crash SoT collection."""
+
+        from killer_7.github.content import GitHubContentFetcher
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            gh = GhClient(bin_path=str(fake_gh))
+            fetcher = GitHubContentFetcher(gh=gh, max_bytes=100 * 1024)
+
+            res = fetcher.fetch_text_file(
+                repo="owner/name", ref="deadbeef", path="docs/missing.md"
+            )
+            self.assertIsNone(res.text)
+            self.assertTrue(any(w.kind == "fetch_failed" for w in res.warnings))
+
+    def test_fetch_text_files_continues_when_one_path_raises(self) -> None:
+        from killer_7.github.content import GitHubContentFetcher
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            gh = GhClient(bin_path=str(fake_gh))
+            fetcher = GitHubContentFetcher(gh=gh, max_bytes=100 * 1024)
+
+            result = fetcher.fetch_text_files(
+                repo="owner/name",
+                ref="deadbeef",
+                paths=["README.md", "docs/bad.txt", "docs/a.md"],
+            )
+
+            # Other files are still collected.
+            self.assertEqual(result.contents_by_path["README.md"], "read")
+            self.assertEqual(result.contents_by_path["docs/a.md"], "hello docs")
+            self.assertNotIn("docs/bad.txt", result.contents_by_path)
+
+            self.assertTrue(
+                any(
+                    w.kind == "fetch_failed" and w.path == "docs/bad.txt"
+                    for w in result.warnings
+                )
+            )
 
 
 if __name__ == "__main__":

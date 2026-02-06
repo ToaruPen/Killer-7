@@ -17,13 +17,16 @@ def _write_fake_gh(path: Path) -> None:
 
     path.write_text(
         """#!/usr/bin/env python3
+import base64
 import json
 import sys
 
 args = sys.argv[1:]
 
+
 def has(flag: str) -> bool:
     return flag in args
+
 
 if args[:2] == ["pr", "diff"]:
     # gh pr diff <pr> --repo owner/name --patch
@@ -36,10 +39,12 @@ if args[:2] == ["pr", "diff"]:
     sys.stdout.write("+hello\\n")
     raise SystemExit(0)
 
+
 if args[:2] == ["pr", "view"]:
     # gh pr view <pr> --repo owner/name --json headRefOid
     sys.stdout.write(json.dumps({"headRefOid": "0123456789abcdef"}))
     raise SystemExit(0)
+
 
 if args[:1] == ["api"]:
     # gh api [flags...] <endpoint>
@@ -72,6 +77,57 @@ if args[:1] == ["api"]:
         else:
             sys.stdout.write(json.dumps(files))
         raise SystemExit(0)
+
+    if "/commits/" in endpoint:
+        sys.stdout.write(json.dumps({"commit": {"tree": {"sha": "TREE123"}}}))
+        raise SystemExit(0)
+
+    if "/git/trees/" in endpoint:
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "truncated": False,
+                    "tree": [
+                        {
+                            "path": "docs/prd/killer-7.md",
+                            "type": "blob",
+                            "sha": "B1",
+                            "size": 10,
+                        },
+                        {
+                            "path": "docs/decisions.md",
+                            "type": "blob",
+                            "sha": "B2",
+                            "size": 10,
+                        },
+                    ],
+                }
+            )
+        )
+        raise SystemExit(0)
+
+    if "/contents/" in endpoint:
+        # Provide one large markdown to force SoT truncation.
+        if endpoint.endswith("/contents/docs/prd/killer-7.md?ref=0123456789abcdef"):
+            text = ("line\\n" * 400).encode("utf-8")
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "type": "file",
+                        "encoding": "base64",
+                        "size": len(text),
+                        "path": "docs/prd/killer-7.md",
+                        "content": base64.b64encode(text).decode("ascii"),
+                    }
+                )
+            )
+            raise SystemExit(0)
+
+        # Simulate fetch failure for decisions.md (should become a warning, not a crash).
+        if endpoint.endswith("/contents/docs/decisions.md?ref=0123456789abcdef"):
+            sys.stderr.write("Not Found\\n")
+            raise SystemExit(1)
+
 
 sys.stderr.write("fake gh: unsupported args: " + " ".join(args) + "\\n")
 raise SystemExit(2)
@@ -126,3 +182,28 @@ class TestCli(unittest.TestCase):
             payload = json.loads(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload["exit_code"], 0)
             self.assertEqual(payload["status"], "ok")
+
+    def test_creates_sot_bundle_and_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            sot_md = out_dir / "sot.md"
+            warnings_txt = out_dir / "warnings.txt"
+            self.assertTrue(sot_md.is_file())
+            self.assertTrue(warnings_txt.is_file())
+
+            sot_text = sot_md.read_text(encoding="utf-8")
+            self.assertIn("# SRC: docs/prd/killer-7.md", sot_text)
+            self.assertLessEqual(len(sot_text.splitlines()), 250)
+
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("sot_truncated", warn)
