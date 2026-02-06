@@ -48,6 +48,10 @@ Bug fix Issues require Priority (P0-P4). See `.agent/rules/issue.md` for details
 
 3) PR / merge
 - Create a PR only after /review passes (do not change anything outside the Issue scope)
+  - Before creating a PR, you MUST run the local equivalent of CI and ensure it passes.
+    - Minimum required: `python3 -m unittest`, `python3 -m ruff check`, `python3 -m ruff format --check`
+    - If `.github/workflows/ci.yml` exists, match its steps as closely as possible.
+    - If you cannot run a CI step locally (missing tool/OS constraint), STOP and ask a human.
   - Then run: /create-pr
 ```
 
