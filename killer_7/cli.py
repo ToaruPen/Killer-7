@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from .errors import BlockedError, ExitCode
+from .artifacts import write_pr_input_artifacts
+from .errors import BlockedError, ExecFailureError, ExitCode
+from .github.pr_input import fetch_pr_input
 
 
 def now_utc_z() -> str:
@@ -91,12 +93,22 @@ def write_run_json(out_dir: str, payload: dict[str, Any]) -> None:
 
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
-    # Skeleton implementation: validate args and write artifacts.
+    # Fetch PR input (diff + metadata) and write artifacts.
+    out_dir = ensure_artifacts_dir(os.getcwd())
+    pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+    artifacts = write_pr_input_artifacts(out_dir, pr_input)
     return {
         "action": "review",
         "repo": args.repo,
         "pr": args.pr,
-        "note": "skeleton only (no GitHub/LLM execution in K7-01)",
+        "head_sha": pr_input.head_sha,
+        "artifacts": {
+            "diff_patch": os.path.relpath(artifacts["diff_patch"], os.getcwd()),
+            "changed_files_tsv": os.path.relpath(
+                artifacts["changed_files_tsv"], os.getcwd()
+            ),
+            "meta_json": os.path.relpath(artifacts["meta_json"], os.getcwd()),
+        },
     }
 
 
@@ -130,6 +142,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         exit_code = int(ExitCode.BLOCKED)
         error = {"message": str(exc)}
         print(f"[killer-7] BLOCKED: {exc}", file=sys.stderr)
+    except ExecFailureError as exc:
+        status = "exec_failure"
+        exit_code = int(ExitCode.EXEC_FAILURE)
+        error = {"message": str(exc)}
+        print(f"[killer-7] ERROR: {exc}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         status = "exec_failure"
         exit_code = int(ExitCode.EXEC_FAILURE)

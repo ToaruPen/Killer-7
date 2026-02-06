@@ -22,6 +22,10 @@ Killer-7は、GitHub PRを入力として、複数観点のLLMレビューを自
 
 - 出力先: `./.ai-review/`
 - 最低限の実行メタ: `./.ai-review/run.json`
+- PR入力（K7-02）:
+  - `./.ai-review/diff.patch`
+  - `./.ai-review/changed-files.tsv`
+  - `./.ai-review/meta.json`
 
 ## 終了コード
 
