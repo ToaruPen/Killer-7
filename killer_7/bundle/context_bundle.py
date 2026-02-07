@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from killer_7.bundle.diff_parse import SrcBlock
+from .diff_parse import SrcBlock
 
 
 def _sanitize_kv_value(value: object) -> str:

@@ -14,6 +14,7 @@ from typing import Any, Iterable
 from .artifacts import (
     write_allowlist_paths_json,
     write_content_warnings_json,
+    write_context_bundle_txt,
     write_pr_input_artifacts,
     write_sot_md,
     write_warnings_txt,
@@ -21,6 +22,8 @@ from .artifacts import (
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.pr_input import fetch_pr_input
+from .bundle.context_bundle import build_context_bundle
+from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 
@@ -157,6 +160,24 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     sot_md, sot_warnings = build_sot_markdown(contents_by_path, max_lines=250)
     sot_md_path = write_sot_md(out_dir, sot_md)
 
+    # Build Context Bundle (diff excerpt + SoT bundle) within a 1500-line cap.
+    # We reserve SoT lines first (max 250) and spend the remaining budget on the diff excerpt.
+    sot_lines = len((sot_md or "").splitlines())
+    diff_budget = max(0, 1500 - sot_lines)
+
+    src_blocks, diff_parse_warnings = parse_diff_patch(pr_input.diff_patch)
+    diff_bundle, context_bundle_warnings = build_context_bundle(
+        src_blocks,
+        max_total_lines=diff_budget,
+        max_file_lines=400,
+    )
+
+    # Ensure the SoT bundle starts at a line boundary.
+    diff_part = (diff_bundle or "").rstrip("\n")
+    sot_part = sot_md or ""
+    context_bundle_txt = (diff_part + "\n" + sot_part) if diff_part else sot_part
+    context_bundle_path = write_context_bundle_txt(out_dir, context_bundle_txt)
+
     def one_line(value: object) -> str:
         s = "" if value is None else str(value)
         s = s.replace("\r\n", "\n").replace("\r", "\n")
@@ -165,6 +186,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         return s
 
     warning_lines: list[str] = []
+    warning_lines.extend(diff_parse_warnings)
+    warning_lines.extend(context_bundle_warnings)
     warning_lines.extend(sot_warnings)
     for w in content_warning_objs:
         extra: list[str] = []
@@ -197,6 +220,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 content_warnings_json, os.getcwd()
             ),
             "sot_md": os.path.relpath(sot_md_path, os.getcwd()),
+            "context_bundle_txt": os.path.relpath(context_bundle_path, os.getcwd()),
             "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
         },
     }

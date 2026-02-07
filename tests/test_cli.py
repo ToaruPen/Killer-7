@@ -30,13 +30,36 @@ def has(flag: str) -> bool:
 
 if args[:2] == ["pr", "diff"]:
     # gh pr diff <pr> --repo owner/name --patch
-    sys.stdout.write("diff --git a/hello.txt b/hello.txt\\n")
-    sys.stdout.write("new file mode 100644\\n")
-    sys.stdout.write("index 0000000..1111111\\n")
-    sys.stdout.write("--- /dev/null\\n")
-    sys.stdout.write("+++ b/hello.txt\\n")
-    sys.stdout.write("@@ -0,0 +1 @@\\n")
-    sys.stdout.write("+hello\\n")
+    def emit_new_file(path: str, n_lines: int, *, first_line: str | None = None) -> None:
+        sys.stdout.write(f"diff --git a/{path} b/{path}\\n")
+        sys.stdout.write("new file mode 100644\\n")
+        sys.stdout.write("index 0000000..1111111\\n")
+        sys.stdout.write("--- /dev/null\\n")
+        sys.stdout.write(f"+++ b/{path}\\n")
+        if n_lines == 1:
+            sys.stdout.write("@@ -0,0 +1 @@\\n")
+        else:
+            sys.stdout.write(f"@@ -0,0 +1,{n_lines} @@\\n")
+        for i in range(1, n_lines + 1):
+            if i == 1 and first_line is not None:
+                sys.stdout.write(f"+{first_line}\\n")
+            else:
+                sys.stdout.write(f"+{path}-line-{i}\\n")
+
+    # A small diff that must be included.
+    emit_new_file("hello.txt", 1, first_line="hello")
+
+    # Large blocks to saturate the diff budget and force total truncation.
+    emit_new_file("big1.txt", 399)
+    emit_new_file("big2.txt", 399)
+    emit_new_file("big3.txt", 399)
+    emit_new_file("big4.txt", 399)
+
+    # A later small block that should still be included (skip-and-continue).
+    emit_new_file("tail.txt", 47)
+
+    # A per-file overflow block (should be dropped, but still emit a warning).
+    emit_new_file("huge.txt", 401)
     raise SystemExit(0)
 
 
@@ -198,12 +221,28 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             sot_md = out_dir / "sot.md"
             warnings_txt = out_dir / "warnings.txt"
+            context_bundle = out_dir / "context-bundle.txt"
             self.assertTrue(sot_md.is_file())
             self.assertTrue(warnings_txt.is_file())
+            self.assertTrue(context_bundle.is_file())
 
             sot_text = sot_md.read_text(encoding="utf-8")
             self.assertIn("# SRC: docs/prd/killer-7.md", sot_text)
             self.assertLessEqual(len(sot_text.splitlines()), 250)
 
+            bundle_text = context_bundle.read_text(encoding="utf-8")
+            self.assertIn("# SoT Bundle", bundle_text)
+            self.assertTrue(
+                bundle_text.startswith("# SoT Bundle\n")
+                or "\n# SoT Bundle\n" in bundle_text
+            )
+            self.assertIn("# SRC: docs/prd/killer-7.md", bundle_text)
+            self.assertIn("# SRC: hello.txt", bundle_text)
+            self.assertIn("L1: hello", bundle_text)
+            self.assertIn("# SRC: tail.txt", bundle_text)
+            self.assertLessEqual(len(bundle_text.splitlines()), 1500)
+
             warn = warnings_txt.read_text(encoding="utf-8")
             self.assertIn("sot_truncated", warn)
+            self.assertIn("context_bundle_total_truncated", warn)
+            self.assertIn("context_bundle_file_truncated", warn)
