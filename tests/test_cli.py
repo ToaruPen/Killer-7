@@ -160,16 +160,60 @@ raise SystemExit(2)
     path.chmod(0o755)
 
 
+def _write_fake_opencode(path: Path) -> None:
+    """Write a tiny fake `opencode` binary for tests.
+
+    The real implementation expects JSONL events (one per line) and extracts the last
+    `type=text` event's `part.text` as JSON.
+    """
+
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search("^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def run_cli(
     args: list[str],
     cwd: str,
     *,
     gh_bin: str | None = None,
+    opencode_bin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
     if gh_bin is not None:
         env["KILLER7_GH_BIN"] = gh_bin
+    if opencode_bin is not None:
+        env["KILLER7_OPENCODE_BIN"] = opencode_bin
     return subprocess.run(
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
@@ -191,11 +235,14 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
                 cwd=td,
                 gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
             )
             self.assertEqual(p.returncode, 0)
 
@@ -210,11 +257,14 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
                 cwd=td,
                 gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
@@ -246,3 +296,31 @@ class TestCli(unittest.TestCase):
             self.assertIn("sot_truncated", warn)
             self.assertIn("context_bundle_total_truncated", warn)
             self.assertIn("context_bundle_file_truncated", warn)
+
+    def test_creates_aspect_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review" / "aspects"
+            self.assertTrue((out_dir / "index.json").is_file())
+            for a in [
+                "correctness",
+                "readability",
+                "testing",
+                "test-audit",
+                "security",
+                "performance",
+                "refactoring",
+            ]:
+                self.assertTrue((out_dir / f"{a}.json").is_file())

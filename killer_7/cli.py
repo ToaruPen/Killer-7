@@ -7,9 +7,10 @@ import json
 import os
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, NoReturn
 
 from .artifacts import (
     write_allowlist_paths_json,
@@ -26,6 +27,7 @@ from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
+from .aspects.orchestrate import run_all_aspects
 
 
 def now_utc_z() -> str:
@@ -43,12 +45,12 @@ class ParserExit(Exception):
 
 
 class ThrowingArgumentParser(argparse.ArgumentParser):
-    def exit(self, status: int = 0, message: str | None = None) -> None:  # type: ignore[override]
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:  # type: ignore[override]
         if message:
             self._print_message(message, sys.stderr if status else sys.stdout)
         raise ParserExit(status, message or "")
 
-    def error(self, message: str) -> None:  # type: ignore[override]
+    def error(self, message: str) -> NoReturn:  # type: ignore[override]
         self.print_usage(sys.stderr)
         self._print_message(f"{self.prog}: error: {message}\n", sys.stderr)
         raise ParserExit(2, f"{self.prog}: error: {message}\n")
@@ -204,11 +206,30 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             f" message={one_line(w.message)}{tail}"
         )
     warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
+
+    # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
+    # Keep scope_id deterministic and tied to the PR input.
+    scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
+    aspects_result = run_all_aspects(
+        base_dir=os.getcwd(),
+        scope_id=scope_id,
+        context_bundle=diff_bundle,
+        sot=sot_md,
+        max_llm_calls=8,
+        max_workers=8,
+    )
+
     return {
         "action": "review",
         "repo": args.repo,
         "pr": args.pr,
         "head_sha": pr_input.head_sha,
+        "scope_id": scope_id,
+        "aspects": {
+            "index_path": os.path.relpath(
+                str(aspects_result["index_path"]), os.getcwd()
+            ),
+        },
         "artifacts": {
             "diff_patch": os.path.relpath(artifacts["diff_patch"], os.getcwd()),
             "changed_files_tsv": os.path.relpath(
