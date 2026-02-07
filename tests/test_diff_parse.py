@@ -167,6 +167,18 @@ class TestDiffParse(unittest.TestCase):
             any("kind=no_hunks" in w and "path=newname.txt" in w for w in warnings)
         )
 
+    def test_warns_with_header_when_diff_git_header_is_malformed(self) -> None:
+        from killer_7.bundle.diff_parse import parse_diff_patch
+
+        patch = "diff --git a/only-one-token\n"
+
+        blocks, warnings = parse_diff_patch(patch)
+
+        self.assertEqual(blocks, [])
+        self.assertTrue(
+            any("kind=parse_failed" in w and "header=" in w for w in warnings)
+        )
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
