@@ -22,7 +22,11 @@ class _FakeRunner:
         env: dict[str, str] | None = None,
     ) -> dict[str, object]:
         _ = (out_dir, viewpoint, message, timeout_s, env)
-        return {"viewpoint": viewpoint, "result_path": "<fake>", "payload": self.payload}
+        return {
+            "viewpoint": viewpoint,
+            "result_path": "<fake>",
+            "payload": self.payload,
+        }
 
 
 class TestRunOneAspect(unittest.TestCase):

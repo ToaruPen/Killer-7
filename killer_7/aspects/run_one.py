@@ -63,7 +63,9 @@ def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ExecFailureError(f"Failed to read prompt template: {str(path)!r}") from exc
+        raise ExecFailureError(
+            f"Failed to read prompt template: {str(path)!r}"
+        ) from exc
 
 
 def _render_prompt(
@@ -99,11 +101,12 @@ class ViewpointRunner(Protocol):
         message: str,
         timeout_s: int | None = None,
         env: dict[str, str] | None = None,
-    ) -> dict[str, object]:
-        ...
+    ) -> dict[str, object]: ...
 
 
-def _validate_schema_v3_required_keys(payload: object, *, expected_scope_id: str) -> None:
+def _validate_schema_v3_required_keys(
+    payload: object, *, expected_scope_id: str
+) -> None:
     if not isinstance(payload, dict):
         raise ExecFailureError("Review JSON must be an object")
 
@@ -156,7 +159,9 @@ def _validate_review_json(
     if not isinstance(scope_id, str) or not scope_id:
         errors.append("scope_id must be a non-empty string")
     elif scope_id != expected_scope_id:
-        errors.append(f"scope_id mismatch: expected {expected_scope_id}, got {scope_id}")
+        errors.append(
+            f"scope_id mismatch: expected {expected_scope_id}, got {scope_id}"
+        )
 
     status = obj.get("status")
     if status not in _ALLOWED_STATUS:
@@ -168,7 +173,9 @@ def _validate_review_json(
         findings = []
 
     questions = obj.get("questions")
-    if not isinstance(questions, list) or any(not isinstance(x, str) for x in questions):
+    if not isinstance(questions, list) or any(
+        not isinstance(x, str) for x in questions
+    ):
         errors.append("questions must be an array of strings")
         questions = []
 
@@ -254,7 +261,9 @@ def _validate_review_json(
                 f"findings[{idx}].code_location.line_range.start must be int >= 1"
             )
         if not isinstance(end, int) or end < 1:
-            errors.append(f"findings[{idx}].code_location.line_range.end must be int >= 1")
+            errors.append(
+                f"findings[{idx}].code_location.line_range.end must be int >= 1"
+            )
         if isinstance(start, int) and isinstance(end, int) and end < start:
             errors.append(
                 f"findings[{idx}].code_location.line_range.end must be >= start"
