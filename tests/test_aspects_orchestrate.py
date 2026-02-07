@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from collections.abc import Mapping
+from pathlib import Path
+
+from killer_7.errors import ExecFailureError
+
+
+class _FakeRunner:
+    def __init__(self, *, payload_by_viewpoint: Mapping[str, object]) -> None:
+        self.payload_by_viewpoint = dict(payload_by_viewpoint)
+
+    def run_viewpoint(
+        self,
+        *,
+        out_dir: str,
+        viewpoint: str,
+        message: str,
+        timeout_s: int | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        _ = (out_dir, message, timeout_s, env)
+        payload = self.payload_by_viewpoint.get(viewpoint)
+        if payload is None:
+            payload = {
+                "schema_version": 3,
+                "scope_id": "scope-1",
+                "status": "Approved",
+                "findings": [],
+                "questions": [],
+                "overall_explanation": "ok",
+            }
+        return {
+            "viewpoint": viewpoint,
+            "result_path": "<fake>",
+            "payload": payload,
+        }
+
+
+class TestOrchestrate(unittest.TestCase):
+    def test_success_writes_index_and_aspect_jsons(self) -> None:
+        from killer_7.aspects.orchestrate import ASPECTS_V1, run_all_aspects
+
+        payload: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with tempfile.TemporaryDirectory() as td:
+            res = run_all_aspects(
+                base_dir=td,
+                scope_id="scope-1",
+                context_bundle="CTX",
+                sot="SOT",
+                runner_factory=lambda: _FakeRunner(
+                    payload_by_viewpoint={a: payload for a in ASPECTS_V1}
+                ),
+            )
+
+            out_dir = Path(td) / ".ai-review" / "aspects"
+            self.assertTrue((out_dir / "index.json").is_file())
+            for a in ASPECTS_V1:
+                self.assertTrue((out_dir / f"{a}.json").is_file())
+
+            idx = json.loads((out_dir / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(idx["schema_version"], 1)
+            self.assertEqual(idx["scope_id"], "scope-1")
+            self.assertEqual(len(idx["aspects"]), len(ASPECTS_V1))
+            self.assertTrue(all(x["ok"] for x in idx["aspects"]))
+            self.assertEqual(str(res["index_path"]), str(out_dir / "index.json"))
+
+    def test_partial_failure_writes_error_and_exits_failure(self) -> None:
+        from killer_7.aspects.orchestrate import ASPECTS_V1, run_all_aspects
+
+        good: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+        bad: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            # overall_explanation is required
+        }
+
+        payloads: dict[str, object] = {a: good for a in ASPECTS_V1}
+        payloads["security"] = bad
+
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ExecFailureError):
+                run_all_aspects(
+                    base_dir=td,
+                    scope_id="scope-1",
+                    context_bundle="CTX",
+                    sot="SOT",
+                    runner_factory=lambda: _FakeRunner(payload_by_viewpoint=payloads),
+                )
+
+            out_dir = Path(td) / ".ai-review" / "aspects"
+            self.assertTrue((out_dir / "index.json").is_file())
+            self.assertTrue((out_dir / "security.error.json").is_file())
+            idx = json.loads((out_dir / "index.json").read_text(encoding="utf-8"))
+            failed = [x for x in idx["aspects"] if x["aspect"] == "security"]
+            self.assertEqual(len(failed), 1)
+            self.assertFalse(failed[0]["ok"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(unittest.main())

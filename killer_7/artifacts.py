@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 
 from .github.pr_input import ChangedFile, PrInput
@@ -40,6 +41,55 @@ def _atomic_write_json(path: str, payload: object) -> None:
         fh.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         fh.write("\n")
     os.replace(tmp, path)
+
+
+def atomic_write_json_secure(
+    path: str,
+    payload: object,
+    *,
+    dir_mode: int = 0o700,
+    file_mode: int = 0o600,
+) -> None:
+    """Atomically write JSON and restrict permissions.
+
+    This helper is intended for artifacts that may contain sensitive content.
+    """
+
+    dir_name = os.path.dirname(path) or "."
+    base = os.path.basename(path)
+    if dir_name != ".":
+        os.makedirs(dir_name, mode=dir_mode, exist_ok=True)
+        try:
+            os.chmod(dir_name, dir_mode)
+        except OSError:
+            pass
+
+    tmp = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            dir=dir_name,
+            prefix=f".{base}.tmp.",
+        ) as fh:
+            tmp = fh.name
+            fh.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            fh.write("\n")
+
+        try:
+            os.chmod(tmp, file_mode)
+        except OSError:
+            pass
+
+        os.replace(tmp, path)
+        tmp = ""
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def write_diff_patch(out_dir: str, patch: str) -> str:

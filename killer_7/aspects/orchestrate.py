@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from typing import Callable
+
+from ..artifacts import atomic_write_json_secure, ensure_artifacts_dir
+from ..errors import BlockedError, ExecFailureError
+from .run_one import ViewpointRunner, run_one_aspect
+
+
+ASPECTS_V1: tuple[str, ...] = (
+    "correctness",
+    "readability",
+    "testing",
+    "test-audit",
+    "security",
+    "performance",
+    "refactoring",
+)
+
+
+@dataclass(frozen=True)
+class AspectOutcome:
+    aspect: str
+    ok: bool
+    result_path: str
+    error_kind: str
+    error_message: str
+
+
+def _write_aspect_error(
+    *,
+    out_dir: str,
+    aspect: str,
+    kind: str,
+    message: str,
+) -> str:
+    aspects_dir = os.path.join(out_dir, "aspects")
+    path = os.path.join(aspects_dir, f"{aspect}.error.json")
+    atomic_write_json_secure(
+        path,
+        {
+            "schema_version": 1,
+            "aspect": aspect,
+            "kind": kind,
+            "message": message,
+        },
+    )
+    return path
+
+
+def _write_index(
+    *,
+    out_dir: str,
+    scope_id: str,
+    max_llm_calls: int,
+    outcomes: list[AspectOutcome],
+) -> str:
+    aspects_dir = os.path.join(out_dir, "aspects")
+    path = os.path.join(aspects_dir, "index.json")
+    payload = {
+        "schema_version": 1,
+        "scope_id": scope_id,
+        "max_llm_calls": max_llm_calls,
+        "aspects": [
+            {
+                "aspect": o.aspect,
+                "ok": o.ok,
+                "result_path": os.path.relpath(o.result_path, out_dir)
+                if o.result_path
+                else "",
+                "error_kind": o.error_kind,
+                "error_message": o.error_message,
+            }
+            for o in outcomes
+        ],
+    }
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def run_all_aspects(
+    *,
+    base_dir: str,
+    scope_id: str,
+    context_bundle: str,
+    sot: str = "",
+    aspects: tuple[str, ...] = ASPECTS_V1,
+    max_llm_calls: int = 8,
+    max_workers: int = 8,
+    timeout_s: int | None = None,
+    runner_factory: Callable[[], ViewpointRunner] | None = None,
+    prompts_dir: str | None = None,
+) -> dict[str, object]:
+    """Run all aspects in parallel and write artifacts under `.ai-review/aspects/`.
+
+    Success:
+    - writes `.ai-review/aspects/<aspect>.json` for each aspect
+
+    Failure:
+    - writes `.ai-review/aspects/<aspect>.error.json` for failed aspects
+    - writes `.ai-review/aspects/index.json` summarizing outcomes
+    - raises BlockedError (exit code 1) if any aspect is blocked
+    - raises ExecFailureError (exit code 2) if any aspect fails
+    """
+
+    if max_llm_calls < 1:
+        raise ExecFailureError(
+            f"Invalid max_llm_calls: {max_llm_calls!r} (must be >= 1)"
+        )
+
+    aspect_list = tuple(aspects)
+    if len(aspect_list) == 0:
+        raise ExecFailureError("No aspects to run")
+    if len(aspect_list) > max_llm_calls:
+        raise ExecFailureError(
+            f"Too many aspects: {len(aspect_list)} (max_llm_calls={max_llm_calls})"
+        )
+
+    out_dir = ensure_artifacts_dir(base_dir)
+
+    # Keep concurrency bounded and deterministic.
+    workers = min(max_workers, max_llm_calls, len(aspect_list))
+    if workers < 1:
+        workers = 1
+
+    outcomes: list[AspectOutcome] = []
+    any_blocked = False
+    any_failed = False
+
+    def make_runner() -> ViewpointRunner:
+        if runner_factory is None:
+            from ..llm.opencode_runner import OpenCodeRunner
+
+            return OpenCodeRunner.from_env()
+        return runner_factory()
+
+    def run_one(a: str) -> dict[str, object]:
+        r = make_runner()
+        return run_one_aspect(
+            base_dir=base_dir,
+            aspect=a,
+            scope_id=scope_id,
+            context_bundle=context_bundle,
+            sot=sot,
+            runner=r,
+            timeout_s=timeout_s,
+            prompts_dir=prompts_dir,
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(run_one, a): a for a in aspect_list}
+        for fut in as_completed(futs):
+            a = futs[fut]
+            try:
+                res = fut.result()
+                p = str(res.get("aspect_result_path") or "")
+                outcomes.append(
+                    AspectOutcome(
+                        aspect=a,
+                        ok=True,
+                        result_path=p,
+                        error_kind="",
+                        error_message="",
+                    )
+                )
+            except BlockedError as exc:
+                any_blocked = True
+                err_path = _write_aspect_error(
+                    out_dir=out_dir, aspect=a, kind="blocked", message=str(exc)
+                )
+                outcomes.append(
+                    AspectOutcome(
+                        aspect=a,
+                        ok=False,
+                        result_path=err_path,
+                        error_kind="blocked",
+                        error_message=str(exc),
+                    )
+                )
+            except ExecFailureError as exc:
+                any_failed = True
+                err_path = _write_aspect_error(
+                    out_dir=out_dir, aspect=a, kind="exec_failure", message=str(exc)
+                )
+                outcomes.append(
+                    AspectOutcome(
+                        aspect=a,
+                        ok=False,
+                        result_path=err_path,
+                        error_kind="exec_failure",
+                        error_message=str(exc),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                any_failed = True
+                msg = f"Unexpected error: {type(exc).__name__}: {exc}"
+                err_path = _write_aspect_error(
+                    out_dir=out_dir, aspect=a, kind="unexpected", message=msg
+                )
+                outcomes.append(
+                    AspectOutcome(
+                        aspect=a,
+                        ok=False,
+                        result_path=err_path,
+                        error_kind="unexpected",
+                        error_message=msg,
+                    )
+                )
+
+    # Ensure a stable order for downstream processing.
+    outcomes.sort(key=lambda x: x.aspect)
+    index_path = _write_index(
+        out_dir=out_dir,
+        scope_id=scope_id,
+        max_llm_calls=max_llm_calls,
+        outcomes=outcomes,
+    )
+
+    if any_blocked:
+        raise BlockedError(
+            f"One or more aspects are blocked. See: {os.path.relpath(index_path, base_dir)}"
+        )
+    if any_failed:
+        raise ExecFailureError(
+            f"One or more aspects failed. See: {os.path.relpath(index_path, base_dir)}"
+        )
+
+    return {
+        "scope_id": scope_id,
+        "index_path": index_path,
+        "aspects": [
+            {
+                "aspect": o.aspect,
+                "ok": o.ok,
+                "result_path": o.result_path,
+                "error_kind": o.error_kind,
+                "error_message": o.error_message,
+            }
+            for o in outcomes
+        ],
+    }

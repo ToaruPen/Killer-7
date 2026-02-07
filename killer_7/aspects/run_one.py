@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from ..artifacts import ensure_artifacts_dir
+from ..artifacts import atomic_write_json_secure, ensure_artifacts_dir
 from ..errors import ExecFailureError
 from ..llm.opencode_runner import OpenCodeRunner
 
@@ -31,32 +29,6 @@ class PromptInputs:
     scope_id: str
     context_bundle: str
     sot: str = ""
-
-
-def _atomic_write_json(path: str, payload: object) -> None:
-    dir_name = os.path.dirname(path) or "."
-    base = os.path.basename(path)
-    if dir_name != ".":
-        os.makedirs(dir_name, mode=0o700, exist_ok=True)
-        try:
-            os.chmod(dir_name, 0o700)
-        except OSError:
-            pass
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        delete=False,
-        dir=dir_name,
-        prefix=f".{base}.tmp.",
-    ) as fh:
-        tmp = fh.name
-        fh.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        fh.write("\n")
-    try:
-        os.chmod(tmp, 0o600)
-    except OSError:
-        pass
-    os.replace(tmp, path)
 
 
 def _read_text(path: Path) -> str:
@@ -366,7 +338,7 @@ def run_one_aspect(
     _validate_schema_v3_required_keys(payload, expected_scope_id=scope_id)
 
     aspect_result_path = os.path.join(out_dir, "aspects", f"{a}.json")
-    _atomic_write_json(aspect_result_path, payload)
+    atomic_write_json_secure(aspect_result_path, payload)
 
     return {
         "aspect": a,
