@@ -198,12 +198,25 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             sot_md = out_dir / "sot.md"
             warnings_txt = out_dir / "warnings.txt"
+            context_bundle = out_dir / "context-bundle.txt"
             self.assertTrue(sot_md.is_file())
             self.assertTrue(warnings_txt.is_file())
+            self.assertTrue(context_bundle.is_file())
 
             sot_text = sot_md.read_text(encoding="utf-8")
             self.assertIn("# SRC: docs/prd/killer-7.md", sot_text)
             self.assertLessEqual(len(sot_text.splitlines()), 250)
+
+            bundle_text = context_bundle.read_text(encoding="utf-8")
+            self.assertIn("# SoT Bundle", bundle_text)
+            self.assertTrue(
+                bundle_text.startswith("# SoT Bundle\n")
+                or "\n# SoT Bundle\n" in bundle_text
+            )
+            self.assertIn("# SRC: docs/prd/killer-7.md", bundle_text)
+            self.assertIn("# SRC: hello.txt", bundle_text)
+            self.assertIn("L1: hello", bundle_text)
+            self.assertLessEqual(len(bundle_text.splitlines()), 1500)
 
             warn = warnings_txt.read_text(encoding="utf-8")
             self.assertIn("sot_truncated", warn)

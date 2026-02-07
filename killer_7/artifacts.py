@@ -90,6 +90,12 @@ def write_sot_md(out_dir: str, content: str) -> str:
     return path
 
 
+def write_context_bundle_txt(out_dir: str, content: str) -> str:
+    path = os.path.join(out_dir, "context-bundle.txt")
+    _atomic_write_text(path, (content or "").rstrip("\n"))
+    return path
+
+
 def write_warnings_txt(out_dir: str, warnings: list[str]) -> str:
     path = os.path.join(out_dir, "warnings.txt")
     lines = [str(x) for x in warnings if str(x).strip()]
