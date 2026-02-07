@@ -1,4 +1,5 @@
 # Agentic-SDD
+.DS_Store
 .agent/agents/*.local.md
 .claude/settings.local.json
 .agentic-sdd/
