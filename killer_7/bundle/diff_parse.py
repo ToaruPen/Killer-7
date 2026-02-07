@@ -30,6 +30,20 @@ class SrcBlock:
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
+def _one_line(value: object) -> str:
+    s = "" if value is None else str(value)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.replace("\n", "\\n")
+    s = s.replace("\t", "\\t")
+    return s
+
+
+def _truncate(s: str, max_chars: int) -> str:
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 14] + "... [truncated]"
+
+
 def _parse_diff_git_paths(line: str) -> tuple[str, str] | None:
     """Parse `diff --git <a> <b>` and return raw tokens.
 
@@ -70,7 +84,7 @@ def _parse_path_token(token: str) -> str:
     return parts[0]
 
 
-def parse_diff_patch(patch: str) -> tuple[list[SrcBlock], list[str]]:
+def parse_diff_patch(patch: str | None) -> tuple[list[SrcBlock], list[str]]:
     """Parse a unified diff patch and extract HEAD-side blocks.
 
     Returns:
@@ -115,7 +129,10 @@ def parse_diff_patch(patch: str) -> tuple[list[SrcBlock], list[str]]:
             flush()
             toks = _parse_diff_git_paths(line)
             if toks is None:
-                warnings.append("diff_parse_skipped kind=parse_failed path=")
+                header = _truncate(_one_line(line), 200)
+                warnings.append(
+                    f"diff_parse_skipped kind=parse_failed path= header={header}"
+                )
                 cur_path = None
                 continue
 
