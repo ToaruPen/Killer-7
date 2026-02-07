@@ -467,6 +467,10 @@ N/A（可用性要件なし。ローカルCLIでありSLO/SLAを設定しない�
 Phase-1
 フェーズ: Phase 1（ローカル成果物まで）
 完了条件: K7-01〜K7-11が完了し、投稿なしで `review-summary.json/.md` が生成できる
+
+追加（衛生）:
+
+- CI（GitHub Actions）で Python 3.11 の `python -m unittest discover -s tests -p 'test*.py'` が実行され、green である
 目標日: なし
 
 Phase-2
