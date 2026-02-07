@@ -8,3 +8,7 @@
 
 # Killer-7 artifacts
 .ai-review/
+
+# Python
+__pycache__/
+*.pyc
