@@ -181,7 +181,11 @@ fi
 on_linked=0
 while IFS= read -r b; do
   [[ -n "$b" ]] || continue
-  if [[ "$b" == "$branch" ]]; then
+  # `gh issue develop --list` may include a URL after the branch name.
+  name="$b"
+  name="${name%%$'\t'*}"
+  name="${name%% *}"
+  if [[ "$name" == "$branch" ]]; then
     on_linked=1
     break
   fi

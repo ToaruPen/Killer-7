@@ -18,6 +18,14 @@ Killer-7は、GitHub PRを入力として、複数観点のLLMレビューを自
 - 実装はGitHub Issuesで進行します（EpicのIssue分割に準拠）
 - 次に進めるコマンド: `/estimation` → `/impl` または `/tdd`
 
+## テスト
+
+Python 3.11:
+
+```bash
+python3.11 -m unittest discover -s tests -p 'test*.py'
+```
+
 ## 成果物
 
 - 出力先: `./.ai-review/`

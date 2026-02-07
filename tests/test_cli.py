@@ -30,7 +30,7 @@ def has(flag: str) -> bool:
 
 if args[:2] == ["pr", "diff"]:
     # gh pr diff <pr> --repo owner/name --patch
-    def emit_new_file(path: str, n_lines: int, *, first_line: str | None = None) -> None:
+    def emit_new_file(path: str, n_lines: int, *, first_line=None) -> None:
         sys.stdout.write(f"diff --git a/{path} b/{path}\\n")
         sys.stdout.write("new file mode 100644\\n")
         sys.stdout.write("index 0000000..1111111\\n")
