@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from ..artifacts import atomic_write_json_secure, ensure_artifacts_dir
+from ..artifacts import (
+    atomic_write_json_secure,
+    ensure_artifacts_dir,
+    write_validation_error_json,
+)
 from ..errors import ExecFailureError
 from ..llm.opencode_runner import OpenCodeRunner
 
@@ -335,9 +339,31 @@ def run_one_aspect(
     )
 
     payload = res.get("payload")
-    _validate_schema_v3_required_keys(payload, expected_scope_id=scope_id)
 
     aspect_result_path = os.path.join(out_dir, "aspects", f"{a}.json")
+    rel_target = os.path.relpath(aspect_result_path, base_dir)
+    # Keep artifact paths stable and machine-friendly across OSes.
+    rel_target = rel_target.replace(os.sep, "/")
+    try:
+        _validate_schema_v3_required_keys(payload, expected_scope_id=scope_id)
+    except ExecFailureError as exc:
+        # Leave a machine-readable error artifact for downstream gates.
+        write_validation_error_json(
+            out_dir,
+            filename=f"{a}.schema.error.json",
+            kind="schema_validation_failed",
+            message=str(exc),
+            target_path=rel_target,
+            errors=_validate_review_json(
+                payload if isinstance(payload, dict) else {},
+                expected_scope_id=scope_id,
+            )
+            if isinstance(payload, dict)
+            else ["Review JSON must be an object"],
+            extra={"aspect": a, "scope_id": scope_id},
+        )
+        raise
+
     atomic_write_json_secure(aspect_result_path, payload)
 
     return {

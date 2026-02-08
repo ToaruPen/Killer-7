@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, NoReturn
 
-from ..artifacts import atomic_write_json_secure, ensure_artifacts_dir
+from ..artifacts import (
+    atomic_write_json_secure,
+    ensure_artifacts_dir,
+    write_validation_error_json,
+)
 from ..errors import BlockedError, ExecFailureError
 from .run_one import ViewpointRunner, run_one_aspect
 
@@ -19,6 +24,17 @@ ASPECTS_V1: tuple[str, ...] = (
     "performance",
     "refactoring",
 )
+
+
+_ASPECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def _normalize_aspect(value: str) -> str:
+    a = (value or "").strip().lower()
+    a = a.replace("_", "-")
+    if not a or not _ASPECT_RE.match(a):
+        raise ExecFailureError(f"Invalid aspect: {value!r}")
+    return a
 
 
 @dataclass(frozen=True)
@@ -49,6 +65,25 @@ def _write_aspect_error(
         },
     )
     return path
+
+
+def _write_aspect_failure_artifact(
+    *,
+    out_dir: str,
+    aspect: str,
+    kind: str,
+    message: str,
+) -> str:
+    target = f".ai-review/aspects/{aspect}.json"
+    return write_validation_error_json(
+        out_dir,
+        filename=f"{aspect}.{kind}.error.json",
+        kind=kind,
+        message=message,
+        target_path=target,
+        errors=[],
+        extra={"aspect": aspect},
+    )
 
 
 def _write_index(
@@ -111,18 +146,38 @@ def run_all_aspects(
             f"Invalid max_llm_calls: {max_llm_calls!r} (must be >= 1)"
         )
 
+    out_dir = ensure_artifacts_dir(base_dir)
+
+    def fail_input(message: str) -> NoReturn:
+        # Leave a machine-readable artifact even for configuration/input errors.
+        write_validation_error_json(
+            out_dir,
+            filename="aspects.input.error.json",
+            kind="invalid_aspects",
+            message=message,
+            target_path=".ai-review/aspects/index.json",
+            errors=[message],
+        )
+        raise ExecFailureError(message)
+
     aspect_list = tuple(aspects)
     if len(aspect_list) == 0:
-        raise ExecFailureError("No aspects to run")
+        fail_input("No aspects to run")
+
+    try:
+        normalized_aspects = tuple(_normalize_aspect(a) for a in aspect_list)
+    except ExecFailureError as exc:
+        fail_input(str(exc))
+    if len(set(normalized_aspects)) != len(normalized_aspects):
+        fail_input("Duplicate aspects after normalization")
+
     if len(aspect_list) > max_llm_calls:
-        raise ExecFailureError(
+        fail_input(
             f"Too many aspects: {len(aspect_list)} (max_llm_calls={max_llm_calls})"
         )
 
-    out_dir = ensure_artifacts_dir(base_dir)
-
     # Keep concurrency bounded and deterministic.
-    workers = min(max_workers, max_llm_calls, len(aspect_list))
+    workers = min(max_workers, max_llm_calls, len(normalized_aspects))
     if workers < 1:
         workers = 1
 
@@ -151,7 +206,7 @@ def run_all_aspects(
         )
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(run_one, a): a for a in aspect_list}
+        futs = {ex.submit(run_one, a): a for a in normalized_aspects}
         for fut in as_completed(futs):
             a = futs[fut]
             try:
@@ -185,6 +240,17 @@ def run_all_aspects(
                 err_path = _write_aspect_error(
                     out_dir=out_dir, aspect=a, kind="exec_failure", message=str(exc)
                 )
+
+                # If run_one_aspect already wrote a schema validation error artifact,
+                # avoid duplicating errors artifacts for the same failure.
+                schema_err = os.path.join(out_dir, "errors", f"{a}.schema.error.json")
+                if not os.path.exists(schema_err):
+                    _write_aspect_failure_artifact(
+                        out_dir=out_dir,
+                        aspect=a,
+                        kind="exec_failure",
+                        message=str(exc),
+                    )
                 outcomes.append(
                     AspectOutcome(
                         aspect=a,
@@ -199,6 +265,12 @@ def run_all_aspects(
                 msg = f"Unexpected error: {type(exc).__name__}: {exc}"
                 err_path = _write_aspect_error(
                     out_dir=out_dir, aspect=a, kind="unexpected", message=msg
+                )
+                _write_aspect_failure_artifact(
+                    out_dir=out_dir,
+                    aspect=a,
+                    kind="unexpected",
+                    message=msg,
                 )
                 outcomes.append(
                     AspectOutcome(

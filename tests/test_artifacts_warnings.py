@@ -19,7 +19,7 @@ class TestArtifactsWarnings(unittest.TestCase):
             out_dir = ensure_artifacts_dir(td)
 
             paths = ["README.md", "docs/a.md"]
-            warnings = [
+            warnings: list[object] = [
                 ContentWarning(
                     kind="size_limit_exceeded",
                     path="docs/big.txt",
@@ -42,6 +42,31 @@ class TestArtifactsWarnings(unittest.TestCase):
             warn_payload = json.loads(Path(warnings_file).read_text(encoding="utf-8"))
             self.assertEqual(warn_payload["schema_version"], 1)
             self.assertEqual(warn_payload["warnings"][0]["path"], "docs/big.txt")
+
+    def test_write_validation_error_json_sanitizes_filename(self) -> None:
+        from killer_7.artifacts import ensure_artifacts_dir, write_validation_error_json
+
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = ensure_artifacts_dir(td)
+            p = write_validation_error_json(
+                out_dir,
+                filename="../escape.json",
+                kind="schema_validation_failed",
+                message="bad",
+                target_path=".ai-review/aspects/x.json",
+                errors=["missing keys: ['overall_explanation']"],
+                extra={"aspect": "x"},
+            )
+
+            path = Path(p)
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.name, "escape.json")
+            self.assertEqual(path.parent.name, "errors")
+
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["kind"], "schema_validation_failed")
+            self.assertIn("original_filename", payload)
 
 
 if __name__ == "__main__":
