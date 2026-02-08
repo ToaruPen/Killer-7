@@ -215,6 +215,11 @@ to: ローカル成果物（`.ai-review/`）
 主要属性: schema_version, status, aspect_statuses, findings[], questions[], overall_explanation
 関連: findingsはFinding[]
 
+注記:
+
+- `aspect_statuses` は集約レポート（`review-summary.json`）で付与される想定。観点別JSON（`.ai-review/aspects/*.json`）には含まれない場合がある
+- スキーマは原則として厳格（unknown field禁止）とし、フィールド拡張はスキーマ更新を伴う
+
 エンティティ-2
 名前: Finding
 主要属性: title, body, priority(P0-P3), sources, code_location, verified, original_priority

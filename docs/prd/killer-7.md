@@ -37,6 +37,10 @@
 - PRを入力として、7つの観点（Correctness/Readability/Testing/Test Audit/Security/Performance/Refactoring）の自動レビューを実行できる
 - diffとSoT（Source of Truth）を中心に、Context Bundleを生成してレビュワーへ渡し、根拠に基づく指摘のみを出力させられる
 - レビュー出力（JSON）をスキーマ検証し、evidence検証により根拠不明な強い指摘（P0/P1等）が残らないように抑制できる
+
+注記（スキーマ運用）:
+
+- スキーマは原則として厳格（unknown field禁止）とし、フィールド拡張はスキーマ更新を伴う
 - 結果をPRコメント（要約）として投稿でき、P0/P1のみをinlineコメントとして投稿できる（冪等更新、重複排除）
 - 成果物（レポート/ログ/バンドル）をローカルの `.ai-review/` 配下に保存でき、終了コードでゲートできる（例: Blocked=1、実行失敗=2）
 
