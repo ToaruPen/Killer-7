@@ -135,6 +135,8 @@ Epic対応: 期限なし（段階リリース）
 システム境界:
 
 - Killer-7は「入力=GitHub PR」「出力=ローカル成果物 +（任意）PRコメント投稿」を行うローカルCLIである
+- Killer-7はGitHub Actions（共有self-hosted runner）上で実行できるが、runnerの導入/管理はスコープ外とする
+- GitHub Actions運用時はfork PRをデフォルトで実行対象外とし（secrets保護）、結果はPRコメント（要約+P0/P1 inline）として掲示する（ただしinlineは上限超過時に抑制）
 - LLMには最小化したコンテキスト（diff + Context Bundle + SoT allowlist）を送る
 - repo全文へのアクセスはデフォルト無効（ハイブリッド）。必要時のみread-onlyかつパスallowlistで制限する
 
@@ -212,6 +214,11 @@ to: ローカル成果物（`.ai-review/`）
 名前: ReviewSummary
 主要属性: schema_version, status, aspect_statuses, findings[], questions[], overall_explanation
 関連: findingsはFinding[]
+
+注記:
+
+- `aspect_statuses` は集約レポート（`review-summary.json`）で付与される想定。観点別JSON（`.ai-review/aspects/*.json`）には含まれない場合がある
+- スキーマは原則として厳格（unknown field禁止）とし、フィールド拡張はスキーマ更新を伴う
 
 エンティティ-2
 名前: Finding
@@ -458,7 +465,12 @@ N/A（可用性要件なし。ローカルCLIでありSLO/SLAを設定しない�
 リスク-4
 リスク: inline投稿が大量になりPRが荒れる/投稿が失敗する
 影響度: 中
-対策: P0/P1のみ + 上限150 + 超過時は要約へ退避し失敗扱い
+対策: P0/P1のみ + 上限150 + 超過時はinline投稿を抑制して要約へ退避し、終了コードはBlocked（1）とする（要約コメントは更新する）
+
+リスク-5
+リスク: fork PRでsecrets（LLM APIキー等）を安全に扱えず、レビューが実行できない/事故りやすい
+影響度: 中
+対策: GitHub Actions運用時はfork PRをデフォルトで実行対象外とし、必要なら別途手動運用（ローカル実行など）に切り替える
 
 ---
 

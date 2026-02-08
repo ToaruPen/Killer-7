@@ -112,6 +112,11 @@ class TestOrchestrate(unittest.TestCase):
             out_dir = Path(td) / ".ai-review" / "aspects"
             self.assertTrue((out_dir / "index.json").is_file())
             self.assertTrue((out_dir / "security.error.json").is_file())
+
+            err_dir = Path(td) / ".ai-review" / "errors"
+            # Schema validation failures are expected to be written by run_one_aspect.
+            self.assertTrue((err_dir / "security.schema.error.json").is_file())
+            self.assertFalse((err_dir / "security.exec_failure.error.json").exists())
             idx = json.loads((out_dir / "index.json").read_text(encoding="utf-8"))
             failed = [x for x in idx["aspects"] if x["aspect"] == "security"]
             self.assertEqual(len(failed), 1)

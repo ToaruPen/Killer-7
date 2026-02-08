@@ -87,6 +87,17 @@ class TestRunOneAspect(unittest.TestCase):
             out = Path(td) / ".ai-review" / "aspects" / "correctness.json"
             self.assertFalse(out.exists())
 
+            err = Path(td) / ".ai-review" / "errors" / "correctness.schema.error.json"
+            self.assertTrue(err.is_file())
+            payload = json.loads(err.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("schema_version"), 1)
+            self.assertEqual(payload.get("kind"), "schema_validation_failed")
+            self.assertEqual(payload.get("aspect"), "correctness")
+            self.assertEqual(
+                payload.get("target_path"), ".ai-review/aspects/correctness.json"
+            )
+            self.assertTrue(isinstance(payload.get("errors"), list))
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

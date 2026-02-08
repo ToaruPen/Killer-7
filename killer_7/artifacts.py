@@ -165,6 +165,63 @@ def write_allowlist_paths_json(out_dir: str, paths: list[str]) -> str:
     return path
 
 
+def write_validation_error_json(
+    out_dir: str,
+    *,
+    filename: str | None,
+    kind: str,
+    message: str,
+    target_path: str,
+    errors: list[str] | None = None,
+    extra: dict[str, object] | None = None,
+) -> str:
+    """Write a schema/validation error artifact under `.ai-review/errors/`.
+
+    The output is intended to be machine-readable and stable.
+    """
+
+    errors_dir = os.path.join(out_dir, "errors")
+
+    # Guard against path traversal. Treat `filename` as a name, not a path.
+    raw_name = "" if filename is None else str(filename)
+    normalized = raw_name.replace("\\", "/")
+    safe_name = os.path.basename(normalized)
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = "validation-error.json"
+
+    path = os.path.join(errors_dir, safe_name)
+
+    # Defense-in-depth: ensure the final path stays within errors_dir.
+    errors_dir_real = os.path.realpath(errors_dir)
+    path_real = os.path.realpath(path)
+    if not (
+        path_real == errors_dir_real or path_real.startswith(errors_dir_real + os.sep)
+    ):
+        # If we can't guarantee containment, fail closed.
+        raise ValueError("Invalid filename: must not escape errors dir")
+
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "kind": str(kind or ""),
+        "message": str(message or ""),
+        "target_path": str(target_path or ""),
+        "errors": list(errors or []),
+    }
+    if safe_name != raw_name:
+        payload["original_filename"] = raw_name
+    if extra:
+        for k, v in extra.items():
+            if k not in payload:
+                try:
+                    json.dumps(v)
+                    payload[str(k)] = v
+                except Exception:  # noqa: BLE001
+                    payload[str(k)] = "" if v is None else str(v)
+
+    atomic_write_json_secure(path, payload)
+    return path
+
+
 def write_content_warnings_json(out_dir: str, warnings: list[object]) -> str:
     """Write content warnings as JSON.
 

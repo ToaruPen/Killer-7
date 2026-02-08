@@ -2,7 +2,8 @@
 
 Create Issues from an Epic.
 
-Issue bodies are user-facing artifacts and should remain in Japanese.
+Issue titles/bodies are user-facing artifacts and should remain in Japanese.
+Exception: If you use a Conventional Commits style prefix (e.g. `feat(schema):`), keep the prefix as-is, but write the description part in Japanese.
 
 ## Usage
 

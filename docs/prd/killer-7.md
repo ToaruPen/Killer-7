@@ -29,7 +29,7 @@
 ### Q2: 誰が使う？
 
 - 主ユーザー: 私個人（メイン）
-- 想定する拡張ユーザー: 他の開発者も利用できる形で、CIを除いたDockerコンテナのフレームワークとして提供する
+- 想定する拡張ユーザー: 他の開発者も利用できる形で、Dockerコンテナのフレームワークとして提供する（ローカル実行/自前runnerでのGitHub Actions運用のどちらでも使える）
 - 利用形態: 開発PCとは別のPC上にKiller-7を配置し、GitHub上のPRを入力としてレビューを実行し、結果をPRへ投稿する
 
 ### Q3: 何ができるようになる？
@@ -37,6 +37,10 @@
 - PRを入力として、7つの観点（Correctness/Readability/Testing/Test Audit/Security/Performance/Refactoring）の自動レビューを実行できる
 - diffとSoT（Source of Truth）を中心に、Context Bundleを生成してレビュワーへ渡し、根拠に基づく指摘のみを出力させられる
 - レビュー出力（JSON）をスキーマ検証し、evidence検証により根拠不明な強い指摘（P0/P1等）が残らないように抑制できる
+
+注記（スキーマ運用）:
+
+- スキーマは原則として厳格（unknown field禁止）とし、フィールド拡張はスキーマ更新を伴う
 - 結果をPRコメント（要約）として投稿でき、P0/P1のみをinlineコメントとして投稿できる（冪等更新、重複排除）
 - 成果物（レポート/ログ/バンドル）をローカルの `.ai-review/` 配下に保存でき、終了コードでゲートできる（例: Blocked=1、実行失敗=2）
 
@@ -70,12 +74,13 @@ killer-7 review --repo owner/name --pr 123 --post --inline
 - 7観点レビューが走り、集約された `review-summary.json` と `review-summary.md` が生成される
 - `review-summary.json` が固定スキーマに合格し、evidence検証が有効な場合に根拠不明なP0/P1が最終結果に残らない
 - `--post` 指定で要約コメントがPR上で冪等更新され、`--inline` 指定でP0/P1がinline投稿される（重複しない）
+- `--inline` 指定時にP0/P1が150件を超える場合、inline投稿は行わず要約へ退避し、終了コードはBlocked（1）となる（要約コメントは更新される）
 - APIキー未設定やモデル応答不正などの失敗が、終了コードとログで判別できる
 
 ### Q5: 作らない範囲は？
 
 - コードの自動修正（レビュー結果に基づく自動コミット、PR自動作成、強制リライト）
-- self-hosted runnerの管理
+- self-hosted runnerの管理（Killer-7はrunner上で実行できるが、runnerの導入/管理/運用は提供しない）
 - 常時稼働のインデックス/RAGサーバー（ベクトルDBの常駐など）
 - 静的解析ツール（lint/typecheck/security scan/test）で確定的に検出できる事項の重複報告
 
@@ -87,7 +92,7 @@ Q6-1: 既存言語/フレームワーク固定
 
 Q6-2: デプロイ先固定
 選択: Yes
-詳細（Yesの場合）: ローカル（別PCを含む）で実行するCLI。入力はGitHub PR（`gh`/GitHub API）
+詳細（Yesの場合）: ローカル（別PCを含む）で実行するCLI。入力はGitHub PR（`gh`/GitHub API）。GitHub Actions（共有self-hosted runner）上での運用も想定するが、Killer-7がCI基盤/runnerを管理しない
 
 Q6-3: 期限
 選択: Unknown
@@ -101,6 +106,11 @@ Q6-5: 個人情報/機密データ
 選択: Yes
 詳細（Yesの場合）: リポジトリ内容は機密として扱い、送信するコンテキストは最小化する。ログに秘密情報（API key等）や不要なファイル内容を出力しない
 
+補足（GitHub Actions運用）:
+
+- 共有self-hosted runner上でGitHub Actionsとして運用する場合、fork PRはデフォルトで実行対象外とする（secrets保護）
+- その場合も結果はPRコメント（要約 + P0/P1 inline）で可視化するが、レビューの強制力（マージのブロック）は運用側で選べる（デフォルトはadvisory）
+
 Q6-6: 監査ログ要件
 選択: No
 詳細（Yesの場合）: -
@@ -112,7 +122,7 @@ Q6-7: パフォーマンス要件
   - 目標概要:
     - 1回の実行時間: 20分以内（Killer-7側でタイムアウトを設定する）
     - 送信コンテキスト上限: Context Bundle 最大1500行、1ファイル最大400行、SoT合計最大250行（上限を超える場合は切り詰めと警告を出す）
-    - PR投稿（inline含む）: P0/P1 inlineは最大150件（超過時は要約へ退避し、終了コードを失敗にする）
+    - PR投稿（inline含む）: P0/P1 inlineは最大150件（超過時は要約へ退避し、終了コードはBlocked=1。要約コメントは更新される）
 
 Q6-8: 可用性要件
 選択: No
@@ -203,6 +213,7 @@ FR-7
 - [ ] AC-3: evidence検証が有効な場合、根拠不明なP0/P1が最終結果に残らない（格下げ/除外される）
 - [ ] AC-4: `--post` 指定でPRの要約コメントが冪等更新される（同一PRでコメントが増殖しない）
 - [ ] AC-5: `--inline` 指定でP0/P1のみがinline投稿され、再実行しても重複しない
+- [ ] AC-6: `--inline` 指定時にP0/P1が151件以上の場合、inline投稿は行わず要約へ退避し、終了コードがBlocked（1）になる（要約コメントは冪等更新される）
 
 ### 異常系（必須: 最低1つ）
 
