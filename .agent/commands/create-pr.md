@@ -5,6 +5,10 @@ Create a Pull Request for an Issue (push + PR creation).
 This command assumes GitHub is the source of truth for Issues and linked branches.
 User-facing output remains in Japanese.
 
+PR titles/bodies should be written in Japanese.
+Exception: If you use a Conventional Commits style prefix in the PR title (e.g. `feat(schema):`), keep the prefix as-is, but write the description part in Japanese.
+Note: `Closes #<issue-number>` should remain as-is to preserve GitHub auto-close behavior.
+
 ## Usage
 
 ```
@@ -51,7 +55,7 @@ git push -u origin HEAD
 
 Guidelines:
 
-- Title: reuse the Issue title (or a minimal, accurate title).
+- Title: reuse the Issue title (or a minimal, accurate title) in Japanese.
 - Body must include `Closes #<issue-number>`.
 - Keep the body short (1-3 bullets) and focused on "why".
 
