@@ -150,7 +150,7 @@ def run_all_aspects(
 
     def fail_input(message: str) -> NoReturn:
         # Leave a machine-readable artifact even for configuration/input errors.
-        write_validation_error_json(
+        _ = write_validation_error_json(
             out_dir,
             filename="aspects.input.error.json",
             kind="invalid_aspects",
@@ -175,6 +175,21 @@ def run_all_aspects(
         fail_input(
             f"Too many aspects: {len(aspect_list)} (max_llm_calls={max_llm_calls})"
         )
+
+    # Clear per-aspect error artifacts from previous runs.
+    # `.ai-review/` is a stable directory and is not guaranteed to be empty.
+    errors_dir = os.path.join(out_dir, "errors")
+    os.makedirs(errors_dir, exist_ok=True)
+    for a in normalized_aspects:
+        for fname in (
+            f"{a}.schema.error.json",
+            f"{a}.exec_failure.error.json",
+            f"{a}.unexpected.error.json",
+        ):
+            try:
+                os.remove(os.path.join(errors_dir, fname))
+            except FileNotFoundError:
+                pass
 
     # Keep concurrency bounded and deterministic.
     workers = min(max_workers, max_llm_calls, len(normalized_aspects))
@@ -245,7 +260,7 @@ def run_all_aspects(
                 # avoid duplicating errors artifacts for the same failure.
                 schema_err = os.path.join(out_dir, "errors", f"{a}.schema.error.json")
                 if not os.path.exists(schema_err):
-                    _write_aspect_failure_artifact(
+                    _ = _write_aspect_failure_artifact(
                         out_dir=out_dir,
                         aspect=a,
                         kind="exec_failure",
@@ -266,7 +281,7 @@ def run_all_aspects(
                 err_path = _write_aspect_error(
                     out_dir=out_dir, aspect=a, kind="unexpected", message=msg
                 )
-                _write_aspect_failure_artifact(
+                _ = _write_aspect_failure_artifact(
                     out_dir=out_dir,
                     aspect=a,
                     kind="unexpected",
