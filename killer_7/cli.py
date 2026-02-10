@@ -13,9 +13,15 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 from .artifacts import (
+    atomic_write_json_secure,
+    write_aspect_evidence_json,
+    write_aspect_policy_json,
     write_allowlist_paths_json,
+    write_aspects_evidence_index_json,
+    write_aspects_policy_index_json,
     write_content_warnings_json,
     write_context_bundle_txt,
+    write_evidence_json,
     write_pr_input_artifacts,
     write_sot_md,
     write_warnings_txt,
@@ -28,6 +34,24 @@ from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 from .aspects.orchestrate import run_all_aspects
+from .validate.evidence import (
+    apply_evidence_policy_to_findings,
+    EVIDENCE_POLICY_V1,
+    parse_context_bundle_index,
+    recompute_review_status,
+)
+
+
+def _strip_machine_fields_from_findings(
+    findings: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for f in findings:
+        item = dict(f)
+        item.pop("verified", None)
+        item.pop("original_priority", None)
+        out.append(item)
+    return out
 
 
 def now_utc_z() -> str:
@@ -210,14 +234,330 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
     # Keep scope_id deterministic and tied to the PR input.
     scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
-    aspects_result = run_all_aspects(
-        base_dir=os.getcwd(),
-        scope_id=scope_id,
-        context_bundle=diff_bundle,
-        sot=sot_md,
-        max_llm_calls=8,
-        max_workers=8,
+    deferred_exc: BlockedError | ExecFailureError | None = None
+    aspects_result: dict[str, object]
+    try:
+        aspects_result = run_all_aspects(
+            base_dir=os.getcwd(),
+            scope_id=scope_id,
+            context_bundle=diff_bundle,
+            sot=sot_md,
+            max_llm_calls=8,
+            max_workers=8,
+        )
+    except (BlockedError, ExecFailureError) as exc:
+        # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
+        # Continue to generate evidence/policy artifacts to aid debugging, then re-raise.
+        deferred_exc = exc
+        aspects_result = {
+            "scope_id": scope_id,
+            "index_path": os.path.join(out_dir, "aspects", "index.json"),
+        }
+
+    # Evidence validation + policy application (Issue #10)
+    context_index = parse_context_bundle_index(context_bundle_txt)
+
+    def require_int(v: object, *, key: str, aspect: str) -> int:
+        if type(v) is not int:
+            raise ExecFailureError(
+                f"Invalid evidence stats: {aspect}.{key} must be int"
+            )
+        return v
+
+    index_path = str(aspects_result.get("index_path", ""))
+    per_aspect: dict[str, object] = {}
+    evidence_index_aspects: list[dict[str, object]] = []
+    policy_index_aspects: list[dict[str, object]] = []
+    totals = {
+        "aspects_total": 0,
+        "aspects_ok": 0,
+        "aspects_failed": 0,
+        "total_in": 0,
+        "total_out": 0,
+        "excluded_count": 0,
+        "downgraded_count": 0,
+        "verified_true_count": 0,
+        "verified_false_count": 0,
+    }
+
+    if not index_path:
+        raise ExecFailureError("Missing aspects index_path")
+
+    if deferred_exc is not None and not os.path.isfile(index_path):
+        # Some input/config failures can occur before `index.json` is written.
+        # Preserve the original error in that case.
+        raise deferred_exc
+    if not os.path.isfile(index_path):
+        raise ExecFailureError("Missing aspects index.json artifact")
+
+    out_dir_real = os.path.realpath(out_dir)
+    index_path_real = os.path.realpath(index_path)
+    if not (
+        index_path_real == out_dir_real
+        or index_path_real.startswith(out_dir_real + os.sep)
+    ):
+        raise ExecFailureError(
+            "Invalid aspects index_path: must stay within artifacts dir"
+        )
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            index_payload = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        raise ExecFailureError(f"Failed to read aspects index JSON: {exc}") from exc
+
+    if not isinstance(index_payload, dict):
+        raise ExecFailureError("Invalid aspects index JSON: root must be object")
+
+    aspects_list = index_payload.get("aspects")
+    if not isinstance(aspects_list, list):
+        raise ExecFailureError("Invalid aspects index JSON: 'aspects' must be an array")
+
+    for i, entry in enumerate(aspects_list):
+        totals["aspects_total"] += 1
+        if not isinstance(entry, dict):
+            raise ExecFailureError(
+                f"Invalid aspects index JSON: aspects[{i}] must be an object"
+            )
+
+        aspect = entry.get("aspect")
+        ok = entry.get("ok")
+        rel_path = entry.get("result_path")
+
+        if not isinstance(aspect, str) or not aspect:
+            raise ExecFailureError(
+                f"Invalid aspects index JSON: aspects[{i}].aspect must be a non-empty string"
+            )
+        if not isinstance(ok, bool):
+            raise ExecFailureError(
+                f"Invalid aspects index JSON: aspects[{i}].ok must be boolean"
+            )
+        if ok is not True:
+            totals["aspects_failed"] += 1
+            aspect_info: dict[str, object] = {
+                "ok": False,
+            }
+
+            raw_input = rel_path if isinstance(rel_path, str) else ""
+            raw_input = raw_input.replace("\\", "/")
+            result_path = ""
+            if raw_input:
+                # Even on failure, avoid writing paths that escape the artifacts dir.
+                candidate = os.path.join(out_dir, raw_input)
+                candidate_real = os.path.realpath(candidate)
+                if candidate_real == out_dir_real or candidate_real.startswith(
+                    out_dir_real + os.sep
+                ):
+                    result_path = raw_input
+
+            error_kind = entry.get("error_kind")
+            error_message = entry.get("error_message")
+            if isinstance(error_kind, str) and error_kind:
+                aspect_info["error_kind"] = error_kind
+            if isinstance(error_message, str) and error_message:
+                aspect_info["error_message"] = error_message
+            if result_path:
+                aspect_info["result_path"] = result_path
+
+            per_aspect[aspect] = aspect_info
+
+            evidence_index_aspects.append(
+                {
+                    "aspect": aspect,
+                    "ok": False,
+                    "result_path": result_path,
+                    "evidence_path": "",
+                }
+            )
+            policy_index_aspects.append(
+                {
+                    "aspect": aspect,
+                    "ok": False,
+                    "result_path": result_path,
+                    "policy_path": "",
+                }
+            )
+            continue
+        if not isinstance(rel_path, str) or not rel_path:
+            raise ExecFailureError(
+                f"Invalid aspects index JSON: ok=true but result_path missing for aspect={aspect!r}"
+            )
+
+        totals["aspects_ok"] += 1
+
+        # Guard against path traversal in index.json.
+        out_dir_real = os.path.realpath(out_dir)
+        src_path = os.path.join(out_dir, rel_path)
+        src_path_real = os.path.realpath(src_path)
+        if not (
+            src_path_real == out_dir_real
+            or src_path_real.startswith(out_dir_real + os.sep)
+        ):
+            raise ExecFailureError(
+                f"Invalid aspect result_path: must stay within artifacts dir: {rel_path!r}"
+            )
+        try:
+            with open(src_path, "r", encoding="utf-8") as fh:
+                review_payload = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            raise ExecFailureError(
+                f"Failed to read aspect JSON: {src_path}: {exc}"
+            ) from exc
+
+        if not isinstance(review_payload, dict):
+            raise ExecFailureError(f"Aspect JSON must be an object: {src_path}")
+
+        findings = review_payload.get("findings")
+        if not isinstance(findings, list):
+            raise ExecFailureError(f"Aspect JSON findings must be an array: {src_path}")
+        if any(not isinstance(x, dict) for x in findings):
+            raise ExecFailureError(
+                f"Aspect JSON findings entries must be objects: {src_path}"
+            )
+        questions = review_payload.get("questions")
+        if not isinstance(questions, list):
+            raise ExecFailureError(
+                f"Aspect JSON questions must be an array: {src_path}"
+            )
+
+        out_findings, stats = apply_evidence_policy_to_findings(findings, context_index)
+
+        updated_review = dict(review_payload)
+        updated_review["findings"] = out_findings
+        updated_review["status"] = recompute_review_status(out_findings, questions)
+
+        policy_review = dict(review_payload)
+        policy_findings = _strip_machine_fields_from_findings(out_findings)
+        policy_review["findings"] = policy_findings
+        policy_review["status"] = recompute_review_status(policy_findings, questions)
+
+        # Preserve the raw (pre-policy) review for debugging/auditing.
+        raw_path = f"{os.path.splitext(src_path)[0]}.raw.json"
+        atomic_write_json_secure(raw_path, review_payload)
+
+        raw_rel_path = os.path.relpath(raw_path, out_dir).replace(os.sep, "/")
+        canonical_rel_path = rel_path.replace(os.sep, "/")
+
+        # Make the policy-applied review canonical for any downstream consumers
+        # that still read `.ai-review/aspects/<aspect>.json`.
+        atomic_write_json_secure(src_path, policy_review)
+
+        aspect_evidence_payload = {
+            "schema_version": 1,
+            "kind": "aspect_evidence",
+            "generated_at": now_utc_z(),
+            "scope_id": scope_id,
+            "aspect": aspect,
+            "input_path": raw_rel_path,
+            "canonical_path": canonical_rel_path,
+            "review": updated_review,
+            "stats": stats,
+        }
+
+        evidence_path = write_aspect_evidence_json(
+            out_dir, aspect=aspect, payload=aspect_evidence_payload
+        )
+
+        policy_path = write_aspect_policy_json(
+            out_dir, aspect=aspect, payload=policy_review
+        )
+
+        per_aspect[aspect] = {
+            "ok": True,
+            "input_path": raw_rel_path,
+            "canonical_path": canonical_rel_path,
+            "evidence_path": os.path.relpath(evidence_path, out_dir).replace(
+                os.sep, "/"
+            ),
+            "policy_path": os.path.relpath(policy_path, out_dir).replace(os.sep, "/"),
+            "stats": stats,
+        }
+
+        evidence_index_aspects.append(
+            {
+                "aspect": aspect,
+                "ok": True,
+                "result_path": canonical_rel_path,
+                "input_path": raw_rel_path,
+                "evidence_path": os.path.relpath(evidence_path, out_dir).replace(
+                    os.sep, "/"
+                ),
+            }
+        )
+        policy_index_aspects.append(
+            {
+                "aspect": aspect,
+                "ok": True,
+                "result_path": rel_path.replace(os.sep, "/"),
+                "policy_path": os.path.relpath(policy_path, out_dir).replace(
+                    os.sep, "/"
+                ),
+            }
+        )
+
+        if not isinstance(stats, dict):
+            raise ExecFailureError(
+                f"Invalid evidence stats: {aspect}.stats must be an object"
+            )
+
+        total_in = require_int(stats.get("total_in"), key="total_in", aspect=aspect)
+        total_out = require_int(stats.get("total_out"), key="total_out", aspect=aspect)
+        excluded_count = require_int(
+            stats.get("excluded_count"), key="excluded_count", aspect=aspect
+        )
+        downgraded_count = require_int(
+            stats.get("downgraded_count"), key="downgraded_count", aspect=aspect
+        )
+        verified_true_count = require_int(
+            stats.get("verified_true_count"), key="verified_true_count", aspect=aspect
+        )
+        if verified_true_count > total_in:
+            raise ExecFailureError(
+                f"Invalid evidence stats: {aspect}.verified_true_count must be <= total_in"
+            )
+
+        totals["total_in"] += total_in
+        totals["total_out"] += total_out
+        totals["excluded_count"] += excluded_count
+        totals["downgraded_count"] += downgraded_count
+        totals["verified_true_count"] += verified_true_count
+        totals["verified_false_count"] += total_in - verified_true_count
+
+    evidence_payload = {
+        "schema_version": 1,
+        "kind": "evidence_summary",
+        "generated_at": now_utc_z(),
+        "scope_id": scope_id,
+        "policy": EVIDENCE_POLICY_V1,
+        "totals": totals,
+        "per_aspect": per_aspect,
+    }
+
+    evidence_json_path = write_evidence_json(out_dir, evidence_payload)
+
+    evidence_index_path = write_aspects_evidence_index_json(
+        out_dir,
+        {
+            "schema_version": 1,
+            "kind": "aspects_evidence_index",
+            "generated_at": now_utc_z(),
+            "scope_id": scope_id,
+            "aspects": evidence_index_aspects,
+        },
     )
+    policy_index_path = write_aspects_policy_index_json(
+        out_dir,
+        {
+            "schema_version": 1,
+            "kind": "aspects_policy_index",
+            "generated_at": now_utc_z(),
+            "scope_id": scope_id,
+            "aspects": policy_index_aspects,
+        },
+    )
+
+    if deferred_exc is not None:
+        raise deferred_exc
 
     return {
         "action": "review",
@@ -229,6 +569,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "index_path": os.path.relpath(
                 str(aspects_result["index_path"]), os.getcwd()
             ),
+            "evidence_index_path": os.path.relpath(evidence_index_path, os.getcwd()),
+            "policy_index_path": os.path.relpath(policy_index_path, os.getcwd()),
         },
         "artifacts": {
             "diff_patch": os.path.relpath(artifacts["diff_patch"], os.getcwd()),
@@ -243,6 +585,13 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "sot_md": os.path.relpath(sot_md_path, os.getcwd()),
             "context_bundle_txt": os.path.relpath(context_bundle_path, os.getcwd()),
             "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
+            "evidence_json": os.path.relpath(evidence_json_path, os.getcwd()),
+            "aspects_evidence_index_json": os.path.relpath(
+                evidence_index_path, os.getcwd()
+            ),
+            "aspects_policy_index_json": os.path.relpath(
+                policy_index_path, os.getcwd()
+            ),
         },
     }
 
