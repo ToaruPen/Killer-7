@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
+import importlib
 from pathlib import Path
 from typing import Any, Optional
-
-import jsonschema
 
 from ..errors import ExecFailureError
 
@@ -32,7 +31,7 @@ def _load_schema(path: Path) -> dict[str, Any]:
     return data
 
 
-def _format_path(error: jsonschema.ValidationError) -> str:
+def _format_path(error: Any) -> str:
     if not error.path:
         return "$"
     parts = []
@@ -71,6 +70,13 @@ def _validate_line_range_semantics(payload: dict[str, Any]) -> list[str]:
 def validate_aspect_review_json(
     payload: object, *, expected_scope_id: Optional[str]
 ) -> None:
+    try:
+        js_validators = importlib.import_module("jsonschema.validators")
+    except ModuleNotFoundError as exc:
+        raise ExecFailureError(
+            "Missing dependency: jsonschema. Install with: pip install -r requirements-killer7.txt"
+        ) from exc
+
     if not isinstance(payload, dict):
         raise ExecFailureError("Review JSON must be an object")
 
@@ -85,7 +91,13 @@ def validate_aspect_review_json(
             )
 
     try:
-        validator_cls = jsonschema.validators.validator_for(schema)
+        validator_for = getattr(js_validators, "validator_for", None)
+        if validator_for is None:
+            raise ExecFailureError(
+                "Invalid jsonschema installation: missing validator_for"
+            )
+
+        validator_cls = validator_for(schema)
         validator_cls.check_schema(schema)
         validator = validator_cls(schema)
     except Exception as exc:  # noqa: BLE001
