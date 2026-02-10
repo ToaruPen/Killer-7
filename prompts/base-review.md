@@ -39,6 +39,8 @@ Scope ID: {{SCOPE_ID}}
   - questions (array of strings)
   - overall_explanation (non-empty string)
 
+Output MUST NOT include any other top-level keys.
+
 - Status constraints:
   - Approved: findings must be [] and questions must be []
   - Approved with nits: no P0/P1 findings; questions must be []
@@ -49,11 +51,22 @@ Scope ID: {{SCOPE_ID}}
   - Start with 1-2 sentences summarizing what the change does.
   - Keep it short; do not repeat every finding.
 
-- findings[] item shape (no extra keys):
+- findings[] required keys (no extras):
   - title (string, 1-120 chars)
   - body (non-empty string; include a short quote/snippet as evidence)
   - priority (one of: P0 / P1 / P2 / P3)
+  - sources (array of non-empty strings; use [] only when you truly cannot cite evidence)
   - code_location (object)
+
+- sources rules:
+  - Each entry MUST match a `# SRC: <path>` from the Inputs.
+  - Format: either `path/to/file.ext` or `path/to/file.ext#L10-L20`.
+  - Include at least one source whose path matches `code_location.repo_relative_path`.
+  - Do NOT output `verified` or `original_priority` in findings; those are reserved for machine verification.
+
+- Note:
+  - If you cannot provide valid sources for a potential finding, ask a question instead.
+  - If `sources` is empty or contains unresolved references, the finding may be treated as unverified by evidence policy.
 
 - code_location shape (no extra keys):
   - repo_relative_path (repo-relative path; not absolute; no '..')

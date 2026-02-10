@@ -1,5 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Killer-7 Review Summary (v3)",
+  "description": "Schema for aggregated review-summary JSON produced by Killer-7. This may include aspect_statuses and evidence-derived fields.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -30,6 +32,18 @@
         "Question"
       ]
     },
+    "aspect_statuses": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "Approved",
+          "Approved with nits",
+          "Blocked",
+          "Question"
+        ]
+      }
+    },
     "findings": {
       "type": "array",
       "items": {
@@ -39,6 +53,7 @@
           "title",
           "body",
           "priority",
+          "sources",
           "code_location"
         ],
         "properties": {
@@ -112,18 +127,6 @@
             }
           }
         }
-      }
-    },
-    "aspect_statuses": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "string",
-        "enum": [
-          "Approved",
-          "Approved with nits",
-          "Blocked",
-          "Question"
-        ]
       }
     },
     "questions": {

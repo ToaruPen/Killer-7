@@ -12,6 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from .github.pr_input import ChangedFile, PrInput
+from .aspect_id import normalize_aspect
 
 
 def now_utc_z() -> str:
@@ -143,6 +144,46 @@ def write_sot_md(out_dir: str, content: str) -> str:
 def write_context_bundle_txt(out_dir: str, content: str) -> str:
     path = os.path.join(out_dir, "context-bundle.txt")
     _atomic_write_text(path, (content or "").rstrip("\n"))
+    return path
+
+
+def write_evidence_json(out_dir: str, payload: object) -> str:
+    path = os.path.join(out_dir, "evidence.json")
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def write_aspect_evidence_json(out_dir: str, *, aspect: str, payload: object) -> str:
+    a = normalize_aspect(aspect)
+    aspects_dir = os.path.join(out_dir, "aspects")
+    os.makedirs(aspects_dir, mode=0o700, exist_ok=True)
+    path = os.path.join(aspects_dir, f"{a}.evidence.json")
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def write_aspect_policy_json(out_dir: str, *, aspect: str, payload: object) -> str:
+    a = normalize_aspect(aspect)
+    aspects_dir = os.path.join(out_dir, "aspects")
+    os.makedirs(aspects_dir, mode=0o700, exist_ok=True)
+    path = os.path.join(aspects_dir, f"{a}.policy.json")
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def write_aspects_policy_index_json(out_dir: str, payload: object) -> str:
+    aspects_dir = os.path.join(out_dir, "aspects")
+    os.makedirs(aspects_dir, mode=0o700, exist_ok=True)
+    path = os.path.join(aspects_dir, "index.policy.json")
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def write_aspects_evidence_index_json(out_dir: str, payload: object) -> str:
+    aspects_dir = os.path.join(out_dir, "aspects")
+    os.makedirs(aspects_dir, mode=0o700, exist_ok=True)
+    path = os.path.join(aspects_dir, "index.evidence.json")
+    atomic_write_json_secure(path, payload)
     return path
 
 

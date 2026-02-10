@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable, NoReturn
@@ -12,6 +11,7 @@ from ..artifacts import (
     write_validation_error_json,
 )
 from ..errors import BlockedError, ExecFailureError
+from ..aspect_id import normalize_aspect
 from .run_one import ViewpointRunner, run_one_aspect
 
 
@@ -24,17 +24,6 @@ ASPECTS_V1: tuple[str, ...] = (
     "performance",
     "refactoring",
 )
-
-
-_ASPECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-
-
-def _normalize_aspect(value: str) -> str:
-    a = (value or "").strip().lower()
-    a = a.replace("_", "-")
-    if not a or not _ASPECT_RE.match(a):
-        raise ExecFailureError(f"Invalid aspect: {value!r}")
-    return a
 
 
 @dataclass(frozen=True)
@@ -165,7 +154,7 @@ def run_all_aspects(
         fail_input("No aspects to run")
 
     try:
-        normalized_aspects = tuple(_normalize_aspect(a) for a in aspect_list)
+        normalized_aspects = tuple(normalize_aspect(a) for a in aspect_list)
     except ExecFailureError as exc:
         fail_input(str(exc))
     if len(set(normalized_aspects)) != len(normalized_aspects):

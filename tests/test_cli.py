@@ -278,6 +278,7 @@ class TestCli(unittest.TestCase):
 
             sot_text = sot_md.read_text(encoding="utf-8")
             self.assertIn("# SRC: docs/prd/killer-7.md", sot_text)
+            self.assertIn("L1: ", sot_text)
             self.assertLessEqual(len(sot_text.splitlines()), 250)
 
             bundle_text = context_bundle.read_text(encoding="utf-8")
@@ -324,3 +325,50 @@ class TestCli(unittest.TestCase):
                 "refactoring",
             ]:
                 self.assertTrue((out_dir / f"{a}.json").is_file())
+
+    def test_creates_evidence_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            evidence = out_dir / "evidence.json"
+            self.assertTrue(evidence.is_file())
+
+            payload = json.loads(evidence.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("schema_version"), 1)
+            self.assertEqual(payload.get("kind"), "evidence_summary")
+            self.assertIn("per_aspect", payload)
+
+            aspects_dir = out_dir / "aspects"
+            for a in [
+                "correctness",
+                "readability",
+                "testing",
+                "test-audit",
+                "security",
+                "performance",
+                "refactoring",
+            ]:
+                p = aspects_dir / f"{a}.evidence.json"
+                self.assertTrue(p.is_file())
+                payload = json.loads(p.read_text(encoding="utf-8"))
+                self.assertEqual(payload.get("schema_version"), 1)
+                self.assertEqual(payload.get("kind"), "aspect_evidence")
+                self.assertIn("review", payload)
+
+                self.assertTrue((aspects_dir / f"{a}.policy.json").is_file())
+                self.assertTrue((aspects_dir / f"{a}.raw.json").is_file())
+
+            self.assertTrue((aspects_dir / "index.evidence.json").is_file())
+            self.assertTrue((aspects_dir / "index.policy.json").is_file())

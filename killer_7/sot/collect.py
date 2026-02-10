@@ -31,7 +31,12 @@ def build_sot_markdown(
         body = contents_by_path.get(path, "")
         body = "" if body is None else str(body)
         body = body.replace("\r\n", "\n").replace("\r", "\n")
-        parts.append(body.rstrip("\n") + "\n")
+
+        # Prefix SoT body lines to avoid ambiguity with `# SRC:` headers.
+        # This also gives evidence verification a stable per-file line index.
+        body_lines = body.rstrip("\n").split("\n") if body else [""]
+        for i, line in enumerate(body_lines, start=1):
+            parts.append(f"L{i}: {line}\n")
 
     text = "".join(parts)
 
