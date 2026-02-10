@@ -98,6 +98,52 @@ class TestRunOneAspect(unittest.TestCase):
             )
             self.assertTrue(isinstance(payload.get("errors"), list))
 
+    def test_accepts_finding_sources(self) -> None:
+        from killer_7.aspects.run_one import run_one_aspect
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = _FakeRunner(
+                payload={
+                    "schema_version": 3,
+                    "scope_id": "scope-1",
+                    "status": "Blocked",
+                    "findings": [
+                        {
+                            "title": "t",
+                            "body": "b",
+                            "priority": "P0",
+                            "sources": ["a.txt#L1-L2"],
+                            "code_location": {
+                                "repo_relative_path": "a.txt",
+                                "line_range": {"start": 1, "end": 2},
+                            },
+                        }
+                    ],
+                    "questions": [],
+                    "overall_explanation": "ok",
+                }
+            )
+            res = run_one_aspect(
+                base_dir=td,
+                aspect="correctness",
+                scope_id="scope-1",
+                context_bundle="CTX",
+                runner=runner,
+            )
+
+            self.assertEqual(res["aspect"], "correctness")
+            self.assertEqual(res["scope_id"], "scope-1")
+            p = Path(str(res["aspect_result_path"]))
+            self.assertTrue(p.is_file())
+
+            payload = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("schema_version"), 3)
+            self.assertEqual(payload.get("scope_id"), "scope-1")
+            self.assertEqual(payload.get("status"), "Blocked")
+            findings = payload.get("findings")
+            self.assertTrue(isinstance(findings, list))
+            self.assertEqual(findings[0].get("sources"), ["a.txt#L1-L2"])
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

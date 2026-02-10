@@ -30,6 +30,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-agentic-sdd.txt
+            requirements-killer7.txt
 
       - name: Install shellcheck
         run: |
@@ -44,6 +45,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-agentic-sdd.txt
+          python -m pip install -r requirements-killer7.txt
           python -m pip install ruff bandit
 
       - name: pip check
