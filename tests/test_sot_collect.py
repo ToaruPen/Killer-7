@@ -20,6 +20,9 @@ class TestSotCollect(unittest.TestCase):
         # Deterministic ordering: paths should be sorted.
         self.assertLess(text.find("# SRC: a.md"), text.find("# SRC: b.md"))
 
+        # SoT body is line-prefixed (avoids ambiguity with `# SRC:` headers).
+        self.assertIn("# SRC: a.md\nL1: a\n", text)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
