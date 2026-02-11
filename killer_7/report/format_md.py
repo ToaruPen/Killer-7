@@ -86,3 +86,62 @@ def format_review_summary_md(summary: Mapping[str, object]) -> str:
                 lines.append(f"- {q}")
 
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _finding_counts(findings: list[Mapping[str, object]]) -> dict[str, int]:
+    counts = {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 0,
+        "verified": 0,
+        "unverified": 0,
+    }
+    for item in findings:
+        pr = item.get("priority")
+        if isinstance(pr, str) and pr in ("P0", "P1", "P2", "P3"):
+            counts[pr] += 1
+
+        verified = item.get("verified")
+        if verified is True:
+            counts["verified"] += 1
+        elif verified is False:
+            counts["unverified"] += 1
+    return counts
+
+
+def format_pr_summary_comment_md(
+    summary: Mapping[str, object], *, marker: str, head_sha: str
+) -> str:
+    findings_obj = summary.get("findings")
+    findings = (
+        [x for x in findings_obj if isinstance(x, Mapping)]
+        if isinstance(findings_obj, list)
+        else []
+    )
+    counts = _finding_counts(findings)
+
+    lines: list[str] = []
+    lines.append(marker)
+    lines.append("")
+    lines.append("# Killer-7 Review Summary")
+    lines.append("")
+    status_obj = summary.get("status")
+    status_txt = status_obj if isinstance(status_obj, str) and status_obj else "unknown"
+    lines.append(f"- Status: {status_txt}")
+    lines.append("")
+    lines.append("## Counts")
+    lines.append(f"- P0: {counts['P0']}")
+    lines.append(f"- P1: {counts['P1']}")
+    lines.append(f"- P2: {counts['P2']}")
+    lines.append(f"- P3: {counts['P3']}")
+    lines.append(f"- verified: {counts['verified']}")
+    lines.append(f"- unverified: {counts['unverified']}")
+    lines.append("")
+    lines.append("## Run Meta")
+    lines.append(f"- head_sha: `{head_sha[:12]}`")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(format_review_summary_md(summary).rstrip("\n"))
+    return "\n".join(lines).rstrip("\n") + "\n"

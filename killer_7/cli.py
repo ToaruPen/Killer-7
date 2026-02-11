@@ -31,6 +31,7 @@ from .artifacts import (
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.pr_input import fetch_pr_input
+from .github.post_summary import post_summary_comment
 from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
@@ -115,6 +116,7 @@ def build_parser() -> ThrowingArgumentParser:
     review = sub.add_parser("review", help="Run review for a GitHub PR")
     review.add_argument("--repo", required=True, type=parse_repo)
     review.add_argument("--pr", required=True, type=parse_pr)
+    review.add_argument("--post", action="store_true")
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -579,6 +581,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     summary_json_path = ""
     summary_md_path = ""
+    summary_payload: dict[str, object] | None = None
+    post_result: dict[str, object] = {}
     if deferred_exc is None or isinstance(deferred_exc, BlockedError):
         summary_payload = merge_review_summary(
             scope_id=scope_id, aspect_reviews=summary_reviews
@@ -615,9 +619,17 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         summary_status = summary_payload.get("status")
 
         if summary_status == "Blocked" and deferred_exc is None:
-            raise BlockedError(
+            deferred_exc = BlockedError(
                 f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
             )
+
+    if args.post and summary_payload is not None:
+        post_result = post_summary_comment(
+            repo=args.repo,
+            pr=args.pr,
+            head_sha=pr_input.head_sha,
+            summary=summary_payload,
+        )
 
     if deferred_exc is not None:
         raise deferred_exc
@@ -655,6 +667,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "review_summary_md": os.path.relpath(summary_md_path, os.getcwd())
             if summary_md_path
             else "",
+            "summary_comment": post_result,
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),

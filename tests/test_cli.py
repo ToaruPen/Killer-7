@@ -22,6 +22,29 @@ import json
 import sys
 
 args = sys.argv[1:]
+STATE_PATH = "fake-gh-state.json"
+
+
+def read_state() -> dict:
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {"comments": [], "next_id": 1}
+
+
+def write_state(state: dict) -> None:
+    with open(STATE_PATH, "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+
+
+def arg_value(flag: str) -> str:
+    i = 0
+    while i < len(args):
+        if args[i] == flag and i + 1 < len(args):
+            return args[i + 1]
+        i += 1
+    return ""
 
 
 def has(flag: str) -> bool:
@@ -71,7 +94,51 @@ if args[:2] == ["pr", "view"]:
 
 if args[:1] == ["api"]:
     # gh api [flags...] <endpoint>
-    endpoint = args[-1]
+    endpoint = ""
+    for token in args[1:]:
+        if token.startswith("repos/"):
+            endpoint = token
+            break
+    if not endpoint:
+        sys.stderr.write("fake gh: missing endpoint\\n")
+        raise SystemExit(2)
+
+    if endpoint.endswith("/issues/123/comments"):
+        if "-X" in args and arg_value("-X") == "POST":
+            body = arg_value("-f").removeprefix("body=")
+            state = read_state()
+            comment = {"id": state["next_id"], "body": body}
+            state["next_id"] += 1
+            state["comments"].append(comment)
+            write_state(state)
+            sys.stdout.write(json.dumps(comment))
+            raise SystemExit(0)
+
+        state = read_state()
+        comments = state["comments"]
+        if has("--slurp"):
+            sys.stdout.write(json.dumps([comments]))
+        else:
+            # Simulate default API pagination: without --paginate only first page is returned.
+            sys.stdout.write(json.dumps(comments[:1]))
+        raise SystemExit(0)
+
+    if endpoint.startswith("repos/owner/name/issues/comments/"):
+        if "-X" not in args or arg_value("-X") != "PATCH":
+            sys.stderr.write("Method Not Allowed\\n")
+            raise SystemExit(1)
+        body = arg_value("-f").removeprefix("body=")
+        comment_id = int(endpoint.rsplit("/", 1)[-1])
+        state = read_state()
+        for comment in state["comments"]:
+            if int(comment.get("id", 0)) == comment_id:
+                comment["body"] = body
+                write_state(state)
+                sys.stdout.write(json.dumps(comment))
+                raise SystemExit(0)
+        sys.stderr.write("Not Found\\n")
+        raise SystemExit(1)
+
     if endpoint.endswith("/pulls/123/files"):
         files = [
             {
@@ -623,3 +690,90 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
             self.assertFalse(summary_json.exists())
             self.assertFalse(summary_md.exists())
+
+    def test_post_summary_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            body = comments[0].get("body", "")
+            self.assertIn("<!-- killer-7:summary:v1 -->", body)
+            self.assertIn("## Counts", body)
+            self.assertIn("head_sha", body)
+
+    def test_post_summary_updates_existing_marker_beyond_first_page(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {"id": 1, "body": "older comment"},
+                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold"},
+                        ],
+                        "next_id": 3,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 2)
+            self.assertIn("<!-- killer-7:summary:v1 -->", comments[1].get("body", ""))
+            self.assertIn("## Counts", comments[1].get("body", ""))
+
+    def test_post_summary_even_when_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
