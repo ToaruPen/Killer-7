@@ -110,6 +110,21 @@ if args[:1] == ["api"]:
             comment = {"id": state["next_id"], "body": body}
             state["next_id"] += 1
             state["comments"].append(comment)
+
+            # Test hook: simulate a concurrent runner creating another marker comment
+            # right after this create call.
+            if state.get("race_duplicate_on_post"):
+                state["comments"].append(
+                    {
+                        "id": state["next_id"],
+                        "body": state.get(
+                            "race_marker_body", "<!-- killer-7:summary:v1 -->\\nrace"
+                        ),
+                    }
+                )
+                state["next_id"] += 1
+                state["race_duplicate_on_post"] = False
+
             write_state(state)
             sys.stdout.write(json.dumps(comment))
             raise SystemExit(0)
@@ -124,17 +139,23 @@ if args[:1] == ["api"]:
         raise SystemExit(0)
 
     if endpoint.startswith("repos/owner/name/issues/comments/"):
-        if "-X" not in args or arg_value("-X") != "PATCH":
+        method = arg_value("-X")
+        if "-X" not in args or method not in ("PATCH", "DELETE"):
             sys.stderr.write("Method Not Allowed\\n")
             raise SystemExit(1)
-        body = arg_value("-f").removeprefix("body=")
         comment_id = int(endpoint.rsplit("/", 1)[-1])
         state = read_state()
-        for comment in state["comments"]:
+        for i, comment in enumerate(state["comments"]):
             if int(comment.get("id", 0)) == comment_id:
-                comment["body"] = body
-                write_state(state)
-                sys.stdout.write(json.dumps(comment))
+                if method == "PATCH":
+                    body = arg_value("-f").removeprefix("body=")
+                    comment["body"] = body
+                    write_state(state)
+                    sys.stdout.write(json.dumps(comment))
+                else:
+                    del state["comments"][i]
+                    write_state(state)
+                    sys.stdout.write("{}")
                 raise SystemExit(0)
         sys.stderr.write("Not Found\\n")
         raise SystemExit(1)
@@ -757,6 +778,74 @@ class TestCli(unittest.TestCase):
             self.assertEqual(len(comments), 2)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[1].get("body", ""))
             self.assertIn("## Counts", comments[1].get("body", ""))
+
+    def test_post_summary_updates_newest_marker_and_dedupes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {"id": 1, "body": "<!-- killer-7:summary:v1 -->\nold-1"},
+                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold-2"},
+                        ],
+                        "next_id": 3,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0].get("id"), 2)
+            self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_reconciles_create_race_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "race_duplicate_on_post": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
+            self.assertIn("## Counts", comments[0].get("body", ""))
 
     def test_post_summary_even_when_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as td:

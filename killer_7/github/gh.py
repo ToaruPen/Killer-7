@@ -171,6 +171,10 @@ class GhClient:
             )
         return data
 
+    def delete_issue_comment(self, *, repo: str, comment_id: int) -> None:
+        endpoint = f"repos/{repo}/issues/comments/{comment_id}"
+        self._run(["api", "-X", "DELETE", endpoint])
+
     def repo_commit_tree_sha(self, *, repo: str, ref: str) -> str:
         endpoint = f"repos/{repo}/commits/{quote(ref, safe='')}"
         data = self.api_json(endpoint=endpoint)
