@@ -23,6 +23,9 @@ Killer-7は、GitHub PRを入力として、複数観点のLLMレビューを自
 Python 3.11:
 
 ```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements-killer7.txt
+
 python3.11 -m unittest discover -s tests -p 'test*.py'
 ```
 
@@ -34,6 +37,14 @@ python3.11 -m unittest discover -s tests -p 'test*.py'
   - `./.ai-review/diff.patch`
   - `./.ai-review/changed-files.tsv`
   - `./.ai-review/meta.json`
+
+- evidence検証（K7-10）:
+  - `./.ai-review/evidence.json`
+  - `./.ai-review/aspects/<aspect>.raw.json`
+  - `./.ai-review/aspects/<aspect>.evidence.json`
+  - `./.ai-review/aspects/<aspect>.policy.json`
+  - `./.ai-review/aspects/index.evidence.json`
+  - `./.ai-review/aspects/index.policy.json`
 
 ## 終了コード
 
