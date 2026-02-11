@@ -104,6 +104,13 @@ if args[:2] == ["pr", "view"]:
 
 
 if args[:1] == ["api"]:
+    if args[1:] == ["user"]:
+        state = read_state()
+        viewer = state.get("viewer_login")
+        login = viewer if isinstance(viewer, str) and viewer else "owner"
+        sys.stdout.write(json.dumps({"login": login}))
+        raise SystemExit(0)
+
     # gh api [flags...] <endpoint>
     endpoint = ""
     for token in args[1:]:
@@ -118,7 +125,9 @@ if args[:1] == ["api"]:
         if "-X" in args and arg_value("-X") == "POST":
             body = arg_value("-f").removeprefix("body=")
             state = read_state()
-            comment = {"id": state["next_id"], "body": body}
+            viewer = state.get("viewer_login")
+            login = viewer if isinstance(viewer, str) and viewer else "owner"
+            comment = {"id": state["next_id"], "body": body, "user": {"login": login}}
             state["next_id"] += 1
             state["comments"].append(comment)
 
@@ -131,6 +140,7 @@ if args[:1] == ["api"]:
                         "body": state.get(
                             "race_marker_body", "<!-- killer-7:summary:v1 -->\\nrace"
                         ),
+                        "user": {"login": login},
                     }
                 )
                 state["next_id"] += 1
@@ -783,7 +793,11 @@ class TestCli(unittest.TestCase):
                     {
                         "comments": [
                             {"id": 1, "body": "older comment"},
-                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold"},
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold",
+                                "user": {"login": "owner"},
+                            },
                         ],
                         "next_id": 3,
                     }
@@ -817,8 +831,16 @@ class TestCli(unittest.TestCase):
                 json.dumps(
                     {
                         "comments": [
-                            {"id": 1, "body": "<!-- killer-7:summary:v1 -->\nold-1"},
-                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold-2"},
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-1",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-2",
+                                "user": {"login": "owner"},
+                            },
                         ],
                         "next_id": 3,
                     }
@@ -928,8 +950,16 @@ class TestCli(unittest.TestCase):
                 json.dumps(
                     {
                         "comments": [
-                            {"id": 1, "body": "<!-- killer-7:summary:v1 -->\nold-1"},
-                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold-2"},
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-1",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-2",
+                                "user": {"login": "owner"},
+                            },
                         ],
                         "next_id": 3,
                         "patch_not_found_ids": [2],
@@ -951,6 +981,48 @@ class TestCli(unittest.TestCase):
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 1)
             self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_ignores_marker_from_other_author(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nforeign",
+                                "user": {"login": "someone-else"},
+                            }
+                        ],
+                        "next_id": 2,
+                        "viewer_login": "owner",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 2)
+            self.assertEqual(comments[0].get("id"), 1)
+            self.assertIn("foreign", comments[0].get("body", ""))
+            self.assertEqual(comments[1].get("id"), 2)
+            self.assertEqual(comments[1].get("user", {}).get("login"), "owner")
+            self.assertIn("## Counts", comments[1].get("body", ""))
 
     def test_post_summary_even_when_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as td:

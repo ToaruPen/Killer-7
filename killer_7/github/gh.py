@@ -88,6 +88,20 @@ class GhClient:
             raise ExecFailureError("Missing headRefOid in `gh pr view` output")
         return head
 
+    def viewer_login(self) -> str:
+        raw = self._run(["api", "user"])
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api user` returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise ExecFailureError("Unexpected JSON shape from `gh api user`")
+        login_obj = data.get("login")
+        login = login_obj.strip() if isinstance(login_obj, str) else ""
+        if not login:
+            raise ExecFailureError("Missing login in `gh api user` output")
+        return login
+
     def pr_files(self, *, repo: str, pr: int) -> list[dict[str, Any]]:
         endpoint = f"repos/{repo}/pulls/{pr}/files"
         raw = self._run(["api", "--paginate", "--slurp", endpoint])

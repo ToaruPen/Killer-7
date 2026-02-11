@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from ..errors import ExecFailureError
 from .gh import GhClient
@@ -19,13 +20,24 @@ def _is_not_found_error(exc: ExecFailureError) -> bool:
     return "not found" in str(exc).lower()
 
 
+def _comment_author_login(comment: Mapping[str, object]) -> str:
+    user_obj = comment.get("user")
+    if not isinstance(user_obj, dict):
+        return ""
+    user_dict = cast(dict[str, object], user_obj)
+    login_obj = user_dict.get("login")
+    return login_obj.strip() if isinstance(login_obj, str) else ""
+
+
 def _marker_comments(
-    comments: list[dict[str, object]], *, marker: str
+    comments: list[dict[str, object]], *, marker: str, author_login: str
 ) -> list[dict[str, object]]:
     return [
         c
         for c in comments
-        if isinstance(c.get("body"), str) and marker in str(c.get("body"))
+        if _comment_author_login(c) == author_login
+        and isinstance(c.get("body"), str)
+        and marker in str(c.get("body"))
     ]
 
 
@@ -74,10 +86,14 @@ def _create_marker_comment(*, client: GhClient, repo: str, pr: int, body: str) -
     return created_id
 
 
-def _latest_marker_id(*, client: GhClient, repo: str, pr: int) -> int | None:
+def _latest_marker_id(
+    *, client: GhClient, repo: str, pr: int, author_login: str
+) -> int | None:
     latest = _latest_marker_comment(
         _marker_comments(
-            client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
         )
     )
     if latest is None:
@@ -91,6 +107,7 @@ def _update_with_not_found_recovery(
     client: GhClient,
     repo: str,
     pr: int,
+    author_login: str,
     preferred_comment_id: int,
     body: str,
 ) -> int:
@@ -105,7 +122,9 @@ def _update_with_not_found_recovery(
         except ExecFailureError as exc:
             if not _is_not_found_error(exc):
                 raise
-            latest_id = _latest_marker_id(client=client, repo=repo, pr=pr)
+            latest_id = _latest_marker_id(
+                client=client, repo=repo, pr=pr, author_login=author_login
+            )
             if latest_id is None:
                 return _create_marker_comment(
                     client=client,
@@ -122,6 +141,7 @@ def post_summary_comment(
     *, repo: str, pr: int, head_sha: str, summary: Mapping[str, object]
 ) -> dict[str, object]:
     client = GhClient.from_env()
+    author_login = client.viewer_login()
     body = format_pr_summary_comment_md(
         summary,
         marker=SUMMARY_MARKER,
@@ -129,7 +149,11 @@ def post_summary_comment(
     )
 
     comments = client.issue_comments(repo=repo, issue=pr)
-    existing = _marker_comments(comments, marker=SUMMARY_MARKER)
+    existing = _marker_comments(
+        comments,
+        marker=SUMMARY_MARKER,
+        author_login=author_login,
+    )
 
     if existing:
         target = _latest_marker_comment(existing)
@@ -141,12 +165,15 @@ def post_summary_comment(
             client=client,
             repo=repo,
             pr=pr,
+            author_login=author_login,
             preferred_comment_id=keep_id,
             body=body,
         )
 
         latest_comments = _marker_comments(
-            client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
         )
         latest = _latest_marker_comment(latest_comments)
         if latest is not None:
@@ -156,6 +183,7 @@ def post_summary_comment(
                     client=client,
                     repo=repo,
                     pr=pr,
+                    author_login=author_login,
                     preferred_comment_id=latest_id,
                     body=body,
                 )
@@ -164,7 +192,9 @@ def post_summary_comment(
             client=client,
             repo=repo,
             marker_comments=_marker_comments(
-                client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+                client.issue_comments(repo=repo, issue=pr),
+                marker=SUMMARY_MARKER,
+                author_login=author_login,
             ),
             keep_id=keep_id,
         )
@@ -177,7 +207,9 @@ def post_summary_comment(
     created_id = _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
 
     latest_comments = _marker_comments(
-        client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+        client.issue_comments(repo=repo, issue=pr),
+        marker=SUMMARY_MARKER,
+        author_login=author_login,
     )
     latest = _latest_marker_comment(latest_comments)
 
@@ -193,6 +225,7 @@ def post_summary_comment(
                 client=client,
                 repo=repo,
                 pr=pr,
+                author_login=author_login,
                 preferred_comment_id=keep_id,
                 body=body,
             )
@@ -201,7 +234,9 @@ def post_summary_comment(
         client=client,
         repo=repo,
         marker_comments=_marker_comments(
-            client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
         ),
         keep_id=keep_id,
     )
