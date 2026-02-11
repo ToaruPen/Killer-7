@@ -18,6 +18,7 @@ def _write_fake_gh(path: Path) -> None:
     path.write_text(
         """#!/usr/bin/env python3
 import json
+import os
 import sys
 
 args = sys.argv[1:]
@@ -36,6 +37,24 @@ if args[:2] == ["pr", "diff"]:
     raise SystemExit(0)
 
 if args[:2] == ["pr", "view"]:
+    seq = os.environ.get("KILLER7_TEST_HEAD_SEQ", "")
+    if seq:
+        values = [x.strip() for x in seq.split(",") if x.strip()]
+        if values:
+            state_file = os.environ.get(
+                "KILLER7_TEST_HEAD_SEQ_STATE", ".fake-gh-head-seq-count"
+            )
+            try:
+                with open(state_file, "r", encoding="utf-8") as fh:
+                    count = int((fh.read() or "0").strip() or "0")
+            except FileNotFoundError:
+                count = 0
+            idx = count if count < len(values) else len(values) - 1
+            with open(state_file, "w", encoding="utf-8") as fh:
+                fh.write(str(count + 1))
+            sys.stdout.write(json.dumps({"headRefOid": values[idx]}))
+            raise SystemExit(0)
+
     sys.stdout.write(json.dumps({"headRefOid": "0123456789abcdef"}))
     raise SystemExit(0)
 
@@ -133,12 +152,15 @@ def run_cli(
     *,
     gh_bin: str,
     opencode_bin: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["KILLER7_GH_BIN"] = gh_bin
     if opencode_bin is not None:
         env["KILLER7_OPENCODE_BIN"] = opencode_bin
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
@@ -190,6 +212,31 @@ class TestPrInputArtifacts(unittest.TestCase):
             self.assertEqual(meta["repo"], "owner/name")
             self.assertEqual(meta["pr"], 123)
             self.assertEqual(meta["head_sha"], "0123456789abcdef")
+
+    def test_review_exits_2_when_pr_head_changes_during_input_fetch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                extra_env={
+                    "KILLER7_TEST_HEAD_SEQ": "0123456789abcdef,fedcba9876543210",
+                    "KILLER7_TEST_HEAD_SEQ_STATE": ".head-seq-state",
+                },
+            )
+            self.assertEqual(p.returncode, 2)
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            self.assertTrue(run_json.is_file())
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "exec_failure")
+            self.assertIn(
+                "PR head changed during input fetch",
+                payload.get("error", {}).get("message", ""),
+            )
 
     def test_review_auth_blocked_exits_1_and_writes_run_json(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -40,9 +40,15 @@ def _to_int(value: Any, *, field: str) -> int:
 def fetch_pr_input(*, repo: str, pr: int, gh: GhClient | None = None) -> PrInput:
     client = gh or GhClient.from_env()
 
-    diff_patch = client.pr_diff_patch(repo=repo, pr=pr)
     head_sha = client.pr_head_ref_oid(repo=repo, pr=pr)
+    diff_patch = client.pr_diff_patch(repo=repo, pr=pr)
     raw_files = client.pr_files(repo=repo, pr=pr)
+    latest_head_sha = client.pr_head_ref_oid(repo=repo, pr=pr)
+
+    if latest_head_sha != head_sha:
+        raise ExecFailureError(
+            "PR head changed during input fetch; retry review on latest head"
+        )
 
     changed_files: list[ChangedFile] = []
     for item in raw_files:

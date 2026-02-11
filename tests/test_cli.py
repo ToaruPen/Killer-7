@@ -942,6 +942,7 @@ class TestCli(unittest.TestCase):
                         "next_id": 1,
                         "head_ref_oid_sequence": [
                             "0123456789abcdef",
+                            "0123456789abcdef",
                             "fedcba9876543210",
                         ],
                     }
