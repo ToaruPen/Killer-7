@@ -473,3 +473,31 @@ class TestCli(unittest.TestCase):
 
             payload = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
+
+    def test_missing_opencode_still_writes_blocked_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            # Force a deterministic missing binary case.
+            missing_opencode = Path(td) / "opencode-missing"
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(missing_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            summary_json = out_dir / "review-summary.json"
+            self.assertTrue(summary_json.is_file())
+
+            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("status"), "Blocked")
+            explanation = (payload.get("overall_explanation") or "").lower()
+            self.assertTrue(
+                ("blocked" in explanation) or ("opencode" in explanation),
+                msg=f"unexpected overall_explanation: {payload.get('overall_explanation')!r}",
+            )

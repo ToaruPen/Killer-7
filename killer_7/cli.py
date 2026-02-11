@@ -572,6 +572,30 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         summary_payload = merge_review_summary(
             scope_id=scope_id, aspect_reviews=summary_reviews
         )
+
+        if isinstance(deferred_exc, BlockedError):
+            # If aspect execution is blocked (e.g., missing binaries/auth), do not emit an
+            # "Approved" review-summary just because no findings/questions exist.
+            summary_payload["status"] = "Blocked"
+            msg = str(deferred_exc).strip()
+            if msg:
+                summary_payload["overall_explanation"] = msg
+
+            # Best-effort: mark failed aspects as Blocked for easier debugging.
+            statuses_obj = summary_payload.get("aspect_statuses")
+            merged_statuses: dict[str, str] = (
+                dict(statuses_obj) if isinstance(statuses_obj, dict) else {}
+            )
+            for entry in aspects_list:
+                if not isinstance(entry, dict):
+                    continue
+                a = entry.get("aspect")
+                ok = entry.get("ok")
+                if isinstance(a, str) and a and ok is not True:
+                    merged_statuses[a] = "Blocked"
+            if merged_statuses:
+                summary_payload["aspect_statuses"] = merged_statuses
+
         validate_review_summary_json(summary_payload, expected_scope_id=scope_id)
         summary_json_path = write_review_summary_json(out_dir, summary_payload)
         summary_md_path = write_review_summary_md(
@@ -579,20 +603,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         )
         summary_status = summary_payload.get("status")
 
-        if summary_status == "Blocked":
+        if summary_status == "Blocked" and deferred_exc is None:
             raise BlockedError(
                 f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
             )
-
-        # If the aspects runner raised BlockedError, but the policy-applied merged summary is not
-        # blocked, suppress the original BlockedError. This can occur when evidence/policy removes
-        # or downgrades blocking findings.
-        if (
-            isinstance(deferred_exc, BlockedError)
-            and summary_reviews
-            and summary_status != "Blocked"
-        ):
-            deferred_exc = None
 
     if deferred_exc is not None:
         raise deferred_exc
