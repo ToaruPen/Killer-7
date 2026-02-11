@@ -3,6 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+_GITHUB_COMMENT_MAX_CHARS = 65536
+_COMMENT_SIZE_MARGIN_CHARS = 1024
+_PR_SUMMARY_COMMENT_MAX_CHARS = _GITHUB_COMMENT_MAX_CHARS - _COMMENT_SIZE_MARGIN_CHARS
+
+
 def _finding_heading(f: Mapping[str, object]) -> str:
     pr = f.get("priority") if isinstance(f.get("priority"), str) else ""
     title = f.get("title") if isinstance(f.get("title"), str) else ""
@@ -142,6 +147,24 @@ def format_pr_summary_comment_md(
     lines.append(f"- head_sha: `{head_sha[:12]}`")
     lines.append("")
     lines.append("---")
-    lines.append("")
-    lines.append(format_review_summary_md(summary).rstrip("\n"))
-    return "\n".join(lines).rstrip("\n") + "\n"
+
+    prefix = "\n".join(lines).rstrip("\n")
+    rendered_summary = format_review_summary_md(summary).rstrip("\n")
+    comment_body = f"{prefix}\n\n{rendered_summary}\n"
+    if len(comment_body) <= _PR_SUMMARY_COMMENT_MAX_CHARS:
+        return comment_body
+
+    truncation_notice = (
+        "\n"
+        "> _Review summary truncated to fit GitHub comment size limit._\n"
+        "> _Full artifacts: `.ai-review/review-summary.json` and `.ai-review/review-summary.md`._\n"
+    )
+    available = _PR_SUMMARY_COMMENT_MAX_CHARS - len(prefix) - len(truncation_notice) - 2
+    if available < 0:
+        available = 0
+    truncated_summary = rendered_summary[:available].rstrip()
+
+    bounded_body = f"{prefix}\n\n{truncated_summary}{truncation_notice}"
+    if len(bounded_body) > _PR_SUMMARY_COMMENT_MAX_CHARS:
+        bounded_body = bounded_body[:_PR_SUMMARY_COMMENT_MAX_CHARS].rstrip("\n") + "\n"
+    return bounded_body
