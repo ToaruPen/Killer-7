@@ -39,6 +39,8 @@ from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 from .aspects.orchestrate import run_all_aspects
+from .hybrid.policy import build_hybrid_policy
+from .hybrid.re_run import write_questions_rerun_artifacts
 from .validate.evidence import (
     apply_evidence_policy_to_findings,
     EVIDENCE_POLICY_V1,
@@ -120,6 +122,8 @@ def build_parser() -> ThrowingArgumentParser:
     review.add_argument("--pr", required=True, type=parse_pr)
     review.add_argument("--post", action="store_true")
     review.add_argument("--inline", action="store_true")
+    review.add_argument("--hybrid-aspect", action="append", default=[])
+    review.add_argument("--hybrid-allowlist", action="append", default=[])
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -266,6 +270,18 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
     # Keep scope_id deterministic and tied to the PR input.
     scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
+    try:
+        hybrid_policy = build_hybrid_policy(
+            hybrid_aspects=list(args.hybrid_aspect or []),
+            hybrid_allowlist=list(args.hybrid_allowlist or []),
+        )
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
+
+    def runner_env_for_aspect(aspect: str) -> dict[str, str]:
+        return hybrid_policy.decision_for(aspect=aspect).runner_env()
+
     deferred_exc: BlockedError | ExecFailureError | None = None
     aspects_result: dict[str, object]
     try:
@@ -276,6 +292,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             sot=sot_md,
             max_llm_calls=8,
             max_workers=8,
+            runner_env_for_aspect=runner_env_for_aspect,
         )
     except (BlockedError, ExecFailureError) as exc:
         # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
@@ -601,6 +618,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     summary_json_path = ""
     summary_md_path = ""
     summary_payload: dict[str, object] | None = None
+    rerun_plan_path = ""
     post_result: dict[str, object] = {}
     inline_result: dict[str, object] = {}
     if deferred_exc is None or isinstance(deferred_exc, BlockedError):
@@ -637,6 +655,29 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             out_dir, format_review_summary_md(summary_payload)
         )
         summary_status = summary_payload.get("status")
+
+        question_aspects: list[str] = []
+        for aspect, review in summary_reviews.items():
+            qs_obj = review.get("questions")
+            if isinstance(qs_obj, list) and any(
+                isinstance(x, str) and x.strip() for x in qs_obj
+            ):
+                question_aspects.append(aspect)
+        rerun_aspects = [
+            a
+            for a in question_aspects
+            if hybrid_policy.decision_for(aspect=a).repo_read_only
+        ]
+        if rerun_aspects:
+            rerun = write_questions_rerun_artifacts(
+                out_dir=out_dir,
+                repo=args.repo,
+                pr=args.pr,
+                head_sha=pr_input.head_sha,
+                question_aspects=rerun_aspects,
+                hybrid_allowlist=list(hybrid_policy.allowlist_paths),
+            )
+            rerun_plan_path = str(rerun.get("plan_path") or "")
 
         if summary_status == "Blocked" and deferred_exc is None:
             deferred_exc = BlockedError(
@@ -744,6 +785,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "aspects_policy_index_json": os.path.relpath(
                 policy_index_path, os.getcwd()
             ),
+            "re_run_plan_json": os.path.relpath(rerun_plan_path, os.getcwd())
+            if rerun_plan_path
+            else "",
         },
     }
 

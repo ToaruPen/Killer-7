@@ -80,6 +80,7 @@ def run_one_aspect(
     runner: ViewpointRunner | None = None,
     timeout_s: int | None = None,
     prompts_dir: str | None = None,
+    runner_env: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Run a single aspect via OpenCode and write `.ai-review/aspects/<aspect>.json`.
 
@@ -117,6 +118,27 @@ def run_one_aspect(
         ),
     )
 
+    repo_ro = ""
+    allowlist_text = ""
+    runner_env_effective = dict(runner_env) if runner_env else None
+    if runner_env_effective:
+        repo_ro = (runner_env_effective.get("KILLER7_REPO_READONLY") or "").strip()
+        allowlist_text = (
+            runner_env_effective.get("KILLER7_REPO_ALLOWLIST") or ""
+        ).strip()
+        if repo_ro == "1" and not allowlist_text:
+            runner_env_effective["KILLER7_REPO_READONLY"] = "0"
+            runner_env_effective.pop("KILLER7_REPO_ALLOWLIST", None)
+            repo_ro = "0"
+    if repo_ro == "1":
+        prompt += "\n\n## Hybrid Access Policy\n"
+        prompt += "- Repository read-only access is allowed for this aspect.\n"
+        prompt += "- You MUST limit repository access to these allowlist paths:\n"
+        for line in allowlist_text.splitlines():
+            p = line.strip()
+            if p:
+                prompt += f"  - {p}\n"
+
     out_dir = ensure_artifacts_dir(base_dir)
     r = runner or OpenCodeRunner.from_env()
     res = r.run_viewpoint(
@@ -124,6 +146,7 @@ def run_one_aspect(
         viewpoint=a,
         message=prompt,
         timeout_s=timeout_s,
+        env=runner_env_effective,
     )
 
     payload = res.get("payload")
