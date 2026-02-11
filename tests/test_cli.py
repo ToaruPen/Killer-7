@@ -145,6 +145,21 @@ if args[:1] == ["api"]:
             raise SystemExit(1)
         comment_id = int(endpoint.rsplit("/", 1)[-1])
         state = read_state()
+
+        # Test hook: force one-shot PATCH 404 for selected ids
+        if method == "PATCH":
+            missing_ids = state.get("patch_not_found_ids", [])
+            if isinstance(missing_ids, list) and comment_id in missing_ids:
+                state["patch_not_found_ids"] = [
+                    x for x in missing_ids if int(x) != comment_id
+                ]
+                state["comments"] = [
+                    c for c in state["comments"] if int(c.get("id", 0)) != comment_id
+                ]
+                write_state(state)
+                sys.stderr.write("Not Found\\n")
+                raise SystemExit(1)
+
         for i, comment in enumerate(state["comments"]):
             if int(comment.get("id", 0)) == comment_id:
                 if method == "PATCH":
@@ -845,6 +860,42 @@ class TestCli(unittest.TestCase):
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
+            self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {"id": 1, "body": "<!-- killer-7:summary:v1 -->\nold-1"},
+                            {"id": 2, "body": "<!-- killer-7:summary:v1 -->\nold-2"},
+                        ],
+                        "next_id": 3,
+                        "patch_not_found_ids": [2],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0].get("id"), 1)
             self.assertIn("## Counts", comments[0].get("body", ""))
 
     def test_post_summary_even_when_blocked(self) -> None:

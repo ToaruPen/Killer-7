@@ -15,6 +15,10 @@ def _comment_id(comment: Mapping[str, object]) -> int:
     return raw if isinstance(raw, int) else -1
 
 
+def _is_not_found_error(exc: ExecFailureError) -> bool:
+    return "not found" in str(exc).lower()
+
+
 def _marker_comments(
     comments: list[dict[str, object]], *, marker: str
 ) -> list[dict[str, object]]:
@@ -62,6 +66,58 @@ def _dedupe_marker_comments(
     return removed
 
 
+def _create_marker_comment(*, client: GhClient, repo: str, pr: int, body: str) -> int:
+    created = client.create_issue_comment(repo=repo, issue=pr, body=body)
+    created_id = _comment_id(created)
+    if created_id < 0:
+        raise ExecFailureError("Created marker comment missing valid id")
+    return created_id
+
+
+def _latest_marker_id(*, client: GhClient, repo: str, pr: int) -> int | None:
+    latest = _latest_marker_comment(
+        _marker_comments(
+            client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
+        )
+    )
+    if latest is None:
+        return None
+    latest_id = _comment_id(latest)
+    return latest_id if latest_id >= 0 else None
+
+
+def _update_with_not_found_recovery(
+    *,
+    client: GhClient,
+    repo: str,
+    pr: int,
+    preferred_comment_id: int,
+    body: str,
+) -> int:
+    candidate_id = preferred_comment_id
+    for _ in range(2):
+        try:
+            updated = client.update_issue_comment(
+                repo=repo, comment_id=candidate_id, body=body
+            )
+            updated_id = _comment_id(updated)
+            return updated_id if updated_id >= 0 else candidate_id
+        except ExecFailureError as exc:
+            if not _is_not_found_error(exc):
+                raise
+            latest_id = _latest_marker_id(client=client, repo=repo, pr=pr)
+            if latest_id is None:
+                return _create_marker_comment(
+                    client=client,
+                    repo=repo,
+                    pr=pr,
+                    body=body,
+                )
+            candidate_id = latest_id
+
+    raise ExecFailureError("Failed to update marker comment after race recovery")
+
+
 def post_summary_comment(
     *, repo: str, pr: int, head_sha: str, summary: Mapping[str, object]
 ) -> dict[str, object]:
@@ -81,10 +137,13 @@ def post_summary_comment(
             raise ExecFailureError("Marker comments found but none have a valid id")
 
         keep_id = _comment_id(target)
-        updated = client.update_issue_comment(repo=repo, comment_id=keep_id, body=body)
-        updated_id = _comment_id(updated)
-        if updated_id >= 0:
-            keep_id = updated_id
+        keep_id = _update_with_not_found_recovery(
+            client=client,
+            repo=repo,
+            pr=pr,
+            preferred_comment_id=keep_id,
+            body=body,
+        )
 
         latest_comments = _marker_comments(
             client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
@@ -93,10 +152,13 @@ def post_summary_comment(
         if latest is not None:
             latest_id = _comment_id(latest)
             if latest_id >= 0 and latest_id != keep_id:
-                _ = client.update_issue_comment(
-                    repo=repo, comment_id=latest_id, body=body
+                keep_id = _update_with_not_found_recovery(
+                    client=client,
+                    repo=repo,
+                    pr=pr,
+                    preferred_comment_id=latest_id,
+                    body=body,
                 )
-                keep_id = latest_id
 
         removed = _dedupe_marker_comments(
             client=client,
@@ -112,8 +174,7 @@ def post_summary_comment(
             "deduped": removed,
         }
 
-    created = client.create_issue_comment(repo=repo, issue=pr, body=body)
-    created_id = _comment_id(created)
+    created_id = _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
 
     latest_comments = _marker_comments(
         client.issue_comments(repo=repo, issue=pr), marker=SUMMARY_MARKER
@@ -128,7 +189,13 @@ def post_summary_comment(
             keep_id = latest_id
             if latest_id != created_id:
                 mode = "reconciled"
-            _ = client.update_issue_comment(repo=repo, comment_id=keep_id, body=body)
+            keep_id = _update_with_not_found_recovery(
+                client=client,
+                repo=repo,
+                pr=pr,
+                preferred_comment_id=keep_id,
+                body=body,
+            )
 
     removed = _dedupe_marker_comments(
         client=client,
