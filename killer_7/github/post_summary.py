@@ -218,7 +218,8 @@ def _dedupe_with_keep_recovery(
         marker=SUMMARY_MARKER,
         author_login=author_login,
     )
-    if keep_id not in _marker_comment_ids(final_comments):
+    final_ids = _marker_comment_ids(final_comments)
+    if keep_id not in final_ids:
         keep_id = _ensure_keep_marker_exists(
             client=client,
             repo=repo,
@@ -227,14 +228,19 @@ def _dedupe_with_keep_recovery(
             keep_id=keep_id,
             body=body,
         )
+
+        final_comments = _marker_comments(
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
+        )
+        final_ids = _marker_comment_ids(final_comments)
+
+    if len(final_ids) > 1:
         removed += _dedupe_marker_comments(
             client=client,
             repo=repo,
-            marker_comments=_marker_comments(
-                client.issue_comments(repo=repo, issue=pr),
-                marker=SUMMARY_MARKER,
-                author_login=author_login,
-            ),
+            marker_comments=final_comments,
             keep_id=keep_id,
         )
 

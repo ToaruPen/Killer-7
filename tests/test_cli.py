@@ -163,6 +163,25 @@ if args[:1] == ["api"]:
                 c for c in state["comments"] if int(c.get("id", 0)) != delete_id
             ]
 
+        add_call = state.get("add_marker_on_list_call")
+        if isinstance(add_call, int) and list_calls == add_call:
+            marker_body_obj = state.get("add_marker_body")
+            marker_body = (
+                marker_body_obj
+                if isinstance(marker_body_obj, str) and marker_body_obj
+                else "<!-- killer-7:summary:v1 -->\\nrace-added"
+            )
+            author_obj = state.get("add_marker_author")
+            author = author_obj if isinstance(author_obj, str) and author_obj else "owner"
+            state["comments"].append(
+                {
+                    "id": state["next_id"],
+                    "body": marker_body,
+                    "user": {"login": author},
+                }
+            )
+            state["next_id"] += 1
+
         write_state(state)
         comments = state["comments"]
         if has("--slurp"):
@@ -1089,6 +1108,53 @@ class TestCli(unittest.TestCase):
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
+            self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_rededupes_when_duplicate_appears_after_first_dedupe(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-1",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-2",
+                                "user": {"login": "owner"},
+                            },
+                        ],
+                        "next_id": 3,
+                        "add_marker_on_list_call": 5,
+                        "add_marker_author": "owner",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0].get("id"), 2)
             self.assertIn("## Counts", comments[0].get("body", ""))
 
     def test_post_summary_ignores_marker_from_other_author(self) -> None:
