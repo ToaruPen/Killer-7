@@ -634,31 +634,36 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.post and summary_payload is not None:
         gh_client = GhClient.from_env()
-        current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
-        if current_head_sha != pr_input.head_sha:
-            post_result = {
-                "mode": "skipped_stale_head",
-                "expected_head_sha": pr_input.head_sha,
-                "current_head_sha": current_head_sha,
-            }
-        else:
-            post_result = post_summary_comment(
-                repo=args.repo,
-                pr=args.pr,
-                head_sha=pr_input.head_sha,
-                expected_head_sha=pr_input.head_sha,
-                summary=summary_payload,
-            )
-            latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
-            if latest_head_sha != pr_input.head_sha:
+        try:
+            current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+            if current_head_sha != pr_input.head_sha:
                 post_result = {
-                    "mode": "stale_head_after_post",
+                    "mode": "skipped_stale_head",
                     "expected_head_sha": pr_input.head_sha,
-                    "current_head_sha": latest_head_sha,
+                    "current_head_sha": current_head_sha,
                 }
-                deferred_exc = ExecFailureError(
-                    "PR head changed during summary posting; rerun review on latest head"
+            else:
+                post_result = post_summary_comment(
+                    repo=args.repo,
+                    pr=args.pr,
+                    head_sha=pr_input.head_sha,
+                    expected_head_sha=pr_input.head_sha,
+                    summary=summary_payload,
                 )
+                latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                if latest_head_sha != pr_input.head_sha:
+                    clear_stale_review_summary(out_dir)
+                    post_result = {
+                        "mode": "stale_head_after_post",
+                        "expected_head_sha": pr_input.head_sha,
+                        "current_head_sha": latest_head_sha,
+                    }
+                    deferred_exc = ExecFailureError(
+                        "PR head changed during summary posting; rerun review on latest head"
+                    )
+        except ExecFailureError:
+            clear_stale_review_summary(out_dir)
+            raise
 
     if deferred_exc is not None:
         raise deferred_exc

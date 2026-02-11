@@ -1076,6 +1076,10 @@ class TestCli(unittest.TestCase):
                 payload.get("error", {}).get("message", ""),
             )
 
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
+
     def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
