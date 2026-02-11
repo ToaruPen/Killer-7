@@ -88,7 +88,18 @@ if args[:2] == ["pr", "diff"]:
 
 if args[:2] == ["pr", "view"]:
     # gh pr view <pr> --repo owner/name --json headRefOid
-    sys.stdout.write(json.dumps({"headRefOid": "0123456789abcdef"}))
+    state = read_state()
+    head = "0123456789abcdef"
+    seq = state.get("head_ref_oid_sequence")
+    if isinstance(seq, list) and seq:
+        head = str(seq[0])
+        state["head_ref_oid_sequence"] = seq[1:]
+        write_state(state)
+    else:
+        current = state.get("head_ref_oid")
+        if isinstance(current, str) and current:
+            head = current
+    sys.stdout.write(json.dumps({"headRefOid": head}))
     raise SystemExit(0)
 
 
@@ -861,6 +872,49 @@ class TestCli(unittest.TestCase):
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
             self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_skips_when_head_moved(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 0)
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            summary_comment = (
+                payload.get("result", {})
+                .get("artifacts", {})
+                .get("summary_comment", {})
+            )
+            self.assertEqual(summary_comment.get("mode"), "skipped_stale_head")
 
     def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:

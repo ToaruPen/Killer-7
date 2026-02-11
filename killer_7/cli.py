@@ -30,6 +30,7 @@ from .artifacts import (
 )
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
+from .github.gh import GhClient
 from .github.pr_input import fetch_pr_input
 from .github.post_summary import post_summary_comment
 from .bundle.context_bundle import build_context_bundle
@@ -624,12 +625,22 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             )
 
     if args.post and summary_payload is not None:
-        post_result = post_summary_comment(
-            repo=args.repo,
-            pr=args.pr,
-            head_sha=pr_input.head_sha,
-            summary=summary_payload,
+        current_head_sha = GhClient.from_env().pr_head_ref_oid(
+            repo=args.repo, pr=args.pr
         )
+        if current_head_sha != pr_input.head_sha:
+            post_result = {
+                "mode": "skipped_stale_head",
+                "expected_head_sha": pr_input.head_sha,
+                "current_head_sha": current_head_sha,
+            }
+        else:
+            post_result = post_summary_comment(
+                repo=args.repo,
+                pr=args.pr,
+                head_sha=pr_input.head_sha,
+                summary=summary_payload,
+            )
 
     if deferred_exc is not None:
         raise deferred_exc
