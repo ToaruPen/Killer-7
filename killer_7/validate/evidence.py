@@ -267,10 +267,6 @@ def recompute_review_status(
     findings: Sequence[object], questions: Sequence[object]
 ) -> str:
     """Recompute status from findings/questions to satisfy schema cross-field rules."""
-
-    if len(questions) > 0:
-        return "Question"
-
     has_blocking = False
     for item in findings:
         if not isinstance(item, Mapping):
@@ -283,6 +279,8 @@ def recompute_review_status(
 
     if has_blocking:
         return "Blocked"
+    if len(questions) > 0:
+        return "Question"
     if len(findings) > 0:
         return "Approved with nits"
     return "Approved"
