@@ -1070,7 +1070,7 @@ class TestCli(unittest.TestCase):
                             },
                         ],
                         "next_id": 3,
-                        "delete_on_list_call": 3,
+                        "delete_on_list_call": 4,
                         "delete_on_list_comment_id": 2,
                     }
                 ),

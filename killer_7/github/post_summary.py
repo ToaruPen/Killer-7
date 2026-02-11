@@ -50,6 +50,10 @@ def _latest_marker_comment(
     return max(valid, key=_comment_id)
 
 
+def _marker_comment_ids(comments: list[dict[str, object]]) -> set[int]:
+    return {_comment_id(c) for c in comments if _comment_id(c) >= 0}
+
+
 def _delete_comment_if_exists(*, client: GhClient, repo: str, comment_id: int) -> bool:
     try:
         client.delete_issue_comment(repo=repo, comment_id=comment_id)
@@ -68,6 +72,9 @@ def _dedupe_marker_comments(
     marker_comments: list[dict[str, object]],
     keep_id: int,
 ) -> int:
+    if keep_id not in _marker_comment_ids(marker_comments):
+        return 0
+
     removed = 0
     for comment in marker_comments:
         comment_id = _comment_id(comment)
@@ -170,6 +177,70 @@ def _ensure_keep_marker_exists(
     return _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
 
 
+def _dedupe_with_keep_recovery(
+    *,
+    client: GhClient,
+    repo: str,
+    pr: int,
+    author_login: str,
+    keep_id: int,
+    body: str,
+) -> tuple[int, int]:
+    marker_comments = _marker_comments(
+        client.issue_comments(repo=repo, issue=pr),
+        marker=SUMMARY_MARKER,
+        author_login=author_login,
+    )
+    if keep_id not in _marker_comment_ids(marker_comments):
+        keep_id = _ensure_keep_marker_exists(
+            client=client,
+            repo=repo,
+            pr=pr,
+            author_login=author_login,
+            keep_id=keep_id,
+            body=body,
+        )
+        marker_comments = _marker_comments(
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
+        )
+
+    removed = _dedupe_marker_comments(
+        client=client,
+        repo=repo,
+        marker_comments=marker_comments,
+        keep_id=keep_id,
+    )
+
+    final_comments = _marker_comments(
+        client.issue_comments(repo=repo, issue=pr),
+        marker=SUMMARY_MARKER,
+        author_login=author_login,
+    )
+    if keep_id not in _marker_comment_ids(final_comments):
+        keep_id = _ensure_keep_marker_exists(
+            client=client,
+            repo=repo,
+            pr=pr,
+            author_login=author_login,
+            keep_id=keep_id,
+            body=body,
+        )
+        removed += _dedupe_marker_comments(
+            client=client,
+            repo=repo,
+            marker_comments=_marker_comments(
+                client.issue_comments(repo=repo, issue=pr),
+                marker=SUMMARY_MARKER,
+                author_login=author_login,
+            ),
+            keep_id=keep_id,
+        )
+
+    return keep_id, removed
+
+
 def post_summary_comment(
     *, repo: str, pr: int, head_sha: str, summary: Mapping[str, object]
 ) -> dict[str, object]:
@@ -230,15 +301,13 @@ def post_summary_comment(
             body=body,
         )
 
-        removed = _dedupe_marker_comments(
+        keep_id, removed = _dedupe_with_keep_recovery(
             client=client,
             repo=repo,
-            marker_comments=_marker_comments(
-                client.issue_comments(repo=repo, issue=pr),
-                marker=SUMMARY_MARKER,
-                author_login=author_login,
-            ),
+            pr=pr,
+            author_login=author_login,
             keep_id=keep_id,
+            body=body,
         )
         return {
             "mode": "updated",
@@ -281,15 +350,13 @@ def post_summary_comment(
         body=body,
     )
 
-    removed = _dedupe_marker_comments(
+    keep_id, removed = _dedupe_with_keep_recovery(
         client=client,
         repo=repo,
-        marker_comments=_marker_comments(
-            client.issue_comments(repo=repo, issue=pr),
-            marker=SUMMARY_MARKER,
-            author_login=author_login,
-        ),
+        pr=pr,
+        author_login=author_login,
         keep_id=keep_id,
+        body=body,
     )
 
     return {
