@@ -138,10 +138,24 @@ def write_run_json(out_dir: str, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def clear_stale_review_summary(out_dir: str) -> None:
+    for name in ("review-summary.json", "review-summary.md"):
+        try:
+            os.remove(os.path.join(out_dir, name))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Fetch PR input (diff + metadata) and write artifacts.
     out_dir = ensure_artifacts_dir(os.getcwd())
-    pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+    try:
+        pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
     artifacts = write_pr_input_artifacts(out_dir, pr_input)
 
     # Collect SoT from PR branch (ref=head sha) using allowlist.
@@ -260,13 +274,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
         if isinstance(exc, ExecFailureError):
             # Avoid leaving stale `review-summary.*` from a previous successful run.
-            for name in ("review-summary.json", "review-summary.md"):
-                try:
-                    os.remove(os.path.join(out_dir, name))
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    pass
+            clear_stale_review_summary(out_dir)
 
         aspects_result = {
             "scope_id": scope_id,
