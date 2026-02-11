@@ -231,3 +231,66 @@ class GhClient:
         if not isinstance(data, dict):
             raise ExecFailureError("Unexpected JSON shape from contents API")
         return data
+
+    def review_comments(self, *, repo: str, pr: int) -> list[dict[str, Any]]:
+        endpoint = f"repos/{repo}/pulls/{pr}/comments"
+        raw = self._run(["api", "--paginate", "--slurp", endpoint])
+        try:
+            pages = json.loads(raw or "[]")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+
+        if isinstance(pages, list) and (not pages or isinstance(pages[0], list)):
+            items: list[dict[str, Any]] = []
+            for page in pages:
+                if isinstance(page, list):
+                    for x in page:
+                        if isinstance(x, dict):
+                            items.append(x)
+            return items
+
+        if isinstance(pages, list):
+            return [x for x in pages if isinstance(x, dict)]
+
+        raise ExecFailureError("Unexpected JSON shape from review comments API")
+
+    def create_review_comment(
+        self,
+        *,
+        repo: str,
+        pr: int,
+        body: str,
+        commit_id: str,
+        path: str,
+        position: int,
+    ) -> dict[str, Any]:
+        endpoint = f"repos/{repo}/pulls/{pr}/comments"
+        raw = self._run(
+            [
+                "api",
+                "-X",
+                "POST",
+                endpoint,
+                "-f",
+                f"body={body}",
+                "-f",
+                f"commit_id={commit_id}",
+                "-f",
+                f"path={path}",
+                "-F",
+                f"position={position}",
+            ]
+        )
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise ExecFailureError(
+                "Unexpected JSON shape from create review comment API"
+            )
+        return data
+
+    def delete_review_comment(self, *, repo: str, comment_id: int) -> None:
+        endpoint = f"repos/{repo}/pulls/comments/{comment_id}"
+        self._run(["api", "-X", "DELETE", endpoint])

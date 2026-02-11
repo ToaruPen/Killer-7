@@ -31,6 +31,7 @@ from .artifacts import (
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.gh import GhClient
+from .github.post_inline import post_inline_comments, raise_if_inline_blocked
 from .github.pr_input import fetch_pr_input
 from .github.post_summary import post_summary_comment
 from .bundle.context_bundle import build_context_bundle
@@ -118,6 +119,7 @@ def build_parser() -> ThrowingArgumentParser:
     review.add_argument("--repo", required=True, type=parse_repo)
     review.add_argument("--pr", required=True, type=parse_pr)
     review.add_argument("--post", action="store_true")
+    review.add_argument("--inline", action="store_true")
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -150,7 +152,10 @@ def clear_stale_review_summary(out_dir: str) -> None:
 
 def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
     message = str(exc).lower()
-    return "pr head changed; skip stale summary mutation" in message
+    return (
+        "pr head changed; skip stale summary mutation" in message
+        or "pr head changed; skip stale inline mutation" in message
+    )
 
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
@@ -597,6 +602,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     summary_md_path = ""
     summary_payload: dict[str, object] | None = None
     post_result: dict[str, object] = {}
+    inline_result: dict[str, object] = {}
     if deferred_exc is None or isinstance(deferred_exc, BlockedError):
         summary_payload = merge_review_summary(
             scope_id=scope_id, aspect_reviews=summary_reviews
@@ -637,7 +643,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
             )
 
-    if args.post and summary_payload is not None:
+    should_post_summary = bool(args.post or args.inline)
+    if should_post_summary and summary_payload is not None:
         gh_client = GhClient.from_env()
         try:
             current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
@@ -672,6 +679,22 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     deferred_exc = ExecFailureError(
                         "PR head changed during summary posting; rerun review on latest head"
                     )
+
+                if args.inline and (
+                    deferred_exc is None or isinstance(deferred_exc, BlockedError)
+                ):
+                    inline_result = post_inline_comments(
+                        repo=args.repo,
+                        pr=args.pr,
+                        head_sha=pr_input.head_sha,
+                        expected_head_sha=pr_input.head_sha,
+                        review_summary=summary_payload,
+                        diff_patch=pr_input.diff_patch,
+                    )
+                    try:
+                        raise_if_inline_blocked(inline_result)
+                    except BlockedError as exc:
+                        deferred_exc = exc
         except ExecFailureError as exc:
             if _should_clear_stale_summary_on_post_failure(exc):
                 clear_stale_review_summary(out_dir)
@@ -714,6 +737,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             if summary_md_path
             else "",
             "summary_comment": post_result,
+            "inline_comment": inline_result,
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),

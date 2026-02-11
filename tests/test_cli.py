@@ -51,6 +51,15 @@ def has(flag: str) -> bool:
     return flag in args
 
 
+def field_value(prefix: str) -> str:
+    i = 0
+    while i < len(args) - 1:
+        if args[i] in ("-f", "-F") and args[i + 1].startswith(prefix):
+            return args[i + 1][len(prefix) :]
+        i += 1
+    return ""
+
+
 if args[:2] == ["pr", "diff"]:
     # gh pr diff <pr> --repo owner/name --patch
     def emit_new_file(path: str, n_lines: int, *, first_line=None) -> None:
@@ -196,6 +205,51 @@ if args[:1] == ["api"]:
             sys.stdout.write(json.dumps(comments[:1]))
         raise SystemExit(0)
 
+    if endpoint.endswith("/pulls/123/comments"):
+        state = read_state()
+
+        if "-X" in args and arg_value("-X") == "POST":
+            body = field_value("body=")
+            path = field_value("path=")
+            commit_id = field_value("commit_id=")
+            position_raw = field_value("position=")
+            try:
+                position = int(position_raw)
+            except ValueError:
+                position = -1
+
+            login_obj = state.get("viewer_login")
+            login = login_obj if isinstance(login_obj, str) and login_obj else "owner"
+
+            next_review_id = int(state.get("next_review_id", 1))
+            comment = {
+                "id": next_review_id,
+                "body": body,
+                "path": path,
+                "position": position,
+                "commit_id": commit_id,
+                "user": {"login": login},
+            }
+            review_comments = state.get("review_comments")
+            if not isinstance(review_comments, list):
+                review_comments = []
+            review_comments.append(comment)
+            state["review_comments"] = review_comments
+            state["next_review_id"] = next_review_id + 1
+            write_state(state)
+            sys.stdout.write(json.dumps(comment))
+            raise SystemExit(0)
+
+        review_comments = state.get("review_comments")
+        if not isinstance(review_comments, list):
+            review_comments = []
+        write_state(state)
+        if has("--slurp"):
+            sys.stdout.write(json.dumps([review_comments]))
+        else:
+            sys.stdout.write(json.dumps(review_comments))
+        raise SystemExit(0)
+
     if endpoint.startswith("repos/owner/name/issues/comments/"):
         method = arg_value("-X")
         if "-X" not in args or method not in ("PATCH", "DELETE"):
@@ -248,6 +302,24 @@ if args[:1] == ["api"]:
                 raise SystemExit(0)
         sys.stderr.write("Not Found\\n")
         raise SystemExit(1)
+
+    if endpoint.startswith("repos/owner/name/pulls/comments/"):
+        method = arg_value("-X")
+        if "-X" not in args or method != "DELETE":
+            sys.stderr.write("Method Not Allowed\\n")
+            raise SystemExit(1)
+
+        comment_id = int(endpoint.rsplit("/", 1)[-1])
+        state = read_state()
+        review_comments = state.get("review_comments")
+        if not isinstance(review_comments, list):
+            review_comments = []
+        state["review_comments"] = [
+            c for c in review_comments if int(c.get("id", 0)) != comment_id
+        ]
+        write_state(state)
+        sys.stdout.write("{}")
+        raise SystemExit(0)
 
     if endpoint.endswith("/pulls/123/files"):
         files = [
@@ -1415,6 +1487,32 @@ class TestCli(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
+
+    def test_inline_posts_even_when_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--inline"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+
+            review_comments = state.get("review_comments", [])
+            self.assertEqual(len(review_comments), 1)
+            body = review_comments[0].get("body", "")
+            self.assertIn("<!-- killer-7:inline:v1 fp=", body)
+            self.assertEqual(review_comments[0].get("path"), "hello.txt")
 
     def test_post_summary_stale_head_overrides_blocked_result(self) -> None:
         with tempfile.TemporaryDirectory() as td:
