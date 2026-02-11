@@ -243,6 +243,14 @@ def _dedupe_with_keep_recovery(
             marker_comments=final_comments,
             keep_id=keep_id,
         )
+        keep_id = _ensure_keep_marker_exists(
+            client=client,
+            repo=repo,
+            pr=pr,
+            author_login=author_login,
+            keep_id=keep_id,
+            body=body,
+        )
 
     return keep_id, removed
 

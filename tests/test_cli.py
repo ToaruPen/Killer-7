@@ -213,7 +213,7 @@ if args[:1] == ["api"]:
                 sys.stderr.write("Not Found\\n")
                 raise SystemExit(1)
 
-        for i, comment in enumerate(state["comments"]):
+        for comment in state["comments"]:
             if int(comment.get("id", 0)) == comment_id:
                 if method == "PATCH":
                     body = arg_value("-f").removeprefix("body=")
@@ -221,7 +221,23 @@ if args[:1] == ["api"]:
                     write_state(state)
                     sys.stdout.write(json.dumps(comment))
                 else:
-                    del state["comments"][i]
+                    linked_delete_id = state.get("delete_other_target_comment_id")
+                    linked_delete_trigger = state.get("delete_other_on_delete_comment_id")
+                    ids_to_delete = {comment_id}
+                    if (
+                        isinstance(linked_delete_trigger, int)
+                        and isinstance(linked_delete_id, int)
+                        and linked_delete_trigger == comment_id
+                    ):
+                        ids_to_delete.add(linked_delete_id)
+                        state.pop("delete_other_on_delete_comment_id", None)
+                        state.pop("delete_other_target_comment_id", None)
+
+                    state["comments"] = [
+                        c
+                        for c in state["comments"]
+                        if int(c.get("id", 0)) not in ids_to_delete
+                    ]
                     write_state(state)
                     sys.stdout.write("{}")
                 raise SystemExit(0)
@@ -1201,6 +1217,55 @@ class TestCli(unittest.TestCase):
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 2)
+            self.assertIn("## Counts", comments[0].get("body", ""))
+
+    def test_post_summary_recovers_when_keep_deleted_during_second_dedupe(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-1",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-2",
+                                "user": {"login": "owner"},
+                            },
+                        ],
+                        "next_id": 3,
+                        "add_marker_on_list_call": 5,
+                        "add_marker_author": "owner",
+                        "delete_other_on_delete_comment_id": 3,
+                        "delete_other_target_comment_id": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
             self.assertIn("## Counts", comments[0].get("body", ""))
 
     def test_post_summary_ignores_marker_from_other_author(self) -> None:
