@@ -43,14 +43,17 @@ def write_questions_rerun_artifacts(
     if not aspects:
         return {"run_id": "", "output_dir": "", "plan_path": ""}
 
+    out_dir_abs = os.path.abspath(out_dir)
+    base_dir = os.path.dirname(out_dir_abs)
+
     run_id = _build_run_id(head_sha=head_sha)
-    re_run_dir = os.path.join(out_dir, "re-run", run_id)
+    re_run_dir = os.path.join(out_dir_abs, "re-run", run_id)
     os.makedirs(re_run_dir, mode=0o700, exist_ok=True)
 
     allowlist: list[str] = []
     allowlist_seen: set[str] = set()
     for raw in hybrid_allowlist:
-        p = (raw or "").strip()
+        p = raw
         if not p or p in allowlist_seen:
             continue
         allowlist.append(p)
@@ -76,7 +79,7 @@ def write_questions_rerun_artifacts(
             "head_sha": head_sha,
             "question_aspects": aspects,
             "hybrid_allowlist": allowlist,
-            "output_dir": os.path.relpath(re_run_dir, os.getcwd()).replace(os.sep, "/"),
+            "output_dir": os.path.relpath(re_run_dir, base_dir).replace(os.sep, "/"),
             "recommended_command": cmd,
         },
     )

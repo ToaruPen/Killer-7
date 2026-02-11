@@ -659,14 +659,19 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 isinstance(x, str) and x.strip() for x in qs_obj
             ):
                 question_aspects.append(aspect)
-        if question_aspects:
+        rerun_aspects = [
+            a
+            for a in question_aspects
+            if hybrid_policy.decision_for(aspect=a).repo_read_only
+        ]
+        if rerun_aspects:
             rerun = write_questions_rerun_artifacts(
                 out_dir=out_dir,
                 repo=args.repo,
                 pr=args.pr,
                 head_sha=pr_input.head_sha,
-                question_aspects=question_aspects,
-                hybrid_allowlist=list(args.hybrid_allowlist or []),
+                question_aspects=rerun_aspects,
+                hybrid_allowlist=list(hybrid_policy.allowlist_paths),
             )
             rerun_plan_path = str(rerun.get("plan_path") or "")
 

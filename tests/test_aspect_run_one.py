@@ -174,6 +174,42 @@ class TestRunOneAspect(unittest.TestCase):
             self.assertEqual(runner.last_env, {"KILLER7_REPO_READONLY": "0"})
             self.assertNotIn("Hybrid Access Policy", runner.last_message)
 
+    def test_hybrid_repo_readonly_with_allowlist_is_preserved(self) -> None:
+        from killer_7.aspects.run_one import run_one_aspect
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = _FakeRunner(
+                payload={
+                    "schema_version": 3,
+                    "scope_id": "scope-1",
+                    "status": "Approved",
+                    "findings": [],
+                    "questions": [],
+                    "overall_explanation": "ok",
+                }
+            )
+            run_one_aspect(
+                base_dir=td,
+                aspect="correctness",
+                scope_id="scope-1",
+                context_bundle="CTX",
+                runner=runner,
+                runner_env={
+                    "KILLER7_REPO_READONLY": "1",
+                    "KILLER7_REPO_ALLOWLIST": "docs/**/*.md",
+                },
+            )
+
+            self.assertEqual(
+                runner.last_env,
+                {
+                    "KILLER7_REPO_READONLY": "1",
+                    "KILLER7_REPO_ALLOWLIST": "docs/**/*.md",
+                },
+            )
+            self.assertIn("Hybrid Access Policy", runner.last_message)
+            self.assertIn("docs/**/*.md", runner.last_message)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
