@@ -23,6 +23,8 @@ from .artifacts import (
     write_context_bundle_txt,
     write_evidence_json,
     write_pr_input_artifacts,
+    write_review_summary_json,
+    write_review_summary_md,
     write_sot_md,
     write_warnings_txt,
 )
@@ -40,6 +42,9 @@ from .validate.evidence import (
     parse_context_bundle_index,
     recompute_review_status,
 )
+from .validate.review_json import validate_review_summary_json
+from .report.merge import merge_review_summary
+from .report.format_md import format_review_summary_md
 
 
 def _strip_machine_fields_from_findings(
@@ -249,6 +254,17 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
         # Continue to generate evidence/policy artifacts to aid debugging, then re-raise.
         deferred_exc = exc
+
+        if isinstance(exc, ExecFailureError):
+            # Avoid leaving stale `review-summary.*` from a previous successful run.
+            for name in ("review-summary.json", "review-summary.md"):
+                try:
+                    os.remove(os.path.join(out_dir, name))
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
         aspects_result = {
             "scope_id": scope_id,
             "index_path": os.path.join(out_dir, "aspects", "index.json"),
@@ -266,6 +282,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     index_path = str(aspects_result.get("index_path", ""))
     per_aspect: dict[str, object] = {}
+    summary_reviews: dict[str, dict[str, object]] = {}
     evidence_index_aspects: list[dict[str, object]] = []
     policy_index_aspects: list[dict[str, object]] = []
     totals = {
@@ -462,6 +479,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             out_dir, aspect=aspect, payload=policy_review
         )
 
+        # Use the evidence/policy-applied review with machine fields preserved for
+        # aggregated report generation (review-summary.json).
+        summary_reviews[aspect] = dict(updated_review)
+
         per_aspect[aspect] = {
             "ok": True,
             "input_path": raw_rel_path,
@@ -556,6 +577,48 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         },
     )
 
+    summary_json_path = ""
+    summary_md_path = ""
+    if deferred_exc is None or isinstance(deferred_exc, BlockedError):
+        summary_payload = merge_review_summary(
+            scope_id=scope_id, aspect_reviews=summary_reviews
+        )
+
+        if isinstance(deferred_exc, BlockedError):
+            # If aspect execution is blocked (e.g., missing binaries/auth), do not emit an
+            # "Approved" review-summary just because no findings/questions exist.
+            summary_payload["status"] = "Blocked"
+            msg = str(deferred_exc).strip()
+            if msg:
+                summary_payload["overall_explanation"] = msg
+
+            # Best-effort: mark failed aspects as Blocked for easier debugging.
+            statuses_obj = summary_payload.get("aspect_statuses")
+            merged_statuses: dict[str, str] = (
+                dict(statuses_obj) if isinstance(statuses_obj, dict) else {}
+            )
+            for entry in aspects_list:
+                if not isinstance(entry, dict):
+                    continue
+                a = entry.get("aspect")
+                ok = entry.get("ok")
+                if isinstance(a, str) and a and ok is not True:
+                    merged_statuses[a] = "Blocked"
+            if merged_statuses:
+                summary_payload["aspect_statuses"] = merged_statuses
+
+        validate_review_summary_json(summary_payload, expected_scope_id=scope_id)
+        summary_json_path = write_review_summary_json(out_dir, summary_payload)
+        summary_md_path = write_review_summary_md(
+            out_dir, format_review_summary_md(summary_payload)
+        )
+        summary_status = summary_payload.get("status")
+
+        if summary_status == "Blocked" and deferred_exc is None:
+            raise BlockedError(
+                f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
+            )
+
     if deferred_exc is not None:
         raise deferred_exc
 
@@ -586,6 +649,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "context_bundle_txt": os.path.relpath(context_bundle_path, os.getcwd()),
             "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
             "evidence_json": os.path.relpath(evidence_json_path, os.getcwd()),
+            "review_summary_json": os.path.relpath(summary_json_path, os.getcwd())
+            if summary_json_path
+            else "",
+            "review_summary_md": os.path.relpath(summary_md_path, os.getcwd())
+            if summary_md_path
+            else "",
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),

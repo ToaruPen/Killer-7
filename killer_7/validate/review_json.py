@@ -118,3 +118,58 @@ def validate_aspect_review_json(
             "" if len(semantic_errors) <= 8 else f" (+{len(semantic_errors) - 8} more)"
         )
         raise ExecFailureError(f"Review JSON validation failed: {joined}{more}")
+
+
+def validate_review_summary_json(
+    payload: object, *, expected_scope_id: Optional[str]
+) -> None:
+    try:
+        js_validators = importlib.import_module("jsonschema.validators")
+    except ModuleNotFoundError as exc:
+        raise ExecFailureError(
+            "Missing dependency: jsonschema. Install with: pip install -r requirements-killer7.txt"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ExecFailureError("Review summary JSON must be an object")
+
+    schema_path = _repo_root() / "schemas" / "review-summary.schema.json"
+    schema = _load_schema(schema_path)
+
+    scope_id = payload.get("scope_id")
+    if expected_scope_id is not None:
+        if not isinstance(scope_id, str) or scope_id != expected_scope_id:
+            raise ExecFailureError(
+                f"scope_id mismatch: expected {expected_scope_id}, got {scope_id}"
+            )
+
+    try:
+        validator_for = getattr(js_validators, "validator_for", None)
+        if validator_for is None:
+            raise ExecFailureError(
+                "Invalid jsonschema installation: missing validator_for"
+            )
+
+        validator_cls = validator_for(schema)
+        validator_cls.check_schema(schema)
+        validator = validator_cls(schema)
+    except Exception as exc:  # noqa: BLE001
+        raise ExecFailureError(f"Invalid JSON schema: {schema_path}: {exc}") from exc
+
+    schema_errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
+    if schema_errors:
+        rendered = "; ".join(
+            f"{_format_path(e)}: {e.message}" for e in schema_errors[:8]
+        )
+        more = "" if len(schema_errors) <= 8 else f" (+{len(schema_errors) - 8} more)"
+        raise ExecFailureError(
+            f"Review summary JSON validation failed: {rendered}{more}"
+        )
+
+    semantic_errors = _validate_line_range_semantics(payload)
+    if semantic_errors:
+        joined = "; ".join(semantic_errors[:8])
+        more = (
+            "" if len(semantic_errors) <= 8 else f" (+{len(semantic_errors) - 8} more)"
+        )
+        raise ExecFailureError(f"Review summary JSON validation failed: {joined}{more}")
