@@ -11,6 +11,8 @@ from killer_7.errors import ExecFailureError
 class _FakeRunner:
     def __init__(self, *, payload: object) -> None:
         self.payload = payload
+        self.last_message = ""
+        self.last_env: dict[str, str] | None = None
 
     def run_viewpoint(
         self,
@@ -21,7 +23,9 @@ class _FakeRunner:
         timeout_s: int | None = None,
         env: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        _ = (out_dir, viewpoint, message, timeout_s, env)
+        _ = (out_dir, viewpoint, timeout_s)
+        self.last_message = message
+        self.last_env = env
         return {
             "viewpoint": viewpoint,
             "result_path": "<fake>",
@@ -143,6 +147,32 @@ class TestRunOneAspect(unittest.TestCase):
             findings = payload.get("findings")
             self.assertTrue(isinstance(findings, list))
             self.assertEqual(findings[0].get("sources"), ["a.txt#L1-L2"])
+
+    def test_hybrid_repo_readonly_without_allowlist_is_disabled(self) -> None:
+        from killer_7.aspects.run_one import run_one_aspect
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = _FakeRunner(
+                payload={
+                    "schema_version": 3,
+                    "scope_id": "scope-1",
+                    "status": "Approved",
+                    "findings": [],
+                    "questions": [],
+                    "overall_explanation": "ok",
+                }
+            )
+            run_one_aspect(
+                base_dir=td,
+                aspect="correctness",
+                scope_id="scope-1",
+                context_bundle="CTX",
+                runner=runner,
+                runner_env={"KILLER7_REPO_READONLY": "1"},
+            )
+
+            self.assertEqual(runner.last_env, {"KILLER7_REPO_READONLY": "0"})
+            self.assertNotIn("Hybrid Access Policy", runner.last_message)
 
 
 if __name__ == "__main__":

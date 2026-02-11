@@ -12,6 +12,7 @@ from killer_7.errors import ExecFailureError
 class _FakeRunner:
     def __init__(self, *, payload_by_viewpoint: Mapping[str, object]) -> None:
         self.payload_by_viewpoint = dict(payload_by_viewpoint)
+        self.seen_env_by_viewpoint: dict[str, dict[str, str] | None] = {}
 
     def run_viewpoint(
         self,
@@ -23,6 +24,7 @@ class _FakeRunner:
         env: dict[str, str] | None = None,
     ) -> dict[str, object]:
         _ = (out_dir, message, timeout_s, env)
+        self.seen_env_by_viewpoint[viewpoint] = env
         payload = self.payload_by_viewpoint.get(viewpoint)
         if payload is None:
             payload = {
@@ -121,6 +123,56 @@ class TestOrchestrate(unittest.TestCase):
             failed = [x for x in idx["aspects"] if x["aspect"] == "security"]
             self.assertEqual(len(failed), 1)
             self.assertFalse(failed[0]["ok"])
+
+    def test_passes_runner_env_per_aspect(self) -> None:
+        from killer_7.aspects.orchestrate import ASPECTS_V1, run_all_aspects
+
+        payload: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        runners: list[_FakeRunner] = []
+
+        def make_runner() -> _FakeRunner:
+            r = _FakeRunner(payload_by_viewpoint={a: payload for a in ASPECTS_V1})
+            runners.append(r)
+            return r
+
+        def env_for_aspect(aspect: str) -> dict[str, str]:
+            if aspect == "correctness":
+                return {
+                    "KILLER7_REPO_READONLY": "1",
+                    "KILLER7_REPO_ALLOWLIST": "docs/**/*.md",
+                }
+            return {"KILLER7_REPO_READONLY": "0"}
+
+        with tempfile.TemporaryDirectory() as td:
+            run_all_aspects(
+                base_dir=td,
+                scope_id="scope-1",
+                context_bundle="CTX",
+                sot="SOT",
+                runner_factory=make_runner,
+                runner_env_for_aspect=env_for_aspect,
+            )
+
+        seen: dict[str, dict[str, str] | None] = {}
+        for r in runners:
+            seen.update(r.seen_env_by_viewpoint)
+
+        self.assertEqual(
+            seen["correctness"],
+            {
+                "KILLER7_REPO_READONLY": "1",
+                "KILLER7_REPO_ALLOWLIST": "docs/**/*.md",
+            },
+        )
+        self.assertEqual(seen["readability"], {"KILLER7_REPO_READONLY": "0"})
 
 
 if __name__ == "__main__":

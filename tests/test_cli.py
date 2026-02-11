@@ -812,6 +812,43 @@ class TestCli(unittest.TestCase):
             payload = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
 
+    def test_questions_create_rerun_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked_with_question(fake_opencode)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--hybrid-aspect",
+                    "correctness",
+                    "--hybrid-allowlist",
+                    "docs/**/*.md",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            rerun_dir = Path(td) / ".ai-review" / "re-run"
+            self.assertTrue(rerun_dir.is_dir())
+            plan_files = sorted(rerun_dir.glob("*/plan.json"))
+            self.assertEqual(len(plan_files), 1)
+
+            plan = json.loads(plan_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(plan.get("question_aspects"), ["correctness"])
+            self.assertIn(
+                "--hybrid-aspect correctness",
+                str(plan.get("recommended_command", "")),
+            )
+
     def test_missing_opencode_still_writes_blocked_summary(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
