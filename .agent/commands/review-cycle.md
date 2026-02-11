@@ -20,9 +20,15 @@ Review taxonomy (status/priority) and output rules are defined in:
 - `scope-id`: identifier like `issue-123` (`[A-Za-z0-9._-]+`)
 - `run-id`: optional; defaults to reusing `.agentic-sdd/reviews/<scope-id>/.current_run` or a timestamp
 
+Underlying script:
+
+```bash
+./scripts/review-cycle.sh <scope-id> [run-id] [--dry-run] [--model MODEL] [--claude-model MODEL]
+```
+
 ## Flow
 
-1. Collect the diff (default: `DIFF_MODE=auto`)
+1. Collect the diff (default: `DIFF_MODE=range`, `BASE_REF=origin/main`)
 2. Run tests (optional) and record results
 3. Generate `review.json` via selected engine (`codex exec` or `claude -p`)
 4. Validate JSON and save under `.agentic-sdd/`
@@ -30,6 +36,7 @@ Review taxonomy (status/priority) and output rules are defined in:
 ## Iteration protocol (how far/how to loop)
 
 - Run `/review-cycle` at least once before committing (see `/impl`).
+  Exception: for lightweight changes (e.g. documentation-only updates), ask the user whether to run it; skipping requires explicit approval and a recorded reason.
 - After each run, decide next action based on `review.json.status`:
   - `Blocked`: fix all `P0`/`P1` findings and re-run.
   - `Question`: answer questions (do not guess). If you cannot answer from the repo, stop and ask the user, then re-run after clarifying.
@@ -66,8 +73,11 @@ Review taxonomy (status/priority) and output rules are defined in:
 - `GH_INCLUDE_COMMENTS`: `1` to include Issue comments in fetched JSON (default: `0`)
 - `SOT_MAX_CHARS`: max chars for the assembled SoT bundle (0 = no limit). If exceeded, keep the head and the last ~2KB and insert `[TRUNCATED]`.
 
-- `DIFF_MODE`: `auto` | `staged` | `worktree` (default: `auto`)
+- `DIFF_MODE`: `range` | `auto` | `staged` | `worktree` (default: `range`)
+  - `range`: review `BASE_REF...HEAD` (default `BASE_REF=origin/main`, fallback to `main` if `origin/main` is missing)
+    - Requires a clean working tree (no staged/unstaged changes). For pre-commit local changes, use `staged` or `worktree`.
   - If both staged and worktree diffs exist in `auto`, fail-fast and ask you to choose.
+- `BASE_REF`: base ref for `range` mode (default: `origin/main`; fallback to `main`)
 - `CONSTRAINTS`: additional constraints (default: `none`)
 
 ### Engine selection
@@ -88,6 +98,8 @@ Review taxonomy (status/priority) and output rules are defined in:
 ## Outputs
 
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/review.json`
+- `.agentic-sdd/reviews/<scope-id>/<run-id>/review-metadata.json`
+  - In `DIFF_MODE=range`, `base_sha` is pinned to the SHA resolved when `diff.patch` is collected.
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/diff.patch`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/tests.txt`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/tests.stderr`
@@ -108,10 +120,8 @@ Using Codex (default):
 ```bash
 SOT="docs/prd/example.md docs/epics/example.md" \
 TEST_COMMAND="npm test" \
-DIFF_MODE=auto \
-MODEL=gpt-5.3-codex \
 REASONING_EFFORT=high \
-./scripts/review-cycle.sh issue-123
+./scripts/review-cycle.sh issue-123 --model gpt-5.3-codex
 ```
 
 Auto-build SoT from a GitHub Issue:
@@ -119,7 +129,6 @@ Auto-build SoT from a GitHub Issue:
 ```bash
 GH_ISSUE=123 \
 TESTS="not run: reason" \
-DIFF_MODE=staged \
 ./scripts/review-cycle.sh issue-123
 ```
 
@@ -128,7 +137,6 @@ Using Claude as fallback:
 ```bash
 GH_ISSUE=123 \
 TESTS="not run: reason" \
-DIFF_MODE=staged \
 REVIEW_ENGINE=claude \
 ./scripts/review-cycle.sh issue-123
 ```
