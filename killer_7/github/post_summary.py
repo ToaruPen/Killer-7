@@ -252,6 +252,27 @@ def _dedupe_with_keep_recovery(
             body=body,
         )
 
+        post_recovery_comments = _marker_comments(
+            client.issue_comments(repo=repo, issue=pr),
+            marker=SUMMARY_MARKER,
+            author_login=author_login,
+        )
+        if len(_marker_comment_ids(post_recovery_comments)) > 1:
+            removed += _dedupe_marker_comments(
+                client=client,
+                repo=repo,
+                marker_comments=post_recovery_comments,
+                keep_id=keep_id,
+            )
+            keep_id = _ensure_keep_marker_exists(
+                client=client,
+                repo=repo,
+                pr=pr,
+                author_login=author_login,
+                keep_id=keep_id,
+                body=body,
+            )
+
     return keep_id, removed
 
 

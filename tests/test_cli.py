@@ -1032,6 +1032,50 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(summary_comment.get("mode"), "skipped_stale_head")
 
+    def test_post_summary_fails_when_head_moves_during_post(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("status"), "exec_failure")
+            self.assertIn(
+                "PR head changed during summary posting",
+                payload.get("error", {}).get("message", ""),
+            )
+
     def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
