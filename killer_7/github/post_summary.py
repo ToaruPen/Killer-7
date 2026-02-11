@@ -20,6 +20,14 @@ def _is_not_found_error(exc: ExecFailureError) -> bool:
     return "not found" in str(exc).lower()
 
 
+def _ensure_pr_head_unchanged(
+    *, client: GhClient, repo: str, pr: int, expected_head_sha: str
+) -> None:
+    current_head_sha = client.pr_head_ref_oid(repo=repo, pr=pr)
+    if current_head_sha != expected_head_sha:
+        raise ExecFailureError("PR head changed; skip stale summary mutation")
+
+
 def _comment_author_login(comment: Mapping[str, object]) -> str:
     user_obj = comment.get("user")
     if not isinstance(user_obj, dict):
@@ -54,8 +62,21 @@ def _marker_comment_ids(comments: list[dict[str, object]]) -> set[int]:
     return {_comment_id(c) for c in comments if _comment_id(c) >= 0}
 
 
-def _delete_comment_if_exists(*, client: GhClient, repo: str, comment_id: int) -> bool:
+def _delete_comment_if_exists(
+    *,
+    client: GhClient,
+    repo: str,
+    pr: int,
+    expected_head_sha: str,
+    comment_id: int,
+) -> bool:
     try:
+        _ensure_pr_head_unchanged(
+            client=client,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+        )
         client.delete_issue_comment(repo=repo, comment_id=comment_id)
         return True
     except ExecFailureError as exc:
@@ -69,6 +90,8 @@ def _dedupe_marker_comments(
     *,
     client: GhClient,
     repo: str,
+    pr: int,
+    expected_head_sha: str,
     marker_comments: list[dict[str, object]],
     keep_id: int,
 ) -> int:
@@ -80,12 +103,31 @@ def _dedupe_marker_comments(
         comment_id = _comment_id(comment)
         if comment_id < 0 or comment_id == keep_id:
             continue
-        if _delete_comment_if_exists(client=client, repo=repo, comment_id=comment_id):
+        if _delete_comment_if_exists(
+            client=client,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+            comment_id=comment_id,
+        ):
             removed += 1
     return removed
 
 
-def _create_marker_comment(*, client: GhClient, repo: str, pr: int, body: str) -> int:
+def _create_marker_comment(
+    *,
+    client: GhClient,
+    repo: str,
+    pr: int,
+    expected_head_sha: str,
+    body: str,
+) -> int:
+    _ensure_pr_head_unchanged(
+        client=client,
+        repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
+    )
     created = client.create_issue_comment(repo=repo, issue=pr, body=body)
     created_id = _comment_id(created)
     if created_id < 0:
@@ -115,12 +157,19 @@ def _update_with_not_found_recovery(
     repo: str,
     pr: int,
     author_login: str,
+    expected_head_sha: str,
     preferred_comment_id: int,
     body: str,
 ) -> int:
     candidate_id = preferred_comment_id
     for _ in range(3):
         try:
+            _ensure_pr_head_unchanged(
+                client=client,
+                repo=repo,
+                pr=pr,
+                expected_head_sha=expected_head_sha,
+            )
             updated = client.update_issue_comment(
                 repo=repo, comment_id=candidate_id, body=body
             )
@@ -137,6 +186,7 @@ def _update_with_not_found_recovery(
                     client=client,
                     repo=repo,
                     pr=pr,
+                    expected_head_sha=expected_head_sha,
                     body=body,
                 )
             candidate_id = latest_id
@@ -150,6 +200,7 @@ def _ensure_keep_marker_exists(
     repo: str,
     pr: int,
     author_login: str,
+    expected_head_sha: str,
     keep_id: int,
     body: str,
 ) -> int:
@@ -170,11 +221,18 @@ def _ensure_keep_marker_exists(
                 repo=repo,
                 pr=pr,
                 author_login=author_login,
+                expected_head_sha=expected_head_sha,
                 preferred_comment_id=latest_id,
                 body=body,
             )
 
-    return _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
+    return _create_marker_comment(
+        client=client,
+        repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
+        body=body,
+    )
 
 
 def _dedupe_with_keep_recovery(
@@ -183,6 +241,7 @@ def _dedupe_with_keep_recovery(
     repo: str,
     pr: int,
     author_login: str,
+    expected_head_sha: str,
     keep_id: int,
     body: str,
 ) -> tuple[int, int]:
@@ -197,6 +256,7 @@ def _dedupe_with_keep_recovery(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             keep_id=keep_id,
             body=body,
         )
@@ -209,6 +269,8 @@ def _dedupe_with_keep_recovery(
     removed = _dedupe_marker_comments(
         client=client,
         repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
         marker_comments=marker_comments,
         keep_id=keep_id,
     )
@@ -225,6 +287,7 @@ def _dedupe_with_keep_recovery(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             keep_id=keep_id,
             body=body,
         )
@@ -240,6 +303,8 @@ def _dedupe_with_keep_recovery(
         removed += _dedupe_marker_comments(
             client=client,
             repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
             marker_comments=final_comments,
             keep_id=keep_id,
         )
@@ -248,6 +313,7 @@ def _dedupe_with_keep_recovery(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             keep_id=keep_id,
             body=body,
         )
@@ -261,6 +327,8 @@ def _dedupe_with_keep_recovery(
             removed += _dedupe_marker_comments(
                 client=client,
                 repo=repo,
+                pr=pr,
+                expected_head_sha=expected_head_sha,
                 marker_comments=post_recovery_comments,
                 keep_id=keep_id,
             )
@@ -269,6 +337,7 @@ def _dedupe_with_keep_recovery(
                 repo=repo,
                 pr=pr,
                 author_login=author_login,
+                expected_head_sha=expected_head_sha,
                 keep_id=keep_id,
                 body=body,
             )
@@ -277,9 +346,20 @@ def _dedupe_with_keep_recovery(
 
 
 def post_summary_comment(
-    *, repo: str, pr: int, head_sha: str, summary: Mapping[str, object]
+    *,
+    repo: str,
+    pr: int,
+    head_sha: str,
+    expected_head_sha: str,
+    summary: Mapping[str, object],
 ) -> dict[str, object]:
     client = GhClient.from_env()
+    _ensure_pr_head_unchanged(
+        client=client,
+        repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
+    )
     author_login = client.viewer_login()
     body = format_pr_summary_comment_md(
         summary,
@@ -305,6 +385,7 @@ def post_summary_comment(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             preferred_comment_id=keep_id,
             body=body,
         )
@@ -323,6 +404,7 @@ def post_summary_comment(
                     repo=repo,
                     pr=pr,
                     author_login=author_login,
+                    expected_head_sha=expected_head_sha,
                     preferred_comment_id=latest_id,
                     body=body,
                 )
@@ -332,6 +414,7 @@ def post_summary_comment(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             keep_id=keep_id,
             body=body,
         )
@@ -341,6 +424,7 @@ def post_summary_comment(
             repo=repo,
             pr=pr,
             author_login=author_login,
+            expected_head_sha=expected_head_sha,
             keep_id=keep_id,
             body=body,
         )
@@ -350,7 +434,13 @@ def post_summary_comment(
             "deduped": removed,
         }
 
-    created_id = _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
+    created_id = _create_marker_comment(
+        client=client,
+        repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
+        body=body,
+    )
 
     latest_comments = _marker_comments(
         client.issue_comments(repo=repo, issue=pr),
@@ -372,6 +462,7 @@ def post_summary_comment(
                 repo=repo,
                 pr=pr,
                 author_login=author_login,
+                expected_head_sha=expected_head_sha,
                 preferred_comment_id=keep_id,
                 body=body,
             )
@@ -381,6 +472,7 @@ def post_summary_comment(
         repo=repo,
         pr=pr,
         author_login=author_login,
+        expected_head_sha=expected_head_sha,
         keep_id=keep_id,
         body=body,
     )
@@ -390,6 +482,7 @@ def post_summary_comment(
         repo=repo,
         pr=pr,
         author_login=author_login,
+        expected_head_sha=expected_head_sha,
         keep_id=keep_id,
         body=body,
     )

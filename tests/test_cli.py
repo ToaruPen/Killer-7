@@ -1066,13 +1066,13 @@ class TestCli(unittest.TestCase):
 
             state = json.loads(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
-            self.assertEqual(len(comments), 1)
+            self.assertEqual(len(comments), 0)
 
             run_json = Path(td) / ".ai-review" / "run.json"
             payload = json.loads(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
             self.assertIn(
-                "PR head changed during summary posting",
+                "PR head changed; skip stale summary mutation",
                 payload.get("error", {}).get("message", ""),
             )
 

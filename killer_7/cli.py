@@ -646,6 +646,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 repo=args.repo,
                 pr=args.pr,
                 head_sha=pr_input.head_sha,
+                expected_head_sha=pr_input.head_sha,
                 summary=summary_payload,
             )
             latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
