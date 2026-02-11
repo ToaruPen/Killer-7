@@ -254,6 +254,17 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
         # Continue to generate evidence/policy artifacts to aid debugging, then re-raise.
         deferred_exc = exc
+
+        if isinstance(exc, ExecFailureError):
+            # Avoid leaving stale `review-summary.*` from a previous successful run.
+            for name in ("review-summary.json", "review-summary.md"):
+                try:
+                    os.remove(os.path.join(out_dir, name))
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
         aspects_result = {
             "scope_id": scope_id,
             "index_path": os.path.join(out_dir, "aspects", "index.json"),

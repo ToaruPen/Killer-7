@@ -306,6 +306,21 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_exec_failure(path: Path) -> None:
+    """Fake opencode that always fails."""
+
+    path.write_text(
+        """#!/usr/bin/env python3
+import sys
+
+sys.stderr.write("fake opencode: exec failure\\n")
+raise SystemExit(2)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def run_cli(
     args: list[str],
     cwd: str,
@@ -575,3 +590,36 @@ class TestCli(unittest.TestCase):
                 ("blocked" in explanation) or ("opencode" in explanation),
                 msg=f"unexpected overall_explanation: {payload.get('overall_explanation')!r}",
             )
+
+    def test_exec_failure_clears_stale_review_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            summary_json = out_dir / "review-summary.json"
+            summary_md = out_dir / "review-summary.md"
+            self.assertTrue(summary_json.is_file())
+            self.assertTrue(summary_md.is_file())
+
+            _write_fake_opencode_exec_failure(fake_opencode)
+            p2 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertFalse(summary_json.exists())
+            self.assertFalse(summary_md.exists())
