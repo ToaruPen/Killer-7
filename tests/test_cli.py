@@ -993,7 +993,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
             self.assertIn("## Counts", comments[0].get("body", ""))
 
-    def test_post_summary_skips_when_head_moved(self) -> None:
+    def test_post_summary_fails_when_head_moved_before_post(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
@@ -1022,7 +1022,7 @@ class TestCli(unittest.TestCase):
                 gh_bin=str(fake_gh),
                 opencode_bin=str(fake_opencode),
             )
-            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
 
             state = json.loads(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
@@ -1030,15 +1030,11 @@ class TestCli(unittest.TestCase):
 
             run_json = Path(td) / ".ai-review" / "run.json"
             payload = json.loads(run_json.read_text(encoding="utf-8"))
-            summary_comment = (
-                payload.get("result", {})
-                .get("artifacts", {})
-                .get("summary_comment", {})
+            self.assertEqual(payload.get("status"), "exec_failure")
+            self.assertIn(
+                "PR head changed before summary posting",
+                payload.get("error", {}).get("message", ""),
             )
-            self.assertEqual(summary_comment.get("mode"), "skipped_stale_head")
-            artifacts = payload.get("result", {}).get("artifacts", {})
-            self.assertEqual(artifacts.get("review_summary_json"), "")
-            self.assertEqual(artifacts.get("review_summary_md"), "")
             out_dir = Path(td) / ".ai-review"
             self.assertFalse((out_dir / "review-summary.json").exists())
             self.assertFalse((out_dir / "review-summary.md").exists())
