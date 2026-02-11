@@ -284,6 +284,18 @@ def write_content_warnings_json(out_dir: str, warnings: list[object]) -> str:
     return path
 
 
+def write_review_summary_json(out_dir: str, payload: object) -> str:
+    path = os.path.join(out_dir, "review-summary.json")
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def write_review_summary_md(out_dir: str, content: str) -> str:
+    path = os.path.join(out_dir, "review-summary.md")
+    _atomic_write_text(path, (content or "").rstrip("\n"))
+    return path
+
+
 def _warning_to_json_dict(w: object) -> dict[str, object]:
     if isinstance(w, Mapping):
         kind = w.get("kind", "")

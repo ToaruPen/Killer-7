@@ -67,7 +67,17 @@ jobs:
             ruff check killer_7
             ruff format --check killer_7
           else
-            echo "skip: killer_7/ not found"
+            echo "ERROR: killer_7/ not found" >&2
+            exit 1
+          fi
+
+      - name: unit tests (killer_7)
+        run: |
+          if [ -d killer_7 ] && [ -d tests ]; then
+            python -m unittest discover -s tests -p 'test*.py'
+          else
+            echo "ERROR: expected killer_7/ and tests/ to exist" >&2
+            exit 1
           fi
 
       - name: Epic config extraction
@@ -83,5 +93,6 @@ jobs:
           if [ -d killer_7 ]; then
             bandit -r killer_7 -ll
           else
-            echo "skip: killer_7/ not found"
+            echo "ERROR: killer_7/ not found" >&2
+            exit 1
           fi

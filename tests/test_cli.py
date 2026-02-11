@@ -201,6 +201,58 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_blocked(path: Path) -> None:
+    """Fake opencode that returns a blocking P0 for one aspect."""
+
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search("^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search("^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "correctness":
+  payload["status"] = "Blocked"
+  payload["findings"] = [
+    {
+      "title": "Blocking issue",
+      "body": "Evidence-backed blocking issue.",
+      "priority": "P0",
+      "sources": ["hello.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
+    }
+  ]
+  payload["overall_explanation"] = "Blocking issue."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def run_cli(
     args: list[str],
     cwd: str,
@@ -372,3 +424,52 @@ class TestCli(unittest.TestCase):
 
             self.assertTrue((aspects_dir / "index.evidence.json").is_file())
             self.assertTrue((aspects_dir / "index.policy.json").is_file())
+
+    def test_creates_review_summary_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            summary_json = out_dir / "review-summary.json"
+            summary_md = out_dir / "review-summary.md"
+            self.assertTrue(summary_json.is_file())
+            self.assertTrue(summary_md.is_file())
+
+            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("schema_version"), 3)
+            self.assertEqual(payload.get("status"), "Approved")
+
+    def test_blocked_summary_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            summary_json = out_dir / "review-summary.json"
+            summary_md = out_dir / "review-summary.md"
+            self.assertTrue(summary_json.is_file())
+            self.assertTrue(summary_md.is_file())
+
+            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("status"), "Blocked")

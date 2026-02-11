@@ -23,6 +23,8 @@ from .artifacts import (
     write_context_bundle_txt,
     write_evidence_json,
     write_pr_input_artifacts,
+    write_review_summary_json,
+    write_review_summary_md,
     write_sot_md,
     write_warnings_txt,
 )
@@ -40,6 +42,9 @@ from .validate.evidence import (
     parse_context_bundle_index,
     recompute_review_status,
 )
+from .validate.review_json import validate_review_summary_json
+from .report.merge import merge_review_summary
+from .report.format_md import format_review_summary_md
 
 
 def _strip_machine_fields_from_findings(
@@ -266,6 +271,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     index_path = str(aspects_result.get("index_path", ""))
     per_aspect: dict[str, object] = {}
+    summary_reviews: dict[str, dict[str, object]] = {}
     evidence_index_aspects: list[dict[str, object]] = []
     policy_index_aspects: list[dict[str, object]] = []
     totals = {
@@ -462,6 +468,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             out_dir, aspect=aspect, payload=policy_review
         )
 
+        # Use the evidence/policy-applied review with machine fields preserved for
+        # aggregated report generation (review-summary.json).
+        summary_reviews[aspect] = dict(updated_review)
+
         per_aspect[aspect] = {
             "ok": True,
             "input_path": raw_rel_path,
@@ -556,6 +566,34 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         },
     )
 
+    summary_json_path = ""
+    summary_md_path = ""
+    if deferred_exc is None or isinstance(deferred_exc, BlockedError):
+        summary_payload = merge_review_summary(
+            scope_id=scope_id, aspect_reviews=summary_reviews
+        )
+        validate_review_summary_json(summary_payload, expected_scope_id=scope_id)
+        summary_json_path = write_review_summary_json(out_dir, summary_payload)
+        summary_md_path = write_review_summary_md(
+            out_dir, format_review_summary_md(summary_payload)
+        )
+        summary_status = summary_payload.get("status")
+
+        if summary_status == "Blocked":
+            raise BlockedError(
+                f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
+            )
+
+        # If the aspects runner raised BlockedError, but the policy-applied merged summary is not
+        # blocked, suppress the original BlockedError. This can occur when evidence/policy removes
+        # or downgrades blocking findings.
+        if (
+            isinstance(deferred_exc, BlockedError)
+            and summary_reviews
+            and summary_status != "Blocked"
+        ):
+            deferred_exc = None
+
     if deferred_exc is not None:
         raise deferred_exc
 
@@ -586,6 +624,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "context_bundle_txt": os.path.relpath(context_bundle_path, os.getcwd()),
             "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
             "evidence_json": os.path.relpath(evidence_json_path, os.getcwd()),
+            "review_summary_json": os.path.relpath(summary_json_path, os.getcwd())
+            if summary_json_path
+            else "",
+            "review_summary_md": os.path.relpath(summary_md_path, os.getcwd())
+            if summary_md_path
+            else "",
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),
