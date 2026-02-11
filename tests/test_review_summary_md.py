@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from killer_7.report.format_md import format_review_summary_md
+from killer_7.report.format_md import (
+    format_pr_summary_comment_md,
+    format_review_summary_md,
+)
 
 
 class TestReviewSummaryMd(unittest.TestCase):
@@ -47,3 +50,66 @@ class TestReviewSummaryMd(unittest.TestCase):
         self.assertIn("<details>", md)
         self.assertLess(md.index("[P0] P0 title"), md.index("<details>"))
         self.assertGreater(md.index("[P2] P2 title"), md.index("<details>"))
+
+    def test_pr_summary_comment_includes_marker_counts_and_meta(self) -> None:
+        summary = {
+            "schema_version": 3,
+            "scope_id": "owner/name#pr-1@deadbeef",
+            "status": "Blocked",
+            "findings": [
+                {"title": "p0", "priority": "P0", "verified": True},
+                {"title": "p1", "priority": "P1", "verified": False},
+                {"title": "p2", "priority": "P2", "verified": True},
+                {"title": "p3", "priority": "P3", "verified": False},
+            ],
+            "questions": ["question"],
+            "overall_explanation": "blocked reason",
+            "aspect_statuses": {},
+        }
+
+        md = format_pr_summary_comment_md(
+            summary,
+            marker="<!-- killer-7:summary:v1 -->",
+            head_sha="0123456789abcdef",
+        )
+
+        self.assertIn("<!-- killer-7:summary:v1 -->", md)
+        self.assertIn("- P0: 1", md)
+        self.assertIn("- P1: 1", md)
+        self.assertIn("- P2: 1", md)
+        self.assertIn("- P3: 1", md)
+        self.assertIn("- verified: 2", md)
+        self.assertIn("- unverified: 2", md)
+        self.assertIn("- head_sha: `0123456789ab`", md)
+
+    def test_pr_summary_comment_is_bounded_and_mentions_artifacts(self) -> None:
+        long_title = "x" * 1024
+        findings = [
+            {
+                "title": f"{idx}-{long_title}",
+                "priority": "P2",
+                "verified": True,
+            }
+            for idx in range(300)
+        ]
+        summary = {
+            "schema_version": 3,
+            "scope_id": "owner/name#pr-1@deadbeef",
+            "status": "Approved",
+            "findings": findings,
+            "questions": [],
+            "overall_explanation": "ok",
+            "aspect_statuses": {},
+        }
+
+        md = format_pr_summary_comment_md(
+            summary,
+            marker="<!-- killer-7:summary:v1 -->",
+            head_sha="0123456789abcdef",
+        )
+
+        self.assertLessEqual(len(md), 65536 - 1024)
+        self.assertIn("<!-- killer-7:summary:v1 -->", md)
+        self.assertIn("- head_sha: `0123456789ab`", md)
+        self.assertIn("truncated to fit GitHub comment size limit", md)
+        self.assertIn(".ai-review/review-summary.md", md)

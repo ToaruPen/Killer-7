@@ -30,7 +30,9 @@ from .artifacts import (
 )
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
+from .github.gh import GhClient
 from .github.pr_input import fetch_pr_input
+from .github.post_summary import post_summary_comment
 from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
@@ -115,6 +117,7 @@ def build_parser() -> ThrowingArgumentParser:
     review = sub.add_parser("review", help="Run review for a GitHub PR")
     review.add_argument("--repo", required=True, type=parse_repo)
     review.add_argument("--pr", required=True, type=parse_pr)
+    review.add_argument("--post", action="store_true")
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -135,10 +138,29 @@ def write_run_json(out_dir: str, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def clear_stale_review_summary(out_dir: str) -> None:
+    for name in ("review-summary.json", "review-summary.md"):
+        try:
+            os.remove(os.path.join(out_dir, name))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
+    message = str(exc).lower()
+    return "pr head changed; skip stale summary mutation" in message
+
+
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Fetch PR input (diff + metadata) and write artifacts.
     out_dir = ensure_artifacts_dir(os.getcwd())
-    pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+    try:
+        pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
     artifacts = write_pr_input_artifacts(out_dir, pr_input)
 
     # Collect SoT from PR branch (ref=head sha) using allowlist.
@@ -257,13 +279,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
         if isinstance(exc, ExecFailureError):
             # Avoid leaving stale `review-summary.*` from a previous successful run.
-            for name in ("review-summary.json", "review-summary.md"):
-                try:
-                    os.remove(os.path.join(out_dir, name))
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    pass
+            clear_stale_review_summary(out_dir)
 
         aspects_result = {
             "scope_id": scope_id,
@@ -579,6 +595,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     summary_json_path = ""
     summary_md_path = ""
+    summary_payload: dict[str, object] | None = None
+    post_result: dict[str, object] = {}
     if deferred_exc is None or isinstance(deferred_exc, BlockedError):
         summary_payload = merge_review_summary(
             scope_id=scope_id, aspect_reviews=summary_reviews
@@ -615,9 +633,49 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         summary_status = summary_payload.get("status")
 
         if summary_status == "Blocked" and deferred_exc is None:
-            raise BlockedError(
+            deferred_exc = BlockedError(
                 f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
             )
+
+    if args.post and summary_payload is not None:
+        gh_client = GhClient.from_env()
+        try:
+            current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+            if current_head_sha != pr_input.head_sha:
+                clear_stale_review_summary(out_dir)
+                summary_json_path = ""
+                summary_md_path = ""
+                post_result = {
+                    "mode": "skipped_stale_head",
+                    "expected_head_sha": pr_input.head_sha,
+                    "current_head_sha": current_head_sha,
+                }
+                deferred_exc = ExecFailureError(
+                    "PR head changed before summary posting; rerun review on latest head"
+                )
+            else:
+                post_result = post_summary_comment(
+                    repo=args.repo,
+                    pr=args.pr,
+                    head_sha=pr_input.head_sha,
+                    expected_head_sha=pr_input.head_sha,
+                    summary=summary_payload,
+                )
+                latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                if latest_head_sha != pr_input.head_sha:
+                    clear_stale_review_summary(out_dir)
+                    post_result = {
+                        "mode": "stale_head_after_post",
+                        "expected_head_sha": pr_input.head_sha,
+                        "current_head_sha": latest_head_sha,
+                    }
+                    deferred_exc = ExecFailureError(
+                        "PR head changed during summary posting; rerun review on latest head"
+                    )
+        except ExecFailureError as exc:
+            if _should_clear_stale_summary_on_post_failure(exc):
+                clear_stale_review_summary(out_dir)
+            raise
 
     if deferred_exc is not None:
         raise deferred_exc
@@ -655,6 +713,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "review_summary_md": os.path.relpath(summary_md_path, os.getcwd())
             if summary_md_path
             else "",
+            "summary_comment": post_result,
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),

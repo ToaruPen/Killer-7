@@ -88,6 +88,20 @@ class GhClient:
             raise ExecFailureError("Missing headRefOid in `gh pr view` output")
         return head
 
+    def viewer_login(self) -> str:
+        raw = self._run(["api", "user"])
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api user` returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise ExecFailureError("Unexpected JSON shape from `gh api user`")
+        login_obj = data.get("login")
+        login = login_obj.strip() if isinstance(login_obj, str) else ""
+        if not login:
+            raise ExecFailureError("Missing login in `gh api user` output")
+        return login
+
     def pr_files(self, *, repo: str, pr: int) -> list[dict[str, Any]]:
         endpoint = f"repos/{repo}/pulls/{pr}/files"
         raw = self._run(["api", "--paginate", "--slurp", endpoint])
@@ -118,6 +132,62 @@ class GhClient:
             return json.loads(raw or "null")
         except json.JSONDecodeError as exc:
             raise ExecFailureError("`gh api` returned invalid JSON") from exc
+
+    def issue_comments(self, *, repo: str, issue: int) -> list[dict[str, Any]]:
+        endpoint = f"repos/{repo}/issues/{issue}/comments"
+        raw = self._run(["api", "--paginate", "--slurp", endpoint])
+        try:
+            pages = json.loads(raw or "[]")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+
+        if isinstance(pages, list) and (not pages or isinstance(pages[0], list)):
+            items: list[dict[str, Any]] = []
+            for page in pages:
+                if isinstance(page, list):
+                    for x in page:
+                        if isinstance(x, dict):
+                            items.append(x)
+            return items
+
+        if isinstance(pages, list):
+            return [x for x in pages if isinstance(x, dict)]
+
+        raise ExecFailureError("Unexpected JSON shape from issue comments API")
+
+    def create_issue_comment(
+        self, *, repo: str, issue: int, body: str
+    ) -> dict[str, Any]:
+        endpoint = f"repos/{repo}/issues/{issue}/comments"
+        raw = self._run(["api", "-X", "POST", endpoint, "-f", f"body={body}"])
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise ExecFailureError(
+                "Unexpected JSON shape from create issue comment API"
+            )
+        return data
+
+    def update_issue_comment(
+        self, *, repo: str, comment_id: int, body: str
+    ) -> dict[str, Any]:
+        endpoint = f"repos/{repo}/issues/comments/{comment_id}"
+        raw = self._run(["api", "-X", "PATCH", endpoint, "-f", f"body={body}"])
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("`gh api` returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise ExecFailureError(
+                "Unexpected JSON shape from update issue comment API"
+            )
+        return data
+
+    def delete_issue_comment(self, *, repo: str, comment_id: int) -> None:
+        endpoint = f"repos/{repo}/issues/comments/{comment_id}"
+        self._run(["api", "-X", "DELETE", endpoint])
 
     def repo_commit_tree_sha(self, *, repo: str, ref: str) -> str:
         endpoint = f"repos/{repo}/commits/{quote(ref, safe='')}"
