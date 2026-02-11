@@ -981,6 +981,48 @@ class TestCli(unittest.TestCase):
             self.assertFalse(summary_json.exists())
             self.assertFalse(summary_md.exists())
 
+    def test_invalid_hybrid_allowlist_clears_stale_review_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            summary_json = out_dir / "review-summary.json"
+            summary_md = out_dir / "review-summary.md"
+            self.assertTrue(summary_json.is_file())
+            self.assertTrue(summary_md.is_file())
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--hybrid-aspect",
+                    "correctness",
+                    "--hybrid-allowlist",
+                    "../**/*",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertFalse(summary_json.exists())
+            self.assertFalse(summary_md.exists())
+
     def test_post_summary_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"

@@ -270,10 +270,14 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
     # Keep scope_id deterministic and tied to the PR input.
     scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
-    hybrid_policy = build_hybrid_policy(
-        hybrid_aspects=list(args.hybrid_aspect or []),
-        hybrid_allowlist=list(args.hybrid_allowlist or []),
-    )
+    try:
+        hybrid_policy = build_hybrid_policy(
+            hybrid_aspects=list(args.hybrid_aspect or []),
+            hybrid_allowlist=list(args.hybrid_allowlist or []),
+        )
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
 
     def runner_env_for_aspect(aspect: str) -> dict[str, str]:
         return hybrid_policy.decision_for(aspect=aspect).runner_env()
