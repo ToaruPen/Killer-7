@@ -1036,6 +1036,12 @@ class TestCli(unittest.TestCase):
                 .get("summary_comment", {})
             )
             self.assertEqual(summary_comment.get("mode"), "skipped_stale_head")
+            artifacts = payload.get("result", {}).get("artifacts", {})
+            self.assertEqual(artifacts.get("review_summary_json"), "")
+            self.assertEqual(artifacts.get("review_summary_md"), "")
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
 
     def test_post_summary_fails_when_head_moves_during_post(self) -> None:
         with tempfile.TemporaryDirectory() as td:

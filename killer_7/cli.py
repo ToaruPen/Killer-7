@@ -642,6 +642,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         try:
             current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
             if current_head_sha != pr_input.head_sha:
+                clear_stale_review_summary(out_dir)
+                summary_json_path = ""
+                summary_md_path = ""
                 post_result = {
                     "mode": "skipped_stale_head",
                     "expected_head_sha": pr_input.head_sha,
