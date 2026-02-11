@@ -12,12 +12,6 @@ Killer-7は、GitHub PRを入力として、複数観点のLLMレビューを自
 - PRD: `docs/prd/killer-7.md`
 - Epic: `docs/epics/killer-7-epic.md`
 
-## 開発状況
-
-- v1の中核実装は完了済みです（PR入力収集、Context Bundle生成、複数観点レビュー実行、evidence/policy適用、要約/inline投稿）
-- 実装は引き続きGitHub Issuesで進行します（EpicのIssue分割に準拠）
-- 現在の主な運用フロー: `/estimation` → `/impl` または `/tdd` → `/review-cycle` → `/review` → `/create-pr`
-
 ## テスト
 
 Python 3.11:
