@@ -123,8 +123,13 @@ if args[:1] == ["api"]:
 
     if endpoint.endswith("/issues/123/comments"):
         if "-X" in args and arg_value("-X") == "POST":
-            body = arg_value("-f").removeprefix("body=")
             state = read_state()
+            post_error = state.get("post_comment_error_message")
+            if isinstance(post_error, str) and post_error:
+                sys.stderr.write(post_error + "\\n")
+                raise SystemExit(1)
+
+            body = arg_value("-f").removeprefix("body=")
             viewer = state.get("viewer_login")
             login = viewer if isinstance(viewer, str) and viewer else "owner"
             comment = {"id": state["next_id"], "body": body, "user": {"login": login}}
@@ -1079,6 +1084,37 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             self.assertFalse((out_dir / "review-summary.json").exists())
             self.assertFalse((out_dir / "review-summary.md").exists())
+
+    def test_post_summary_generic_post_failure_keeps_summary_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "post_comment_error_message": "Internal Server Error",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertTrue((out_dir / "review-summary.json").exists())
+            self.assertTrue((out_dir / "review-summary.md").exists())
 
     def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:

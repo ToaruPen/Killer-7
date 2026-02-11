@@ -148,6 +148,11 @@ def clear_stale_review_summary(out_dir: str) -> None:
             pass
 
 
+def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
+    message = str(exc).lower()
+    return "pr head changed; skip stale summary mutation" in message
+
+
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     # Fetch PR input (diff + metadata) and write artifacts.
     out_dir = ensure_artifacts_dir(os.getcwd())
@@ -661,8 +666,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     deferred_exc = ExecFailureError(
                         "PR head changed during summary posting; rerun review on latest head"
                     )
-        except ExecFailureError:
-            clear_stale_review_summary(out_dir)
+        except ExecFailureError as exc:
+            if _should_clear_stale_summary_on_post_failure(exc):
+                clear_stale_review_summary(out_dir)
             raise
 
     if deferred_exc is not None:
