@@ -1419,3 +1419,50 @@ class TestCli(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
+
+    def test_post_summary_stale_head_overrides_blocked_result(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("status"), "exec_failure")
+            self.assertIn(
+                "PR head changed before summary posting",
+                payload.get("error", {}).get("message", ""),
+            )
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 0)

@@ -650,6 +650,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     "expected_head_sha": pr_input.head_sha,
                     "current_head_sha": current_head_sha,
                 }
+                if isinstance(deferred_exc, BlockedError):
+                    deferred_exc = ExecFailureError(
+                        "PR head changed before summary posting; rerun review on latest head"
+                    )
             else:
                 post_result = post_summary_comment(
                     repo=args.repo,
