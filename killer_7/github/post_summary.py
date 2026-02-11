@@ -137,6 +137,39 @@ def _update_with_not_found_recovery(
     raise ExecFailureError("Failed to update marker comment after race recovery")
 
 
+def _ensure_keep_marker_exists(
+    *,
+    client: GhClient,
+    repo: str,
+    pr: int,
+    author_login: str,
+    keep_id: int,
+    body: str,
+) -> int:
+    current_markers = _marker_comments(
+        client.issue_comments(repo=repo, issue=pr),
+        marker=SUMMARY_MARKER,
+        author_login=author_login,
+    )
+    if any(_comment_id(c) == keep_id for c in current_markers):
+        return keep_id
+
+    latest = _latest_marker_comment(current_markers)
+    if latest is not None:
+        latest_id = _comment_id(latest)
+        if latest_id >= 0:
+            return _update_with_not_found_recovery(
+                client=client,
+                repo=repo,
+                pr=pr,
+                author_login=author_login,
+                preferred_comment_id=latest_id,
+                body=body,
+            )
+
+    return _create_marker_comment(client=client, repo=repo, pr=pr, body=body)
+
+
 def post_summary_comment(
     *, repo: str, pr: int, head_sha: str, summary: Mapping[str, object]
 ) -> dict[str, object]:
@@ -188,6 +221,15 @@ def post_summary_comment(
                     body=body,
                 )
 
+        keep_id = _ensure_keep_marker_exists(
+            client=client,
+            repo=repo,
+            pr=pr,
+            author_login=author_login,
+            keep_id=keep_id,
+            body=body,
+        )
+
         removed = _dedupe_marker_comments(
             client=client,
             repo=repo,
@@ -229,6 +271,15 @@ def post_summary_comment(
                 preferred_comment_id=keep_id,
                 body=body,
             )
+
+    keep_id = _ensure_keep_marker_exists(
+        client=client,
+        repo=repo,
+        pr=pr,
+        author_login=author_login,
+        keep_id=keep_id,
+        body=body,
+    )
 
     removed = _dedupe_marker_comments(
         client=client,
