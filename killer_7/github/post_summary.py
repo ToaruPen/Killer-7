@@ -112,7 +112,7 @@ def _update_with_not_found_recovery(
     body: str,
 ) -> int:
     candidate_id = preferred_comment_id
-    for _ in range(2):
+    for _ in range(3):
         try:
             updated = client.update_issue_comment(
                 repo=repo, comment_id=candidate_id, body=body

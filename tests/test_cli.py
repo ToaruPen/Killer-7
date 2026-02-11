@@ -982,6 +982,55 @@ class TestCli(unittest.TestCase):
             self.assertEqual(comments[0].get("id"), 1)
             self.assertIn("## Counts", comments[0].get("body", ""))
 
+    def test_post_summary_recovers_after_two_sequential_marker_deletions(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [
+                            {
+                                "id": 1,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-1",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 2,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-2",
+                                "user": {"login": "owner"},
+                            },
+                            {
+                                "id": 3,
+                                "body": "<!-- killer-7:summary:v1 -->\nold-3",
+                                "user": {"login": "owner"},
+                            },
+                        ],
+                        "next_id": 4,
+                        "patch_not_found_ids": [3, 2],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0].get("id"), 1)
+            self.assertIn("## Counts", comments[0].get("body", ""))
+
     def test_post_summary_ignores_marker_from_other_author(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
