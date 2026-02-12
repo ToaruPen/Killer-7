@@ -274,7 +274,9 @@ def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
 
 
 def _raise_invalid_review_args(message: str) -> None:
-    raise ParserExit(2, f"killer-7 review: error: {message}\n")
+    full = f"killer-7 review: error: {message}\n"
+    sys.stderr.write(full)
+    raise ParserExit(2, full)
 
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:

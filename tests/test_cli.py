@@ -733,6 +733,7 @@ class TestCli(unittest.TestCase):
                 cwd=td,
             )
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("Duplicate aspect", p.stderr)
 
             self.assertTrue((out_dir / "review-summary.json").is_file())
             self.assertTrue((out_dir / "review-summary.md").is_file())
