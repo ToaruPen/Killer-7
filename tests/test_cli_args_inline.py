@@ -44,6 +44,44 @@ class TestCliInlineArgs(unittest.TestCase):
             ["docs/**/*.md", "killer_7/**/*.py"],
         )
 
+    def test_review_parser_accepts_aspect_multi_args(self) -> None:
+        from killer_7.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--repo",
+                "owner/name",
+                "--pr",
+                "123",
+                "--aspect",
+                "correctness",
+                "--aspect",
+                "Security",
+            ]
+        )
+
+        self.assertEqual(args.aspect, ["correctness", "security"])
+
+    def test_review_parser_accepts_preset_arg(self) -> None:
+        from killer_7.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--repo",
+                "owner/name",
+                "--pr",
+                "123",
+                "--preset",
+                "minimal",
+            ]
+        )
+
+        self.assertEqual(args.preset, "minimal")
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

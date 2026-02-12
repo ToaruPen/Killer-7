@@ -64,6 +64,13 @@ Killer-7は開発PCとは別PCでも運用でき、GitHub上のPRを入力にレ
 # PR番号を入力にしてレビュー（投稿なし）
 killer-7 review --repo owner/name --pr 123
 
+# 普段の運用（コスト/時間を抑える）: 観点を絞って実行
+killer-7 review --repo owner/name --pr 123 --aspect correctness
+killer-7 review --repo owner/name --pr 123 --aspect correctness --aspect security
+
+# 重要PR（フルレビュー）: 7観点（デフォルト; 明示するなら --preset full）
+killer-7 review --repo owner/name --pr 123 --preset full
+
 # 要約コメント投稿
 killer-7 review --repo owner/name --pr 123 --post
 
@@ -75,6 +82,7 @@ killer-7 review --repo owner/name --pr 123 --post --inline
 
 - 実体はDockerで実行し、成果物は `./.ai-review/` 配下に保存する想定です
 - デフォルトはdiff + Context Bundle + SoTのみをLLMへ渡し、必要時のみrepo read-only + path allowlistで追加コンテキストを許可します（ハイブリッド）
+- オプション一覧は `killer-7 review --help` を参照してください
 
 ## プロジェクト固有設定の生成
 

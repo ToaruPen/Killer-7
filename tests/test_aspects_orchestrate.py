@@ -174,6 +174,34 @@ class TestOrchestrate(unittest.TestCase):
         )
         self.assertEqual(seen["readability"], {"KILLER7_REPO_READONLY": "0"})
 
+    def test_rejects_unknown_aspects_as_input_error(self) -> None:
+        from killer_7.aspects.orchestrate import run_all_aspects
+
+        payload: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ExecFailureError):
+                run_all_aspects(
+                    base_dir=td,
+                    scope_id="scope-1",
+                    context_bundle="CTX",
+                    sot="SOT",
+                    aspects=("correctness", "unknown"),
+                    runner_factory=lambda: _FakeRunner(
+                        payload_by_viewpoint={"correctness": payload}
+                    ),
+                )
+
+            err = Path(td) / ".ai-review" / "errors" / "aspects.input.error.json"
+            self.assertTrue(err.is_file())
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

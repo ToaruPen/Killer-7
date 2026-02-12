@@ -38,7 +38,8 @@ from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
-from .aspects.orchestrate import run_all_aspects
+from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
+from .aspect_id import normalize_aspect
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
 from .validate.evidence import (
@@ -113,17 +114,131 @@ def parse_pr(value: str) -> int:
     return n
 
 
+def parse_aspect(value: str) -> str:
+    try:
+        a = normalize_aspect(value)
+    except ExecFailureError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if a not in ASPECTS_V1:
+        valid = ", ".join(ASPECTS_V1)
+        raise argparse.ArgumentTypeError(
+            f"Unknown aspect: {value!r}. Valid aspects: {valid}"
+        )
+    return a
+
+
+def parse_preset_name(value: str) -> str:
+    try:
+        name = normalize_aspect(value)
+    except ExecFailureError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    key = (name or "").strip().lower().replace("_", "-").strip()
+    if key not in BUILTIN_PRESETS:
+        choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
+        raise argparse.ArgumentTypeError(
+            f"Unknown preset: {value!r}. Available presets: {choices}"
+        )
+    return key
+
+
+BUILTIN_PRESETS: dict[str, tuple[str, ...]] = {
+    "minimal": ("correctness", "security"),
+    "standard": ("correctness", "readability", "testing", "security"),
+    "full": ASPECTS_V1,
+}
+
+
+def resolve_preset(name: str) -> tuple[str, ...]:
+    key = (name or "").strip().lower().replace("_", "-")
+    key = key.strip()
+    preset = BUILTIN_PRESETS.get(key)
+    if preset is None:
+        choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
+        raise ExecFailureError(f"Unknown preset: {name!r} (available: {choices})")
+    return preset
+
+
 def build_parser() -> ThrowingArgumentParser:
     parser = ThrowingArgumentParser(prog="killer-7")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    review = sub.add_parser("review", help="Run review for a GitHub PR")
-    review.add_argument("--repo", required=True, type=parse_repo)
-    review.add_argument("--pr", required=True, type=parse_pr)
-    review.add_argument("--post", action="store_true")
-    review.add_argument("--inline", action="store_true")
-    review.add_argument("--hybrid-aspect", action="append", default=[])
-    review.add_argument("--hybrid-allowlist", action="append", default=[])
+    examples = """
+Examples:
+  killer-7 review --repo owner/name --pr 123
+
+  # Run only one aspect
+  killer-7 review --repo owner/name --pr 123 --aspect correctness
+
+  # Run multiple aspects
+  killer-7 review --repo owner/name --pr 123 --aspect correctness --aspect security
+
+  # Run a builtin preset
+  killer-7 review --repo owner/name --pr 123 --preset minimal
+
+  # Post summary + inline comments (P0/P1)
+  killer-7 review --repo owner/name --pr 123 --post --inline
+""".strip("\n")
+
+    review = sub.add_parser(
+        "review",
+        help="Run review for a GitHub PR",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=examples,
+    )
+    review.add_argument("--repo", required=True, type=parse_repo, help="<owner/name>")
+    review.add_argument("--pr", required=True, type=parse_pr, help="PR number")
+
+    aspect_sel = review.add_mutually_exclusive_group()
+    aspect_sel.add_argument(
+        "--aspect",
+        action="append",
+        default=[],
+        type=parse_aspect,
+        metavar="NAME",
+        help=(
+            "Run only the specified aspect(s). Repeatable. "
+            f"Valid: {', '.join(ASPECTS_V1)}"
+        ),
+    )
+    aspect_sel.add_argument(
+        "--preset",
+        default=None,
+        type=parse_preset_name,
+        metavar="NAME",
+        help=(
+            "Run a builtin preset (expands to multiple aspects). "
+            f"Builtins: {', '.join(sorted(BUILTIN_PRESETS.keys()))}"
+        ),
+    )
+
+    review.add_argument(
+        "--post",
+        action="store_true",
+        help="Post/update the summary comment on the PR",
+    )
+    review.add_argument(
+        "--inline",
+        action="store_true",
+        help="Post/update inline review comments for P0/P1 findings",
+    )
+    review.add_argument(
+        "--hybrid-aspect",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Allow repo read-only access for this aspect (repeatable). "
+            "Requires --hybrid-allowlist."
+        ),
+    )
+    review.add_argument(
+        "--hybrid-allowlist",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Repo read-only allowlist path glob (repeatable)",
+    )
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -163,6 +278,14 @@ def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
 
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
+    selected_aspects: tuple[str, ...] = ASPECTS_V1
+    preset = (args.preset or "").strip() if hasattr(args, "preset") else ""
+    raw_aspects = list(args.aspect or []) if hasattr(args, "aspect") else []
+    if preset:
+        selected_aspects = resolve_preset(preset)
+    elif raw_aspects:
+        selected_aspects = tuple(raw_aspects)
+
     # Fetch PR input (diff + metadata) and write artifacts.
     out_dir = ensure_artifacts_dir(os.getcwd())
     try:
@@ -290,6 +413,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             scope_id=scope_id,
             context_bundle=diff_bundle,
             sot=sot_md,
+            aspects=selected_aspects,
             max_llm_calls=8,
             max_workers=8,
             runner_env_for_aspect=runner_env_for_aspect,

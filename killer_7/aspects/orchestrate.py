@@ -161,6 +161,11 @@ def run_all_aspects(
     if len(set(normalized_aspects)) != len(normalized_aspects):
         fail_input("Duplicate aspects after normalization")
 
+    allowed = set(ASPECTS_V1)
+    unknown = [a for a in normalized_aspects if a not in allowed]
+    if unknown:
+        fail_input(f"Unknown aspects: {', '.join(sorted(set(unknown)))}")
+
     if len(aspect_list) > max_llm_calls:
         fail_input(
             f"Too many aspects: {len(aspect_list)} (max_llm_calls={max_llm_calls})"
