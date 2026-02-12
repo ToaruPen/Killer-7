@@ -129,11 +129,9 @@ def parse_aspect(value: str) -> str:
 
 def parse_preset_name(value: str) -> str:
     try:
-        name = normalize_aspect(value)
+        key = normalize_aspect(value)
     except ExecFailureError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
-
-    key = (name or "").strip().lower().replace("_", "-").strip()
     if key not in BUILTIN_PRESETS:
         choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
         raise argparse.ArgumentTypeError(
@@ -150,9 +148,7 @@ BUILTIN_PRESETS: dict[str, tuple[str, ...]] = {
 
 
 def resolve_preset(name: str) -> tuple[str, ...]:
-    key = (name or "").strip().lower().replace("_", "-")
-    key = key.strip()
-    preset = BUILTIN_PRESETS.get(key)
+    preset = BUILTIN_PRESETS.get(name)
     if preset is None:
         choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
         raise ExecFailureError(f"Unknown preset: {name!r} (available: {choices})")
