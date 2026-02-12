@@ -667,6 +667,13 @@ class TestCli(unittest.TestCase):
             names = [x.get("aspect") for x in idx.get("aspects", [])]
             self.assertEqual(names, ["correctness", "security"])
 
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload.get("result", {}).get("selected_aspects"),
+                ["correctness", "security"],
+            )
+
     def test_preset_minimal_runs_expected_aspects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
@@ -694,6 +701,49 @@ class TestCli(unittest.TestCase):
             self.assertTrue((aspects_dir / "correctness.json").is_file())
             self.assertTrue((aspects_dir / "security.json").is_file())
             self.assertFalse((aspects_dir / "readability.json").exists())
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload.get("result", {}).get("selected_aspects"),
+                ["correctness", "security"],
+            )
+
+    def test_duplicate_aspect_is_invalid_args_and_does_not_delete_existing_summaries(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--aspect",
+                    "Correctness",
+                ],
+                cwd=td,
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+
+            self.assertTrue((out_dir / "review-summary.json").is_file())
+            self.assertTrue((out_dir / "review-summary.md").is_file())
+
+            run_json = out_dir / "run.json"
+            self.assertTrue(run_json.is_file())
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "invalid_args")
+            self.assertIn(
+                "Duplicate aspect", payload.get("error", {}).get("message", "")
+            )
 
     def test_unknown_preset_is_invalid_args_and_does_not_delete_existing_summaries(
         self,

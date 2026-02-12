@@ -273,6 +273,10 @@ def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
     )
 
 
+def _raise_invalid_review_args(message: str) -> None:
+    raise ParserExit(2, f"killer-7 review: error: {message}\n")
+
+
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     selected_aspects: tuple[str, ...] = ASPECTS_V1
     preset = (args.preset or "").strip() if hasattr(args, "preset") else ""
@@ -280,6 +284,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     if preset:
         selected_aspects = resolve_preset(preset)
     elif raw_aspects:
+        seen: set[str] = set()
+        for a in raw_aspects:
+            if a in seen:
+                _raise_invalid_review_args(f"Duplicate aspect: {a!r}")
+            seen.add(a)
         selected_aspects = tuple(raw_aspects)
 
     # Fetch PR input (diff + metadata) and write artifacts.
@@ -870,6 +879,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         "pr": args.pr,
         "head_sha": pr_input.head_sha,
         "scope_id": scope_id,
+        "selected_aspects": list(selected_aspects),
         "aspects": {
             "index_path": os.path.relpath(
                 str(aspects_result["index_path"]), os.getcwd()
