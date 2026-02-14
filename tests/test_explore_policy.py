@@ -28,6 +28,18 @@ class TestExplorePolicy(unittest.TestCase):
         validate_git_readonly_bash_command("git --no-pager show HEAD")
         validate_git_readonly_bash_command("git --no-pager blame README.md")
 
+    def test_git_forbidden_global_opts_blocked_even_when_stuck(self) -> None:
+        cases = [
+            "git --no-pager --git-dir=/tmp/repo status",
+            "git --no-pager --work-tree=/tmp/repo status",
+            "git --no-pager --config=foo.bar=baz status",
+            "git --no-pager -cfoo=bar status",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
     def test_non_git_or_dangerous_commands_blocked(self) -> None:
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("rm -rf .")

@@ -57,7 +57,8 @@ def validate_git_readonly_bash_command(command: str) -> None:
     global_opts: list[str] = []
     while i < len(tokens) and tokens[i].startswith("-"):
         opt = tokens[i]
-        if opt in _FORBIDDEN_GIT_GLOBAL_OPTS:
+        opt_key = opt.split("=", 1)[0]
+        if opt_key in _FORBIDDEN_GIT_GLOBAL_OPTS or opt.startswith("-c"):
             raise BlockedError("Explore policy violation: forbidden git global option")
         global_opts.append(opt)
         i += 1
