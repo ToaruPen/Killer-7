@@ -22,7 +22,10 @@ from typing import Any, NoReturn
 from ..artifacts import atomic_write_text_secure
 from ..errors import BlockedError, ExecFailureError
 from ..explore.policy import validate_git_readonly_bash_command
-from .output_extract import extract_json_and_tool_uses_from_jsonl_lines
+from .output_extract import (
+    extract_json_and_tool_uses_from_jsonl_lines,
+    extract_json_from_jsonl_lines,
+)
 
 
 def _opencode_bin() -> str:
@@ -1181,7 +1184,11 @@ class OpenCodeRunner:
             if not stdout_path:
                 raise ExecFailureError("Missing OpenCode stdout capture")
             with open(stdout_path, "r", encoding="utf-8", errors="replace") as fh:
-                payload, tool_uses = extract_json_and_tool_uses_from_jsonl_lines(fh)
+                tool_uses: list[dict[str, Any]] = []
+                if explore_enabled:
+                    payload, tool_uses = extract_json_and_tool_uses_from_jsonl_lines(fh)
+                else:
+                    payload = extract_json_from_jsonl_lines(fh)
 
             if explore_enabled:
                 ensure_artifacts_dir()
