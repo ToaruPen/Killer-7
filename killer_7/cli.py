@@ -853,6 +853,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 max_bundle_bytes = 300_000
         tool_bundle_txt = _join_capped(bundle_chunks, max_bytes=max_bundle_bytes)
 
+        # `scan_tool_bundle()` only ingests files up to 100KiB.
+        scan_bundle_max_bytes = 100 * 1024
+        tool_bundle_txt_for_scan = _join_capped(
+            [tool_bundle_txt], max_bytes=scan_bundle_max_bytes
+        )
+
         _ = write_tool_trace_jsonl(out_dir, tool_trace_txt)
         _ = write_tool_bundle_txt(out_dir, tool_bundle_txt)
 
@@ -866,7 +872,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
         explore_bundle_name = "explore.txt"
         explore_bundle_path = os.path.join(tool_bundle_dir, explore_bundle_name)
-        atomic_write_text_secure(explore_bundle_path, tool_bundle_txt)
+        atomic_write_text_secure(explore_bundle_path, tool_bundle_txt_for_scan)
         atomic_write_json_secure(
             os.path.join(tool_bundle_dir, "manifest.json"),
             {
