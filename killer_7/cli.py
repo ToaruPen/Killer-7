@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,6 +73,27 @@ def now_utc_z() -> str:
     return (
         datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
+
+
+def _normalize_tool_bundle_src_path(path: str) -> str:
+    p = (path or "").strip()
+    if not p:
+        return ""
+    if len(p) > 4096:
+        return ""
+    p = p.replace("\\", "/")
+    if "#" in p:
+        return ""
+    while p.startswith("./"):
+        p = p[2:]
+    if p.startswith("/"):
+        return ""
+    if re.match(r"^[A-Za-z]:", p):
+        return ""
+    parts = [seg for seg in p.split("/") if seg and seg != "."]
+    if any(seg == ".." for seg in parts):
+        return ""
+    return "/".join(parts)
 
 
 @dataclass(frozen=True)
@@ -375,7 +398,20 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         s = s.replace("\r\n", "\n").replace("\r", "\n")
         s = s.replace("\n", "\\n")
         s = s.replace("\t", "\\t")
-        return s
+        out: list[str] = []
+        for ch in s:
+            cat = unicodedata.category(ch)
+            if cat in {"Cc", "Cf"} or (not ch.isprintable()):
+                o = ord(ch)
+                if o <= 0xFF:
+                    out.append(f"\\x{o:02x}")
+                elif o <= 0xFFFF:
+                    out.append(f"\\u{o:04x}")
+                else:
+                    out.append(f"\\U{o:08x}")
+                continue
+            out.append(ch)
+        return "".join(out)
 
     warning_lines: list[str] = []
     warning_lines.extend(diff_parse_warnings)
@@ -395,8 +431,288 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             f" path={one_line(w.path)}"
             f" message={one_line(w.message)}{tail}"
         )
-    warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
 
+    tool_bundle_files: list[str] = []
+    tool_bundle_index: dict[str, set[int]] = {}
+
+    def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:
+        tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
+        if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
+            extra_warning_lines: list[str] = [
+                "tool_bundle_dir_skipped kind=not_a_directory"
+                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+            ]
+            return ([], {}, extra_warning_lines)
+        if not os.path.isdir(tool_bundle_dir):
+            return ([], {}, [])
+
+        extra_warning_lines: list[str] = []
+        tool_bundle_files: list[str] = []
+        tool_bundle_index: dict[str, set[int]] = {}
+
+        out_dir_real = os.path.realpath(out_dir)
+        if os.path.islink(tool_bundle_dir):
+            extra_warning_lines.append(
+                "tool_bundle_dir_skipped kind=is_symlink"
+                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+            )
+            return ([], {}, extra_warning_lines)
+        tool_bundle_dir_real = os.path.realpath(tool_bundle_dir)
+        try:
+            under_artifacts = (
+                os.path.commonpath([out_dir_real, tool_bundle_dir_real]) == out_dir_real
+            )
+        except ValueError:
+            under_artifacts = False
+        if not under_artifacts:
+            extra_warning_lines.append(
+                "tool_bundle_dir_skipped kind=escapes_artifacts"
+                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+            )
+            return ([], {}, extra_warning_lines)
+
+        max_bytes = 100 * 1024
+        manifest_path = os.path.join(tool_bundle_dir, "manifest.json")
+        manifest: dict[str, object] = {}
+        if not os.path.isfile(manifest_path):
+            manifest_present = False
+            extra_warning_lines.append(
+                "tool_bundle_manifest_skipped kind=missing"
+                f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+            )
+        elif os.path.islink(manifest_path):
+            manifest_present = False
+            extra_warning_lines.append(
+                "tool_bundle_manifest_skipped kind=is_symlink"
+                f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+            )
+        else:
+            manifest_present = True
+
+        if manifest_present:
+            max_manifest_bytes = 64 * 1024
+            try:
+                manifest_size_bytes = os.path.getsize(manifest_path)
+            except OSError as exc:
+                extra_warning_lines.append(
+                    "tool_bundle_manifest_skipped kind=stat_failed"
+                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    f" message={one_line(str(exc))}"
+                )
+                manifest_present = False
+            else:
+                if manifest_size_bytes > max_manifest_bytes:
+                    extra_warning_lines.append(
+                        "tool_bundle_manifest_skipped kind=size_limit_exceeded"
+                        f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                        f" size_bytes={manifest_size_bytes}"
+                        f" limit_bytes={max_manifest_bytes}"
+                    )
+                    manifest_present = False
+
+        if manifest_present:
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    manifest = loaded
+                else:
+                    extra_warning_lines.append(
+                        "tool_bundle_manifest_skipped kind=invalid_type"
+                        f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    )
+                    manifest_present = False
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                extra_warning_lines.append(
+                    "tool_bundle_manifest_skipped kind=invalid_json"
+                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    f" message={one_line(str(exc))}"
+                )
+                manifest_present = False
+
+        head_obj = manifest.get("head_sha")
+        head_sha = head_obj if isinstance(head_obj, str) else ""
+        if not head_sha:
+            if manifest_present:
+                extra_warning_lines.append(
+                    "tool_bundle_manifest_skipped kind=missing_head_sha"
+                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                )
+            names: list[str] = []
+        elif head_sha != pr_input.head_sha:
+            extra_warning_lines.append(
+                "tool_bundle_manifest_skipped kind=head_sha_mismatch"
+                f" expected={one_line(pr_input.head_sha)}"
+                f" actual={one_line(head_sha)}"
+            )
+            names = []
+        else:
+            files_obj = manifest.get("files")
+            if not isinstance(files_obj, list):
+                extra_warning_lines.append(
+                    "tool_bundle_manifest_skipped kind=invalid_files"
+                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                )
+                names = []
+            else:
+                names = []
+                max_manifest_entries = 1000
+                if len(files_obj) > max_manifest_entries:
+                    extra_warning_lines.append(
+                        "tool_bundle_manifest_files_truncated"
+                        f" total={len(files_obj)}"
+                        f" limit={max_manifest_entries}"
+                    )
+                for raw in files_obj[:max_manifest_entries]:
+                    if not isinstance(raw, str):
+                        continue
+                    n = raw.strip()
+                    if not n:
+                        continue
+                    if "/" in n or "\\" in n:
+                        continue
+                    if n in {".", ".."}:
+                        continue
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.txt", n):
+                        continue
+                    names.append(n)
+
+        max_files = 200
+        max_total_bytes = 1 * 1024 * 1024
+        seen_names: set[str] = set()
+        processed_files = 0
+        processed_total_bytes = 0
+
+        for name in names:
+            if not name.endswith(".txt"):
+                continue
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+
+            if processed_files >= max_files:
+                extra_warning_lines.append(
+                    "tool_bundle_processing_stopped kind=max_files_exceeded"
+                    f" max_files={max_files}"
+                )
+                break
+
+            processed_files += 1
+
+            p = os.path.join(tool_bundle_dir, name)
+            if os.path.islink(p):
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=is_symlink"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                )
+                continue
+            p_real = os.path.realpath(p)
+            try:
+                under_tool_bundle = (
+                    os.path.commonpath([tool_bundle_dir_real, p_real])
+                    == tool_bundle_dir_real
+                )
+            except ValueError:
+                under_tool_bundle = False
+            if not under_tool_bundle:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=escapes_tool_bundle"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                )
+                continue
+            if not os.path.isfile(p):
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=missing"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                )
+                continue
+            try:
+                size_bytes = os.path.getsize(p)
+            except OSError as exc:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=stat_failed"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    f" message={one_line(str(exc))}"
+                )
+                continue
+
+            if size_bytes > max_bytes:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=size_limit_exceeded"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    f" size_bytes={size_bytes}"
+                    f" limit_bytes={max_bytes}"
+                )
+                continue
+
+            if processed_total_bytes + size_bytes > max_total_bytes:
+                extra_warning_lines.append(
+                    "tool_bundle_processing_stopped kind=max_total_bytes_exceeded"
+                    f" max_total_bytes={max_total_bytes}"
+                    f" next_file_size_bytes={size_bytes}"
+                )
+                break
+
+            processed_total_bytes += size_bytes
+
+            try:
+                with open(p, "rb") as fh:
+                    raw = fh.read(max_bytes + 1)
+            except OSError as exc:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=read_failed"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    f" message={one_line(str(exc))}"
+                )
+                continue
+
+            if len(raw) > max_bytes:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=size_limit_exceeded"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    f" size_bytes={len(raw)}"
+                    f" limit_bytes={max_bytes}"
+                )
+                continue
+
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                extra_warning_lines.append(
+                    "tool_bundle_file_skipped kind=decode_error"
+                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    f" size_bytes={size_bytes}"
+                )
+                continue
+
+            extra_index = parse_context_bundle_index(text)
+            for src_path, lines in extra_index.items():
+                normalized = _normalize_tool_bundle_src_path(src_path)
+                if not normalized:
+                    extra_warning_lines.append(
+                        "tool_bundle_src_skipped kind=invalid_src"
+                        f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    )
+                    continue
+
+                aliases = {normalized, f"./{normalized}"}
+                if os.sep == "\\":
+                    back = normalized.replace("/", "\\")
+                    aliases.add(back)
+                    aliases.add(f".\\{back}")
+                for key in sorted(aliases):
+                    if key in tool_bundle_index:
+                        tool_bundle_index[key].update(lines)
+                    else:
+                        tool_bundle_index[key] = set(lines)
+
+            tool_bundle_files.append(
+                os.path.relpath(p, os.getcwd()).replace(os.sep, "/")
+            )
+
+        return (tool_bundle_files, tool_bundle_index, extra_warning_lines)
+
+    warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
     # Keep scope_id deterministic and tied to the PR input.
     scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
@@ -440,7 +756,18 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     # Evidence validation + policy application (Issue #10)
+    tool_bundle_files, tool_bundle_index, tool_bundle_warning_lines = scan_tool_bundle()
+    if tool_bundle_warning_lines:
+        warning_lines.extend(tool_bundle_warning_lines)
+        warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
+
     context_index = parse_context_bundle_index(context_bundle_txt)
+
+    for src_path, lines in tool_bundle_index.items():
+        if src_path in context_index:
+            context_index[src_path].update(lines)
+        else:
+            context_index[src_path] = set(lines)
 
     def require_int(v: object, *, key: str, aspect: str) -> int:
         if type(v) is not int:
@@ -902,6 +1229,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "sot_md": os.path.relpath(sot_md_path, os.getcwd()),
             "context_bundle_txt": os.path.relpath(context_bundle_path, os.getcwd()),
             "warnings_txt": os.path.relpath(warnings_txt_path, os.getcwd()),
+            "tool_bundle_files": list(tool_bundle_files),
             "evidence_json": os.path.relpath(evidence_json_path, os.getcwd()),
             "review_summary_json": os.path.relpath(summary_json_path, os.getcwd())
             if summary_json_path
