@@ -1239,6 +1239,59 @@ class TestCli(unittest.TestCase):
             self.assertIn("kind=is_symlink", warn)
             self.assertIn("link.txt", warn)
 
+    def test_tool_bundle_manifest_head_sha_requires_exact_match(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            result = payload.get("result")
+            self.assertTrue(isinstance(result, dict))
+            artifacts = result.get("artifacts")
+            self.assertTrue(isinstance(artifacts, dict))
+            files = artifacts.get("tool_bundle_files")
+            self.assertTrue(isinstance(files, list))
+            self.assertEqual(files, [])
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_manifest_skipped", warn)
+            self.assertIn("kind=head_sha_mismatch", warn)
+
     def test_tool_bundle_extends_evidence_index_dot_slash_source(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"

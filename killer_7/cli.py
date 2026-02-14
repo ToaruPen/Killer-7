@@ -539,10 +539,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
                 )
             names: list[str] = []
-        elif not (
-            head_sha == pr_input.head_sha
-            or (len(head_sha) >= 7 and pr_input.head_sha.startswith(head_sha))
-        ):
+        elif head_sha != pr_input.head_sha:
             extra_warning_lines.append(
                 "tool_bundle_manifest_skipped kind=head_sha_mismatch"
                 f" expected={one_line(pr_input.head_sha)}"
@@ -699,9 +696,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     continue
 
                 aliases = {normalized, f"./{normalized}"}
-                back = normalized.replace("/", "\\")
-                aliases.add(back)
-                aliases.add(f".\\{back}")
+                if os.sep == "\\":
+                    back = normalized.replace("/", "\\")
+                    aliases.add(back)
+                    aliases.add(f".\\{back}")
                 for key in sorted(aliases):
                     if key in tool_bundle_index:
                         tool_bundle_index[key].update(lines)
