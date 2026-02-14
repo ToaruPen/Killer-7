@@ -26,6 +26,10 @@ _FORBIDDEN_GIT_GLOBAL_OPTS = {
     "-p",
 }
 
+_ALLOWED_GIT_GLOBAL_OPT_KEYS = {
+    "--no-pager",
+}
+
 _ALLOWED_GIT_SUBCOMMANDS = {
     "diff",
     "log",
@@ -60,7 +64,11 @@ def validate_git_readonly_bash_command(command: str) -> None:
         opt_key = opt.split("=", 1)[0]
         if opt_key in _FORBIDDEN_GIT_GLOBAL_OPTS or opt.startswith("-c"):
             raise BlockedError("Explore policy violation: forbidden git global option")
-        global_opts.append(opt)
+        if opt_key not in _ALLOWED_GIT_GLOBAL_OPT_KEYS:
+            raise BlockedError("Explore policy violation: forbidden git global option")
+        if opt_key != opt:
+            raise BlockedError("Explore policy violation: forbidden git global option")
+        global_opts.append(opt_key)
         i += 1
 
     if "--no-pager" not in global_opts:
@@ -75,6 +83,13 @@ def validate_git_readonly_bash_command(command: str) -> None:
         raise BlockedError("Explore policy violation: forbidden git subcommand")
 
     args = tokens[i:]
+
+    for arg in args:
+        if arg == "--output" or arg.startswith("--output="):
+            raise BlockedError(
+                "Explore policy violation: git args must not use --output"
+            )
+
     if sub == "diff":
         if "--no-index" in args:
             raise BlockedError(

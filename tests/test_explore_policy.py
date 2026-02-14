@@ -40,6 +40,26 @@ class TestExplorePolicy(unittest.TestCase):
                 with self.assertRaises(BlockedError):
                     validate_git_readonly_bash_command(cmd)
 
+    def test_git_global_opts_with_args_cannot_shift_subcommand(self) -> None:
+        cases = [
+            "git --no-pager -C status push origin HEAD",
+            "git --no-pager -O=name status",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
+    def test_git_args_must_not_write_output_file(self) -> None:
+        cases = [
+            "git --no-pager show --output=/tmp/x HEAD",
+            "git --no-pager log --output=/tmp/x -n 1",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
     def test_non_git_or_dangerous_commands_blocked(self) -> None:
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("rm -rf .")
