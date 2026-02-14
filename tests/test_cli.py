@@ -429,7 +429,7 @@ if args[:1] != ["run"]:
     raise SystemExit(2)
 
 prompt = sys.stdin.read()
-m = re.search("^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
 scope_id = m.group(1).strip() if m else "scope-unknown"
 
 payload = {
@@ -440,6 +440,170 @@ payload = {
   "questions": [],
   "overall_explanation": "ok",
 }
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_p2_tool_source(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "readability":
+  payload["status"] = "Approved with nits"
+  payload["findings"] = [
+    {
+      "title": "Tool-sourced nit",
+      "body": "This finding cites a path that is only present in a tool bundle.",
+      "priority": "P2",
+      "sources": ["tool-only.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "tool-only.txt", "line_range": {"start": 1, "end": 1}},
+    }
+  ]
+  payload["overall_explanation"] = "One P2 nit sourced from tool bundle."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_p2_tool_source_writes_tool_bundle(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "readability":
+  tool_dir = os.path.join(os.getcwd(), ".ai-review", "tool-bundle")
+  os.makedirs(tool_dir, exist_ok=True)
+  manifest = {
+    "schema_version": 1,
+    "head_sha": "0123456789abcdef",
+    "files": ["bundle.txt"],
+  }
+  with open(os.path.join(tool_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(manifest) + "\\n")
+  with open(os.path.join(tool_dir, "bundle.txt"), "w", encoding="utf-8") as fh:
+    fh.write("# SRC: tool-only.txt\\n")
+    fh.write("L1: hello\\n")
+
+  payload["status"] = "Approved with nits"
+  payload["findings"] = [
+    {
+      "title": "Tool-sourced nit",
+      "body": "This finding cites a path that is only present in a tool bundle.",
+      "priority": "P2",
+      "sources": ["tool-only.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "tool-only.txt", "line_range": {"start": 1, "end": 1}},
+    }
+  ]
+  payload["overall_explanation"] = "One P2 nit sourced from tool bundle."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_p2_tool_source_dot_slash(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "readability":
+  payload["status"] = "Approved with nits"
+  payload["findings"] = [
+    {
+      "title": "Tool-sourced nit",
+      "body": "This finding cites a path that is only present in a tool bundle.",
+      "priority": "P2",
+      "sources": ["./tool-only.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "./tool-only.txt", "line_range": {"start": 1, "end": 1}},
+    }
+  ]
+  payload["overall_explanation"] = "One P2 nit sourced from tool bundle."
 
 event = {"type": "text", "part": {"text": json.dumps(payload)}}
 sys.stdout.write(json.dumps(event) + "\\n")
@@ -466,9 +630,9 @@ if args[:1] != ["run"]:
     raise SystemExit(2)
 
 prompt = sys.stdin.read()
-m = re.search("^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
 scope_id = m.group(1).strip() if m else "scope-unknown"
-m2 = re.search("^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
 aspect = m2.group(1).strip() if m2 else ""
 
 payload = {
@@ -518,9 +682,9 @@ if args[:1] != ["run"]:
     raise SystemExit(2)
 
 prompt = sys.stdin.read()
-m = re.search("^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
 scope_id = m.group(1).strip() if m else "scope-unknown"
-m2 = re.search("^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
 aspect = m2.group(1).strip() if m2 else ""
 
 payload = {
@@ -949,6 +1113,454 @@ class TestCli(unittest.TestCase):
 
             self.assertTrue((aspects_dir / "index.evidence.json").is_file())
             self.assertTrue((aspects_dir / "index.policy.json").is_file())
+
+    def test_tool_bundle_extends_evidence_index(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_p2_tool_source(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: ./tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            evidence_path = (
+                Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
+            )
+            self.assertTrue(evidence_path.is_file())
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            review = evidence.get("review")
+            self.assertTrue(isinstance(review, dict))
+            findings = review.get("findings")
+            self.assertTrue(isinstance(findings, list))
+            self.assertTrue(findings, msg="expected at least one finding")
+            f0 = findings[0]
+            self.assertTrue(isinstance(f0, dict))
+            self.assertEqual(f0.get("priority"), "P2")
+            self.assertEqual(f0.get("verified"), True)
+
+    def test_tool_bundle_generated_during_run_extends_evidence_index(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_p2_tool_source_writes_tool_bundle(fake_opencode)
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            evidence_path = (
+                Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
+            )
+            self.assertTrue(evidence_path.is_file())
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            review = evidence.get("review")
+            self.assertTrue(isinstance(review, dict))
+            findings = review.get("findings")
+            self.assertTrue(isinstance(findings, list))
+            self.assertTrue(findings, msg="expected at least one finding")
+            f0 = findings[0]
+            self.assertTrue(isinstance(f0, dict))
+            self.assertEqual(f0.get("priority"), "P2")
+            self.assertEqual(f0.get("verified"), True)
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            self.assertTrue(run_json.is_file())
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            result = payload.get("result")
+            self.assertTrue(isinstance(result, dict))
+            artifacts = result.get("artifacts")
+            self.assertTrue(isinstance(artifacts, dict))
+            files = artifacts.get("tool_bundle_files")
+            self.assertTrue(isinstance(files, list))
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
+
+    def test_tool_bundle_symlink_is_skipped(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("os.symlink not available")
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_p2_tool_source(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["bundle.txt", "link.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outside = Path(td) / "outside.txt"
+            outside.write_text("secret\n", encoding="utf-8")
+            link = tool_dir / "link.txt"
+            try:
+                os.symlink(str(outside), str(link))
+            except OSError as exc:
+                self.skipTest(f"symlink not supported: {exc}")
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            evidence_path = (
+                Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
+            )
+            self.assertTrue(evidence_path.is_file())
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            review = evidence.get("review")
+            self.assertTrue(isinstance(review, dict))
+            findings = review.get("findings")
+            self.assertTrue(isinstance(findings, list))
+            self.assertTrue(findings)
+            f0 = findings[0]
+            self.assertTrue(isinstance(f0, dict))
+            self.assertEqual(f0.get("priority"), "P2")
+            self.assertEqual(f0.get("verified"), True)
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            self.assertTrue(run_json.is_file())
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            result = payload.get("result")
+            self.assertTrue(isinstance(result, dict))
+            artifacts = result.get("artifacts")
+            self.assertTrue(isinstance(artifacts, dict))
+            files = artifacts.get("tool_bundle_files")
+            self.assertTrue(isinstance(files, list))
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
+            self.assertNotIn(".ai-review/tool-bundle/link.txt", files)
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_file_skipped", warn)
+            self.assertIn("kind=is_symlink", warn)
+            self.assertIn("link.txt", warn)
+
+    def test_tool_bundle_manifest_head_sha_requires_exact_match(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            result = payload.get("result")
+            self.assertTrue(isinstance(result, dict))
+            artifacts = result.get("artifacts")
+            self.assertTrue(isinstance(artifacts, dict))
+            files = artifacts.get("tool_bundle_files")
+            self.assertTrue(isinstance(files, list))
+            self.assertEqual(files, [])
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_manifest_skipped", warn)
+            self.assertIn("kind=head_sha_mismatch", warn)
+
+    def test_tool_bundle_extends_evidence_index_dot_slash_source(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_p2_tool_source_dot_slash(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            evidence_path = (
+                Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
+            )
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            review = evidence.get("review")
+            self.assertTrue(isinstance(review, dict))
+            findings = review.get("findings")
+            self.assertTrue(isinstance(findings, list))
+            self.assertTrue(findings)
+            f0 = findings[0]
+            self.assertEqual(f0.get("priority"), "P2")
+            self.assertEqual(f0.get("verified"), True)
+
+    def test_run_json_records_tool_bundle_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_p2_tool_source(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "bundle.txt").write_text(
+                "".join(
+                    [
+                        "# SRC: tool-only.txt\n",
+                        "L1: hello\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_json = Path(td) / ".ai-review" / "run.json"
+            self.assertTrue(run_json.is_file())
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            result = payload.get("result")
+            self.assertTrue(isinstance(result, dict))
+            artifacts = result.get("artifacts")
+            self.assertTrue(isinstance(artifacts, dict))
+            files = artifacts.get("tool_bundle_files")
+            self.assertTrue(isinstance(files, list))
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
+
+    def test_tool_bundle_skip_records_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["too-large.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tool_dir / "too-large.txt").write_bytes(b"x" * (100 * 1024 + 1))
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_file_skipped", warn)
+            self.assertIn("kind=size_limit_exceeded", warn)
+            self.assertIn("too-large.txt", warn)
+
+    def test_tool_bundle_decode_errors_count_toward_scan_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            names = [f"b{i:03d}.txt" for i in range(201)]
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": names,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for n in names:
+                (tool_dir / n).write_bytes(b"\xff")
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_processing_stopped", warn)
+            self.assertIn("kind=max_files_exceeded", warn)
+            self.assertNotIn("b200.txt", warn)
+
+    def test_tool_bundle_invalid_src_does_not_persist_src(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": ["bundle.txt"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            secret = "TOKEN_ABC123"
+            (tool_dir / "bundle.txt").write_text(
+                f"# SRC: ../../secrets/{secret}\nL1: x\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_src_skipped", warn)
+            self.assertIn("kind=invalid_src", warn)
+            self.assertIn("bundle.txt", warn)
+            self.assertNotIn(secret, warn)
 
     def test_creates_review_summary_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:
