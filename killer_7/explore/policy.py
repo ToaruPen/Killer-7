@@ -89,6 +89,10 @@ def validate_git_readonly_bash_command(command: str) -> None:
             raise BlockedError(
                 "Explore policy violation: git args must not use --output"
             )
+        if arg == "--contents" or arg.startswith("--contents="):
+            raise BlockedError(
+                "Explore policy violation: git args must not use --contents"
+            )
 
     if sub == "diff":
         if "--no-index" in args:

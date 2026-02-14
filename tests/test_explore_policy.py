@@ -60,6 +60,16 @@ class TestExplorePolicy(unittest.TestCase):
                 with self.assertRaises(BlockedError):
                     validate_git_readonly_bash_command(cmd)
 
+    def test_git_blame_must_not_use_contents(self) -> None:
+        cases = [
+            "git --no-pager blame --contents=/etc/passwd README.md",
+            "git --no-pager blame --contents /etc/passwd README.md",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
     def test_non_git_or_dangerous_commands_blocked(self) -> None:
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("rm -rf .")
