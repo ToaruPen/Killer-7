@@ -600,6 +600,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 break
 
+            processed_files += 1
+
             p = os.path.join(tool_bundle_dir, name)
             if os.path.islink(p):
                 extra_warning_lines.append(
@@ -654,6 +656,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 break
 
+            processed_total_bytes += size_bytes
+
             try:
                 with open(p, "rb") as fh:
                     raw = fh.read(max_bytes + 1)
@@ -704,8 +708,6 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     else:
                         tool_bundle_index[key] = set(lines)
 
-            processed_files += 1
-            processed_total_bytes += size_bytes
             tool_bundle_files.append(
                 os.path.relpath(p, os.getcwd()).replace(os.sep, "/")
             )

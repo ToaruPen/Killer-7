@@ -1376,6 +1376,45 @@ class TestCli(unittest.TestCase):
             self.assertIn("kind=size_limit_exceeded", warn)
             self.assertIn("too-large.txt", warn)
 
+    def test_tool_bundle_decode_errors_count_toward_scan_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            tool_dir = Path(td) / ".ai-review" / "tool-bundle"
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            names = [f"b{i:03d}.txt" for i in range(201)]
+            (tool_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "head_sha": "0123456789abcdef",
+                        "files": names,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for n in names:
+                (tool_dir / n).write_bytes(b"\xff")
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("tool_bundle_processing_stopped", warn)
+            self.assertIn("kind=max_files_exceeded", warn)
+            self.assertNotIn("b200.txt", warn)
+
     def test_tool_bundle_invalid_src_does_not_persist_src(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
