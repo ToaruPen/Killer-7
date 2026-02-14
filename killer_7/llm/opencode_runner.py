@@ -211,6 +211,24 @@ def _write_redacted_opencode_jsonl(
                                         rel = "<outside-repo>"
                                     inp["filePath"] = rel
 
+                                base = inp.get("path")
+                                if isinstance(base, str) and base.strip():
+                                    abs_base = (
+                                        base
+                                        if os.path.isabs(base)
+                                        else os.path.join(repo_root, base)
+                                    )
+                                    real_base = os.path.realpath(abs_base)
+                                    if real_base == repo_root or real_base.startswith(
+                                        repo_root + os.sep
+                                    ):
+                                        rel_base = os.path.relpath(
+                                            real_base, repo_root
+                                        ).replace(os.sep, "/")
+                                    else:
+                                        rel_base = "<outside-repo>"
+                                    inp["path"] = rel_base
+
                                 cmd = inp.get("command")
                                 if isinstance(cmd, str) and cmd:
                                     inp["command"] = _redact_secrets(cmd)

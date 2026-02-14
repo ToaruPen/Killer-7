@@ -248,6 +248,48 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_ok_with_glob_path(path: Path, *, base_path: str) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "glob",
+            "state": {{
+                "status": "completed",
+                "input": {{"path": {base_path!r}, "pattern": "*.py"}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_invalid_jsonl(path: Path) -> None:
     path.write_text(
         """#!/usr/bin/env python3
@@ -360,6 +402,29 @@ class TestOpenCodeRunner(unittest.TestCase):
             )
             self.assertTrue(traces)
             self.assertTrue(traces[0].is_file())
+
+    def test_explore_mode_stdout_jsonl_redacts_tool_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_glob_path(fake, base_path=str(Path(td)))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Correctness",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            matches = list(
+                (Path(out_dir) / "opencode").glob("correctness-*/stdout.jsonl")
+            )
+            self.assertTrue(matches)
+            txt = matches[0].read_text(encoding="utf-8")
+            self.assertIn('"tool": "glob"', txt)
+            self.assertIn('"path": "."', txt)
 
     def test_explore_mode_blocks_forbidden_git_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
