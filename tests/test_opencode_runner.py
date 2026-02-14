@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from killer_7.artifacts import ensure_artifacts_dir
-from killer_7.errors import ExecFailureError
+from killer_7.errors import BlockedError, ExecFailureError
 from killer_7.llm.opencode_runner import OpenCodeRunner
+
+
+def _git_init(td: str) -> None:
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=td,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def _write_fake_opencode_ok(path: Path, *, payload: object) -> None:
@@ -37,6 +49,193 @@ if i + 1 >= len(args) or args[i + 1] != "json":
 events = [
     {{"type": "log", "part": {{"text": "hello"}}}},
     {{"type": "text", "part": {{"text": {text!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_ok_with_tool_use(path: Path, *, bash_command: str) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "bash",
+            "state": {{
+                "status": "completed",
+                "input": {{"command": {bash_command!r}}},
+                "output": "ok",
+                "title": "",
+                "metadata": {{"exit": 0}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_ok_with_read(path: Path, *, file_path: str) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "read",
+            "state": {{
+                "status": "completed",
+                "input": {{"filePath": {file_path!r}, "offset": 1, "limit": 2}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_ok_with_two_tool_uses(path: Path, *, file_path: str) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "read",
+            "state": {{
+                "status": "completed",
+                "input": {{"filePath": {file_path!r}, "offset": 1, "limit": 1}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{
+        "type": "tool_use",
+        "timestamp": 3,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_2",
+            "tool": "read",
+            "state": {{
+                "status": "completed",
+                "input": {{"filePath": {file_path!r}, "offset": 2, "limit": 1}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 2, "end": 3}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_ok_with_glob(path: Path) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "glob",
+            "state": {{
+                "status": "completed",
+                "input": {{"path": ".", "pattern": "*.py"}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
 ]
 
 for e in events:
@@ -132,6 +331,242 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertTrue(p.is_file())
             payload = json.loads(p.read_text(encoding="utf-8"))
             self.assertEqual(payload, {"ok": True, "n": 1})
+
+    def test_explore_mode_writes_stdout_jsonl_and_tool_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_tool_use(
+                fake, bash_command="git --no-pager diff --no-ext-diff"
+            )
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Correctness",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            matches = list(
+                (Path(out_dir) / "opencode").glob("correctness-*/stdout.jsonl")
+            )
+            self.assertTrue(matches)
+            self.assertTrue(matches[0].is_file())
+
+            traces = list(
+                (Path(out_dir) / "opencode").glob("correctness-*/tool-trace.jsonl")
+            )
+            self.assertTrue(traces)
+            self.assertTrue(traces[0].is_file())
+
+    def test_explore_mode_blocks_forbidden_git_command(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_tool_use(
+                fake, bash_command="git push origin HEAD"
+            )
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("security-*/error.json"))
+            self.assertTrue(matches)
+            self.assertTrue(matches[0].is_file())
+
+            stdout_txt = matches[0].parent / "stdout.txt"
+            stderr_txt = matches[0].parent / "stderr.txt"
+            self.assertFalse(stdout_txt.exists())
+            self.assertFalse(stderr_txt.exists())
+
+    def test_explore_mode_writes_tool_bundle_from_read(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            target = Path(td) / "x.txt"
+            target.write_text("a\nB\nC\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "x.txt"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_read(fake, file_path=str(target))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Readability",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            bundles = list(
+                (Path(out_dir) / "opencode").glob("readability-*/tool-bundle.txt")
+            )
+            self.assertTrue(bundles)
+            txt = bundles[0].read_text(encoding="utf-8")
+            self.assertIn("# SRC: x.txt", txt)
+            self.assertIn("L1: <redacted>", txt)
+            self.assertIn("L2: <redacted>", txt)
+
+    def test_explore_mode_blocks_reading_dot_git(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            dotgit = Path(td) / ".git"
+            dotgit.mkdir(parents=True, exist_ok=True)
+            target = dotgit / "config"
+            target.write_text(
+                "[core]\n\trepositoryformatversion = 0\n", encoding="utf-8"
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_read(fake, file_path=str(target))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("security-*/error.json"))
+            self.assertTrue(matches)
+
+            stdout_txt = matches[0].parent / "stdout.txt"
+            stderr_txt = matches[0].parent / "stderr.txt"
+            self.assertFalse(stdout_txt.exists())
+            self.assertFalse(stderr_txt.exists())
+
+    def test_explore_mode_limits_tool_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            target = Path(td) / "x.txt"
+            target.write_text("a\nB\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "x.txt"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_two_tool_uses(fake, file_path=str(target))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Testing",
+                    message="hello",
+                    env={
+                        "KILLER7_EXPLORE": "1",
+                        "KILLER7_EXPLORE_MAX_TOOL_CALLS": "1",
+                    },
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("testing-*/error.json"))
+            self.assertTrue(matches)
+
+    def test_explore_mode_allows_glob_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_glob(fake)
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Refactoring",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            traces = list(
+                (Path(out_dir) / "opencode").glob("refactoring-*/tool-trace.jsonl")
+            )
+            self.assertTrue(traces)
+            txt = traces[0].read_text(encoding="utf-8")
+            self.assertIn('"tool": "glob"', txt)
+
+    def test_explore_mode_limits_total_read_lines_across_tool_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            target = Path(td) / "x.txt"
+            target.write_text("a\nB\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "x.txt"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_two_tool_uses(fake, file_path=str(target))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Testing",
+                    message="hello",
+                    env={
+                        "KILLER7_EXPLORE": "1",
+                        "KILLER7_EXPLORE_MAX_READ_LINES": "1",
+                    },
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("testing-*/error.json"))
+            self.assertTrue(matches)
+
+    def test_explore_mode_invalid_jsonl_does_not_persist_raw_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_invalid_jsonl(fake)
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(ExecFailureError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Testing",
+                    message="hi",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("testing-*/error.json"))
+            self.assertTrue(matches)
+            err = matches[0]
+            self.assertTrue(err.is_file())
+
+            stdout_txt = err.parent / "stdout.txt"
+            stderr_txt = err.parent / "stderr.txt"
+            self.assertFalse(stdout_txt.exists())
+            self.assertFalse(stderr_txt.exists())
 
     def test_invalid_jsonl_raises_and_writes_error_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:

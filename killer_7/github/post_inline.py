@@ -119,6 +119,61 @@ def _inline_finding(
     return {}
 
 
+def _delete_existing_inline_comments(
+    *,
+    client: _InlineClient,
+    repo: str,
+    pr: int,
+    expected_head_sha: str,
+) -> int:
+    _ensure_pr_head_unchanged(
+        client=client,
+        repo=repo,
+        pr=pr,
+        expected_head_sha=expected_head_sha,
+    )
+
+    viewer_login = client.viewer_login()
+    existing = client.review_comments(repo=repo, pr=pr)
+
+    deleted = 0
+    for raw in existing:
+        if not isinstance(raw, dict):
+            continue
+        if _comment_author_login(raw) != viewer_login:
+            continue
+        body_obj = raw.get("body")
+        body = body_obj if isinstance(body_obj, str) else ""
+        if not _extract_fingerprint(body):
+            continue
+
+        comment_id = _comment_id(raw)
+        if comment_id < 0:
+            continue
+
+        _ensure_pr_head_unchanged(
+            client=client,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+        )
+        try:
+            client.delete_review_comment(repo=repo, comment_id=comment_id)
+        except ExecFailureError as exc:
+            if not _is_not_found_error(exc):
+                raise
+            continue
+
+        _ensure_pr_head_unchanged(
+            client=client,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+        )
+        deleted += 1
+    return deleted
+
+
 def post_inline_comments(
     *,
     repo: str,
@@ -137,13 +192,49 @@ def post_inline_comments(
         c for c in selected if c.inline_eligible and c.diff_position is not None
     ]
 
+    ineligible = [
+        c for c in selected if (not c.inline_eligible) or (c.diff_position is None)
+    ]
     if len(eligible) > INLINE_LIMIT:
+        deleted = _delete_existing_inline_comments(
+            client=gh,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+        )
         return {
             "mode": "blocked_over_limit",
             "blocked": True,
             "eligible_count": len(eligible),
             "created": 0,
-            "deleted": 0,
+            "deleted": deleted,
+        }
+
+    if ineligible:
+        deleted = _delete_existing_inline_comments(
+            client=gh,
+            repo=repo,
+            pr=pr,
+            expected_head_sha=expected_head_sha,
+        )
+        unmatched = [
+            {
+                "fingerprint": c.fingerprint,
+                "path": c.repo_relative_path,
+                "line": c.start_line,
+                "priority": c.priority,
+                "reason": c.skip_reason,
+            }
+            for c in ineligible
+        ]
+        return {
+            "mode": "blocked_unmappable_locations",
+            "blocked": True,
+            "eligible_count": len(eligible),
+            "unmappable_count": len(ineligible),
+            "created": 0,
+            "deleted": deleted,
+            "unmapped_findings": unmatched,
         }
 
     desired: dict[str, InlineCandidate] = {}
@@ -282,8 +373,43 @@ def raise_if_inline_blocked(result: Mapping[str, object]) -> None:
     if not blocked:
         return
 
-    count_obj = result.get("eligible_count")
-    count = count_obj if isinstance(count_obj, int) else 0
-    raise BlockedError(
-        f"Inline posting blocked: P0/P1 eligible findings exceed {INLINE_LIMIT} (count={count})"
-    )
+    mode = result.get("mode")
+    if mode == "blocked_over_limit":
+        count_obj = result.get("eligible_count")
+        count = count_obj if isinstance(count_obj, int) else 0
+        raise BlockedError(
+            f"Inline posting blocked: P0/P1 eligible findings exceed {INLINE_LIMIT} (count={count})"
+        )
+
+    if mode == "blocked_unmappable_locations":
+        count_obj = result.get("unmappable_count")
+        count = count_obj if isinstance(count_obj, int) else 0
+        if count == 0:
+            bad_obj = result.get("unmapped_findings")
+            if isinstance(bad_obj, list):
+                count = len(bad_obj)
+
+        bad = result.get("unmapped_findings")
+        examples = []
+        if isinstance(bad, list):
+            for item in bad[:3]:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("path")
+                line = item.get("line")
+                reason = item.get("reason")
+                if (
+                    isinstance(path, str)
+                    and path.strip()
+                    and isinstance(line, int)
+                    and line > 0
+                ):
+                    examples.append(f"{path}:{line}({reason})")
+        examples_txt = ", ".join(examples)
+        detail = f" Examples: {examples_txt}" if examples_txt else ""
+        raise BlockedError(
+            f"Inline posting blocked: P0/P1 findings include {count} unmappable code locations."
+            + detail
+        )
+
+    raise BlockedError(f"Inline posting blocked (mode={mode!r})")

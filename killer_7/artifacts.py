@@ -93,6 +93,51 @@ def atomic_write_json_secure(
                 pass
 
 
+def atomic_write_text_secure(
+    path: str,
+    content: str,
+    *,
+    dir_mode: int = 0o700,
+    file_mode: int = 0o600,
+) -> None:
+    dir_name = os.path.dirname(path) or "."
+    base = os.path.basename(path)
+    if dir_name != ".":
+        os.makedirs(dir_name, mode=dir_mode, exist_ok=True)
+        try:
+            os.chmod(dir_name, dir_mode)
+        except OSError:
+            pass
+
+    tmp = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            dir=dir_name,
+            prefix=f".{base}.tmp.",
+        ) as fh:
+            tmp = fh.name
+            fh.write(content)
+            if content and (not content.endswith("\n")):
+                fh.write("\n")
+
+        try:
+            os.chmod(tmp, file_mode)
+        except OSError:
+            pass
+
+        os.replace(tmp, path)
+        tmp = ""
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def write_diff_patch(out_dir: str, patch: str) -> str:
     path = os.path.join(out_dir, "diff.patch")
     _atomic_write_text(path, patch)
@@ -144,6 +189,18 @@ def write_sot_md(out_dir: str, content: str) -> str:
 def write_context_bundle_txt(out_dir: str, content: str) -> str:
     path = os.path.join(out_dir, "context-bundle.txt")
     _atomic_write_text(path, (content or "").rstrip("\n"))
+    return path
+
+
+def write_tool_trace_jsonl(out_dir: str, content: str) -> str:
+    path = os.path.join(out_dir, "tool-trace.jsonl")
+    atomic_write_text_secure(path, (content or "").rstrip("\n"))
+    return path
+
+
+def write_tool_bundle_txt(out_dir: str, content: str) -> str:
+    path = os.path.join(out_dir, "tool-bundle.txt")
+    atomic_write_text_secure(path, (content or "").rstrip("\n"))
     return path
 
 

@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import shlex
+
+from ..errors import BlockedError
+
+
+_FORBIDDEN_SHELL_CHARS = {
+    "\n",
+    "$",
+    ";",
+    "|",
+    "&",
+    ">",
+    "<",
+    "`",
+}
+
+_FORBIDDEN_GIT_GLOBAL_OPTS = {
+    "-c",
+    "--config",
+    "--git-dir",
+    "--work-tree",
+    "--exec-path",
+    "--paginate",
+    "-p",
+}
+
+_ALLOWED_GIT_SUBCOMMANDS = {
+    "diff",
+    "log",
+    "blame",
+    "show",
+    "status",
+}
+
+
+def validate_git_readonly_bash_command(command: str) -> None:
+    cmd = (command or "").strip()
+    if not cmd:
+        raise BlockedError("Explore policy violation: empty bash command")
+    for ch in _FORBIDDEN_SHELL_CHARS:
+        if ch in cmd:
+            raise BlockedError("Explore policy violation: shell metacharacters")
+
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError as exc:
+        raise BlockedError(
+            "Explore policy violation: failed to parse bash command"
+        ) from exc
+
+    if not tokens or tokens[0] != "git":
+        raise BlockedError("Explore policy violation: bash must be a git command")
+
+    i = 1
+    global_opts: list[str] = []
+    while i < len(tokens) and tokens[i].startswith("-"):
+        opt = tokens[i]
+        if opt in _FORBIDDEN_GIT_GLOBAL_OPTS:
+            raise BlockedError("Explore policy violation: forbidden git global option")
+        global_opts.append(opt)
+        i += 1
+
+    if "--no-pager" not in global_opts:
+        raise BlockedError("Explore policy violation: missing git --no-pager")
+
+    if i >= len(tokens):
+        raise BlockedError("Explore policy violation: missing git subcommand")
+
+    sub = tokens[i]
+    i += 1
+    if sub not in _ALLOWED_GIT_SUBCOMMANDS:
+        raise BlockedError("Explore policy violation: forbidden git subcommand")
+
+    args = tokens[i:]
+    if sub == "diff":
+        if "--no-ext-diff" not in args:
+            raise BlockedError(
+                "Explore policy violation: git diff missing --no-ext-diff"
+            )
+        if "--ext-diff" in args:
+            raise BlockedError(
+                "Explore policy violation: git diff must not use --ext-diff"
+            )

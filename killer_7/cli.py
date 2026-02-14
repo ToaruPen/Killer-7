@@ -26,6 +26,8 @@ from .artifacts import (
     write_review_summary_json,
     write_review_summary_md,
     write_sot_md,
+    write_tool_bundle_txt,
+    write_tool_trace_jsonl,
     write_warnings_txt,
 )
 from .errors import BlockedError, ExecFailureError, ExitCode
@@ -42,6 +44,7 @@ from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
 from .aspect_id import normalize_aspect
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
+from .llm.opencode_runner import opencode_artifacts_dir
 from .validate.evidence import (
     apply_evidence_policy_to_findings,
     EVIDENCE_POLICY_V1,
@@ -235,6 +238,11 @@ Examples:
         metavar="GLOB",
         help="Repo read-only allowlist path glob (repeatable)",
     )
+    review.add_argument(
+        "--explore",
+        action="store_true",
+        help="Enable OpenCode explore mode (tool trace + policy gating)",
+    )
     review.set_defaults(_handler=handle_review)
 
     return parser
@@ -410,7 +418,26 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         raise
 
     def runner_env_for_aspect(aspect: str) -> dict[str, str]:
-        return hybrid_policy.decision_for(aspect=aspect).runner_env()
+        base_env = hybrid_policy.decision_for(aspect=aspect).runner_env()
+        if not args.explore:
+            return base_env
+        out = dict(base_env)
+        out["KILLER7_EXPLORE"] = "1"
+        return out
+
+    if args.explore:
+        for aspect in selected_aspects:
+            aspect_dir = opencode_artifacts_dir(out_dir, aspect)
+            for name in ("tool-trace.jsonl", "tool-bundle.txt", "stdout.jsonl"):
+                p = os.path.join(aspect_dir, name)
+                if not os.path.exists(p):
+                    continue
+                try:
+                    os.remove(p)
+                except OSError as exc:
+                    raise ExecFailureError(
+                        f"Failed to remove stale explore artifact: {p}: {type(exc).__name__}: {exc}"
+                    ) from exc
 
     deferred_exc: BlockedError | ExecFailureError | None = None
     aspects_result: dict[str, object]
@@ -439,8 +466,85 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "index_path": os.path.join(out_dir, "aspects", "index.json"),
         }
 
+    tool_trace_txt = ""
+    tool_bundle_txt = ""
+    if args.explore:
+
+        def _join_capped(chunks: list[str], *, max_bytes: int) -> str:
+            if max_bytes < 1:
+                return ""
+            buf = bytearray()
+            first = True
+            truncated = False
+
+            for raw in chunks:
+                s = (raw or "").rstrip("\n")
+                if not s.strip():
+                    continue
+                if not first:
+                    s = "\n" + s
+                b = s.encode("utf-8")
+                if len(buf) + len(b) > max_bytes:
+                    remaining = max_bytes - len(buf)
+                    if remaining > 0:
+                        buf.extend(b[:remaining])
+                    truncated = True
+                    break
+                buf.extend(b)
+                first = False
+
+            if not buf:
+                return ""
+            if truncated:
+                last_nl = buf.rfind(b"\n")
+                if last_nl >= 0:
+                    buf = buf[:last_nl]
+            return buf.decode("utf-8", errors="replace").rstrip("\n")
+
+        trace_chunks: list[str] = []
+        bundle_chunks: list[str] = []
+        for aspect in selected_aspects:
+            aspect_dir = opencode_artifacts_dir(out_dir, aspect)
+
+            p_trace = os.path.join(aspect_dir, "tool-trace.jsonl")
+            p_bundle = os.path.join(aspect_dir, "tool-bundle.txt")
+            if os.path.isfile(p_trace):
+                try:
+                    with open(p_trace, "r", encoding="utf-8", errors="replace") as fh:
+                        trace_chunks.append(fh.read() or "")
+                except OSError:
+                    raise ExecFailureError(
+                        f"Failed to read explore tool trace: {p_trace}"
+                    )
+            if os.path.isfile(p_bundle):
+                try:
+                    with open(p_bundle, "r", encoding="utf-8", errors="replace") as fh:
+                        bundle_chunks.append(fh.read() or "")
+                except OSError:
+                    raise ExecFailureError(
+                        f"Failed to read explore tool bundle: {p_bundle}"
+                    )
+
+        max_trace_bytes = 1_000_000
+        tool_trace_txt = _join_capped(trace_chunks, max_bytes=max_trace_bytes)
+        max_bundle_bytes = 300_000
+        raw = (os.environ.get("KILLER7_EXPLORE_MAX_BUNDLE_BYTES") or "").strip()
+        if raw:
+            try:
+                max_bundle_bytes = int(raw)
+            except ValueError:
+                max_bundle_bytes = 300_000
+        tool_bundle_txt = _join_capped(bundle_chunks, max_bytes=max_bundle_bytes)
+
+        _ = write_tool_trace_jsonl(out_dir, tool_trace_txt)
+        _ = write_tool_bundle_txt(out_dir, tool_bundle_txt)
+
+    evidence_input_txt = context_bundle_txt
+    if tool_bundle_txt.strip():
+        evidence_input_txt = context_bundle_txt.rstrip("\n") + "\n" + tool_bundle_txt
+
     # Evidence validation + policy application (Issue #10)
-    context_index = parse_context_bundle_index(context_bundle_txt)
+    context_index = parse_context_bundle_index(evidence_input_txt)
 
     def require_int(v: object, *, key: str, aspect: str) -> int:
         if type(v) is not int:
