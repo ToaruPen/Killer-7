@@ -75,6 +75,10 @@ def validate_git_readonly_bash_command(command: str) -> None:
 
     args = tokens[i:]
     if sub == "diff":
+        if "--no-index" in args:
+            raise BlockedError(
+                "Explore policy violation: git diff must not use --no-index"
+            )
         if "--no-ext-diff" not in args:
             raise BlockedError(
                 "Explore policy violation: git diff missing --no-ext-diff"

@@ -16,6 +16,12 @@ class TestExplorePolicy(unittest.TestCase):
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("git --no-pager diff")
 
+    def test_git_diff_no_index_blocked(self) -> None:
+        with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command(
+                "git --no-pager diff --no-ext-diff --no-index /etc/passwd /dev/null"
+            )
+
     def test_git_readonly_subcommands_allowed(self) -> None:
         validate_git_readonly_bash_command("git --no-pager status")
         validate_git_readonly_bash_command("git --no-pager log --oneline -n 5")
