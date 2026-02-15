@@ -252,12 +252,12 @@ def _write_redacted_opencode_jsonl(
                                 state["attachments"] = []
                     out.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
-        os.replace(tmp, dst_path)
-        tmp = ""
         try:
-            os.chmod(dst_path, 0o600)
+            os.chmod(tmp, 0o600)
         except OSError:
             pass
+        os.replace(tmp, dst_path)
+        tmp = ""
     finally:
         if tmp:
             try:

@@ -79,6 +79,7 @@ class TestExplorePolicy(unittest.TestCase):
         cases = [
             "git --no-pager blame --contents=/etc/passwd README.md",
             "git --no-pager blame --contents /etc/passwd README.md",
+            "git --no-pager blame --con=/etc/passwd README.md",
             "git --no-pager blame --cont=/etc/passwd README.md",
             "git --no-pager blame --no-cont=/etc/passwd README.md",
         ]
