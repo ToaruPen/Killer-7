@@ -237,6 +237,11 @@ def _write_redacted_opencode_jsonl(
                                         rel_base = "<outside-repo>"
                                     inp["path"] = rel_base
 
+                                for k in ("pattern", "include"):
+                                    v = inp.get(k)
+                                    if isinstance(v, str) and v:
+                                        inp[k] = _redact_secrets(v)
+
                                 cmd = inp.get("command")
                                 if isinstance(cmd, str) and cmd:
                                     inp["command"] = _redact_secrets(cmd)
@@ -697,6 +702,12 @@ def _explore_validate_and_trace(
             inp_obj["offset"] = offset
             inp_obj["limit"] = limit
 
+        safe_inp = dict(inp_obj)
+        for k in ("pattern", "include"):
+            v = safe_inp.get(k)
+            if isinstance(v, str) and v:
+                safe_inp[k] = _redact_secrets(v)
+
         trace_lines.append(
             json.dumps(
                 {
@@ -705,7 +716,7 @@ def _explore_validate_and_trace(
                     "sessionID": e.get("sessionID"),
                     "tool": tool_name,
                     "callID": part.get("callID"),
-                    "input": inp_obj,
+                    "input": safe_inp,
                 },
                 ensure_ascii=False,
             )
