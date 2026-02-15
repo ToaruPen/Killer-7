@@ -117,6 +117,14 @@ def validate_git_readonly_bash_command(command: str) -> None:
             return True
         return False
 
+    def candidate_paths_from_arg(arg: str) -> list[str]:
+        if not arg or arg.startswith("-") or arg == "--":
+            return []
+        if sub == "show" and ":" in arg:
+            _, rhs = arg.rsplit(":", 1)
+            return [rhs]
+        return [arg]
+
     for arg in args:
         if arg == "--output" or arg.startswith("--output="):
             raise BlockedError(
@@ -159,4 +167,17 @@ def validate_git_readonly_bash_command(command: str) -> None:
             ):
                 raise BlockedError(
                     "Explore policy violation: git diff must not use outside paths"
+                )
+    else:
+        paths: list[str] = []
+        if "--" in args:
+            j = args.index("--")
+            paths.extend([p for p in args[j + 1 :] if p and (not p.startswith("-"))])
+        for arg in args:
+            paths.extend(candidate_paths_from_arg(arg))
+
+        for p in paths:
+            if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
+                raise BlockedError(
+                    "Explore policy violation: git args must not use forbidden paths"
                 )

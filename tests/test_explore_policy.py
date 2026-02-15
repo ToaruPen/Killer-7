@@ -100,6 +100,21 @@ class TestExplorePolicy(unittest.TestCase):
                 with self.assertRaises(BlockedError):
                     validate_git_readonly_bash_command(cmd)
 
+    def test_git_non_diff_subcommands_must_not_reference_dot_env(self) -> None:
+        cases = [
+            "git --no-pager show HEAD:.env",
+            "git --no-pager show HEAD:configs/.env/secrets.txt",
+            "git --no-pager status .env",
+            "git --no-pager log -- .env",
+            "git --no-pager blame .env",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
+        validate_git_readonly_bash_command("git --no-pager show HEAD:README.md")
+
     def test_non_git_or_dangerous_commands_blocked(self) -> None:
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("rm -rf .")
