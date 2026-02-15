@@ -99,8 +99,8 @@ killer-7 review --repo owner/name --pr 123 --explore
 主な成果物（追加）:
 
 - `./.ai-review/tool-trace.jsonl`
-- `./.ai-review/tool-bundle.txt`（パス+行番号のインデックスのみ。ファイル内容は保存しません）
-- `./.ai-review/opencode/<aspect-*>/stdout.jsonl`（tool_useイベントのみ。output等は除去したredacted JSONL）
+- `./.ai-review/tool-bundle.txt`（read対象のパス+行番号+該当行の抜粋。秘密情報はredact）
+- `./.ai-review/opencode/<aspect-*>/stdout.jsonl`（JSONLイベントをredactして保存。tool_useのoutput等は除去）
 
 ## プロジェクト固有設定の生成
 

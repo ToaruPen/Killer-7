@@ -192,7 +192,15 @@ def _write_redacted_opencode_jsonl(
                     if not isinstance(obj, dict):
                         continue
 
-                    if obj.get("type") != "tool_use":
+                    obj_type = obj.get("type")
+                    if obj_type != "tool_use":
+                        if obj_type == "text":
+                            part = obj.get("part")
+                            if isinstance(part, dict):
+                                t = part.get("text")
+                                if isinstance(t, str) and t:
+                                    part["text"] = _redact_secrets(t)
+                        out.write(json.dumps(obj, ensure_ascii=False) + "\n")
                         continue
 
                     part = obj.get("part")
@@ -315,8 +323,8 @@ def _is_denied_explore_relpath(rel: str) -> bool:
         if r.startswith(pref):
             return True
 
-    base = r.split("/")[-1]
-    if base == ".env" or base.startswith(".env."):
+    segs = [s for s in r.split("/") if s]
+    if any(s == ".env" or s.startswith(".env.") for s in segs):
         return True
 
     return False
@@ -755,9 +763,29 @@ def _explore_tool_bundle_text(
         out_chunks.append(header)
         used += len(header.encode("utf-8"))
 
+        abs_path = os.path.join(repo_root, rel_path)
         wanted = sorted(read_lines_by_path.get(rel_path, set()))
+        wanted_set = set(wanted)
+        line_by_n: dict[int, str] = {}
+        if wanted_set:
+            try:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                    max_wanted = max(wanted_set)
+                    for idx, raw in enumerate(fh, start=1):
+                        if idx > max_wanted and len(line_by_n) >= len(wanted_set):
+                            break
+                        if idx not in wanted_set:
+                            continue
+                        line_by_n[idx] = raw.rstrip("\n")
+            except OSError:
+                line_by_n = {}
+
         for n in wanted:
-            row = f"L{n}: <redacted>\n"
+            raw = line_by_n.get(n)
+            text = raw if isinstance(raw, str) else "<missing>"
+            text = _redact_secrets(text)
+            text = _sanitize_bundle_text(text)
+            row = f"L{n}: {text}\n"
             if used + len(row.encode("utf-8")) > max_bytes:
                 _explore_policy_violation(
                     artifacts_dir=artifacts_dir,

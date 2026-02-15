@@ -335,6 +335,49 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_ok_with_text(path: Path, *, text: str) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "glob",
+            "state": {{
+                "status": "completed",
+                "input": {{"path": ".", "pattern": "*.py"}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {text!r}}}}},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_invalid_jsonl(path: Path) -> None:
     path.write_text(
         """#!/usr/bin/env python3
@@ -522,6 +565,30 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertNotIn("API_KEY=supersecret", stdout_txt)
             self.assertIn("API_KEY=<REDACTED>", stdout_txt)
 
+    def test_explore_mode_stdout_jsonl_keeps_text_events(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_text(fake, text="API_KEY=supersecret")
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Correctness",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            stdouts = list(
+                (Path(out_dir) / "opencode").glob("correctness-*/stdout.jsonl")
+            )
+            self.assertTrue(stdouts)
+            txt = stdouts[0].read_text(encoding="utf-8")
+            self.assertIn('"type": "text"', txt)
+            self.assertNotIn("API_KEY=supersecret", txt)
+            self.assertIn("API_KEY=<REDACTED>", txt)
+
     def test_explore_mode_blocks_forbidden_git_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             _git_init(td)
@@ -613,8 +680,8 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertTrue(bundles)
             txt = bundles[0].read_text(encoding="utf-8")
             self.assertIn("# SRC: x.txt", txt)
-            self.assertIn("L1: <redacted>", txt)
-            self.assertIn("L2: <redacted>", txt)
+            self.assertIn("L1: a", txt)
+            self.assertIn("L2: B", txt)
 
     def test_explore_mode_blocks_reading_dot_git(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -646,6 +713,35 @@ class TestOpenCodeRunner(unittest.TestCase):
             stderr_txt = matches[0].parent / "stderr.txt"
             self.assertFalse(stdout_txt.exists())
             self.assertFalse(stderr_txt.exists())
+
+    def test_explore_mode_blocks_reading_nested_dot_env_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            envdir = Path(td) / "configs" / ".env"
+            envdir.mkdir(parents=True, exist_ok=True)
+            target = envdir / "secrets.txt"
+            target.write_text("secret\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", str(target.relative_to(td))],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_read(fake, file_path=str(target))
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
 
     def test_explore_mode_limits_tool_calls(self) -> None:
         with tempfile.TemporaryDirectory() as td:
