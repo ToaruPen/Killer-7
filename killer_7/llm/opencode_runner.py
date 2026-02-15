@@ -10,6 +10,7 @@ Scope (Issue #6):
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import os
@@ -399,6 +400,71 @@ def _explore_validate_and_trace(
     bash_calls = 0
     total_unique_read_lines = 0
 
+    def expand_brace_glob_once(*, tool: str, pattern: str) -> list[str]:
+        p = (pattern or "").strip()
+        if not p:
+            return []
+        if "{" not in p and "}" not in p:
+            return [p]
+        if p.count("{") != 1 or p.count("}") != 1:
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} pattern must not contain nested brace expansions",
+            )
+        start = p.index("{")
+        end = p.index("}", start + 1)
+        inner = p[start + 1 : end]
+        alts = [a.strip() for a in inner.split(",") if a.strip()]
+        if not alts:
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} pattern brace expansion is empty",
+            )
+        return [p[:start] + a + p[end + 1 :] for a in alts]
+
+    def enforce_git_tracked_glob_targets(
+        *, tool: str, base_dir: str, pattern: str
+    ) -> None:
+        pats = expand_brace_glob_once(tool=tool, pattern=pattern)
+        if not pats:
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} pattern must not be empty",
+            )
+
+        matched: set[str] = set()
+        for pat in pats:
+            for raw in glob.glob(os.path.join(base_dir, pat), recursive=True):
+                if raw:
+                    matched.add(raw)
+
+        for raw in sorted(matched):
+            if not os.path.isfile(raw):
+                continue
+            real = os.path.realpath(raw)
+            if not (real == repo_root or real.startswith(repo_root + os.sep)):
+                _explore_policy_violation(
+                    artifacts_dir=artifacts_dir,
+                    cmd=cmd,
+                    message=f"{tool} matched file must stay within repo root",
+                )
+            rel = os.path.relpath(real, repo_root).replace(os.sep, "/")
+            if _is_denied_explore_relpath(rel):
+                _explore_policy_violation(
+                    artifacts_dir=artifacts_dir,
+                    cmd=cmd,
+                    message=f"{tool} must not access forbidden paths: {rel}",
+                )
+            if tracked is not None and rel not in tracked:
+                _explore_policy_violation(
+                    artifacts_dir=artifacts_dir,
+                    cmd=cmd,
+                    message=f"{tool} must not access untracked files: {rel}",
+                )
+
     for e in tool_uses:
         part_obj = e.get("part")
         if not isinstance(part_obj, dict):
@@ -563,6 +629,12 @@ def _explore_validate_and_trace(
                         message="glob.pattern must include a file extension",
                     )
 
+                enforce_git_tracked_glob_targets(
+                    tool="glob",
+                    base_dir=real_base,
+                    pattern=pat,
+                )
+
             if tool_name == "grep":
                 pat_obj = inp_obj.get("pattern")
                 pat = pat_obj if isinstance(pat_obj, str) else ""
@@ -632,6 +704,12 @@ def _explore_validate_and_trace(
                         cmd=cmd,
                         message="grep.include must include a file extension",
                     )
+
+                enforce_git_tracked_glob_targets(
+                    tool="grep",
+                    base_dir=real_base,
+                    pattern=inc,
+                )
 
             inp_obj = dict(inp_obj)
             inp_obj["path"] = rel_base or "."
@@ -782,7 +860,19 @@ def _explore_tool_bundle_text(
 
         for n in wanted:
             raw = line_by_n.get(n)
-            text = raw if isinstance(raw, str) else "<missing>"
+            if not isinstance(raw, str):
+                row = f"# MISSING: L{n}\n"
+                if used + len(row.encode("utf-8")) > max_bytes:
+                    _explore_policy_violation(
+                        artifacts_dir=artifacts_dir,
+                        cmd=cmd,
+                        message="tool bundle too large",
+                    )
+                out_chunks.append(row)
+                used += len(row.encode("utf-8"))
+                continue
+
+            text = raw
             text = _redact_secrets(text)
             text = _sanitize_bundle_text(text)
             row = f"L{n}: {text}\n"

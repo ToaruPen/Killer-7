@@ -146,6 +146,50 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_ok_with_read_offset_limit(
+    path: Path, *, file_path: str, offset: int, limit: int
+) -> None:
+    final = json.dumps({"ok": True}, ensure_ascii=False)
+    path.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+
+_ = sys.stdin.read()
+
+events = [
+    {{
+        "type": "tool_use",
+        "timestamp": 2,
+        "sessionID": "ses_x",
+        "part": {{
+            "type": "tool",
+            "callID": "call_1",
+            "tool": "read",
+            "state": {{
+                "status": "completed",
+                "input": {{"filePath": {file_path!r}, "offset": {offset}, "limit": {limit}}},
+                "output": "",
+                "title": "",
+                "metadata": {{}},
+                "time": {{"start": 1, "end": 2}},
+                "attachments": [],
+            }},
+        }},
+    }},
+    {{"type": "text", "part": {{"text": {final!r}}}}},
+]
+
+for e in events:
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\n")
+
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_ok_with_two_tool_uses(path: Path, *, file_path: str) -> None:
     final = json.dumps({"ok": True}, ensure_ascii=False)
     path.write_text(
@@ -683,6 +727,48 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertIn("L1: a", txt)
             self.assertIn("L2: B", txt)
 
+    def test_explore_bundle_skips_nonexistent_read_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            target = Path(td) / "x.txt"
+            target.write_text("a\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "x.txt"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_read_offset_limit(
+                fake,
+                file_path=str(target),
+                offset=1,
+                limit=5,
+            )
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            _ = runner.run_viewpoint(
+                out_dir=out_dir,
+                viewpoint="Readability",
+                message="hello",
+                env={"KILLER7_EXPLORE": "1"},
+            )
+
+            bundles = list(
+                (Path(out_dir) / "opencode").glob("readability-*/tool-bundle.txt")
+            )
+            self.assertTrue(bundles)
+            txt = bundles[0].read_text(encoding="utf-8")
+            self.assertIn("# SRC: x.txt", txt)
+            self.assertIn("L1: a", txt)
+            self.assertNotIn("L2:", txt)
+            self.assertNotIn("L3:", txt)
+            self.assertIn("# MISSING: L2", txt)
+
     def test_explore_mode_blocks_reading_dot_git(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             _git_init(td)
@@ -797,6 +883,78 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertTrue(traces)
             txt = traces[0].read_text(encoding="utf-8")
             self.assertIn('"tool": "glob"', txt)
+
+    def test_explore_mode_blocks_glob_when_pattern_matches_untracked_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            tracked = Path(td) / "tracked.py"
+            tracked.write_text("print('ok')\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "tracked.py"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            untracked = Path(td) / "secret.py"
+            untracked.write_text("API_KEY=supersecret\n", encoding="utf-8")
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_glob(fake)
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("security-*/error.json"))
+            self.assertTrue(matches)
+
+    def test_explore_mode_blocks_grep_when_include_matches_untracked_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            tracked = Path(td) / "a.txt"
+            tracked.write_text("hello\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "a.txt"],
+                cwd=td,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            untracked = Path(td) / "secret.txt"
+            untracked.write_text("API_KEY=supersecret\n", encoding="utf-8")
+
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_grep(
+                fake,
+                pattern="API_KEY=supersecret",
+                include="*.txt",
+            )
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
+            matches = list((Path(out_dir) / "opencode").glob("security-*/error.json"))
+            self.assertTrue(matches)
 
     def test_explore_mode_limits_total_read_lines_across_tool_calls(self) -> None:
         with tempfile.TemporaryDirectory() as td:
