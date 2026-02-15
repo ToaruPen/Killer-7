@@ -125,6 +125,15 @@ def validate_git_readonly_bash_command(command: str) -> None:
             return [rhs]
         return [arg]
 
+    def is_broad_scope_path(value: str) -> bool:
+        norm = (value or "").replace("\\", "/").strip()
+        if norm in {".", "./"}:
+            return True
+        segs = [s for s in norm.split("/") if s]
+        while segs and segs[0] == ".":
+            segs = segs[1:]
+        return not segs
+
     for arg in args:
         if arg == "--output" or arg.startswith("--output="):
             raise BlockedError(
@@ -175,6 +184,44 @@ def validate_git_readonly_bash_command(command: str) -> None:
             paths.extend([p for p in args[j + 1 :] if p and (not p.startswith("-"))])
         for arg in args:
             paths.extend(candidate_paths_from_arg(arg))
+
+        scope_paths: list[str] = []
+        if "--" in args:
+            j = args.index("--")
+            scope_paths.extend([p for p in args[j + 1 :] if p])
+        if sub == "show":
+            for arg in args:
+                if not arg or arg.startswith("-") or arg == "--":
+                    continue
+                if ":" in arg:
+                    _, rhs = arg.rsplit(":", 1)
+                    if rhs:
+                        scope_paths.append(rhs)
+
+        for p in scope_paths:
+            if p.startswith("-"):
+                raise BlockedError(
+                    "Explore policy violation: git pathspec must not start with '-'"
+                )
+            if is_broad_scope_path(p):
+                raise BlockedError(
+                    "Explore policy violation: git pathspec scope is too broad"
+                )
+            if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
+                raise BlockedError(
+                    "Explore policy violation: git args must not use forbidden paths"
+                )
+
+        if sub == "show" and not scope_paths:
+            if "--no-patch" not in args:
+                raise BlockedError(
+                    "Explore policy violation: git show must be scoped with '-- <path>' or use --no-patch"
+                )
+
+        if sub == "log" and ("-p" in args or "--patch" in args) and not scope_paths:
+            raise BlockedError(
+                "Explore policy violation: git log with patch output must be scoped with '-- <path>'"
+            )
 
         for p in paths:
             if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):

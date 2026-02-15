@@ -40,8 +40,13 @@ class TestExplorePolicy(unittest.TestCase):
     def test_git_readonly_subcommands_allowed(self) -> None:
         validate_git_readonly_bash_command("git --no-pager status")
         validate_git_readonly_bash_command("git --no-pager log --oneline -n 5")
-        validate_git_readonly_bash_command("git --no-pager show HEAD")
+        validate_git_readonly_bash_command("git --no-pager show --no-patch HEAD")
+        validate_git_readonly_bash_command("git --no-pager show HEAD:README.md")
+        validate_git_readonly_bash_command("git --no-pager show HEAD -- README.md")
         validate_git_readonly_bash_command("git --no-pager blame README.md")
+
+        with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command("git --no-pager show HEAD")
 
     def test_git_ext_diff_blocked_for_non_diff_subcommands(self) -> None:
         cases = [
@@ -114,6 +119,15 @@ class TestExplorePolicy(unittest.TestCase):
                     validate_git_readonly_bash_command(cmd)
 
         validate_git_readonly_bash_command("git --no-pager show HEAD:README.md")
+
+    def test_git_log_patch_requires_scope(self) -> None:
+        with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command("git --no-pager log -p -n 1")
+
+        validate_git_readonly_bash_command("git --no-pager log -p -n 1 -- README.md")
+
+        with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command("git --no-pager log -p -n 1 -- .")
 
     def test_non_git_or_dangerous_commands_blocked(self) -> None:
         with self.assertRaises(BlockedError):
