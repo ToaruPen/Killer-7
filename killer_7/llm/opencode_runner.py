@@ -927,9 +927,16 @@ class OpenCodeRunner:
         if env:
             merged_env.update(env)
 
-        explore_enabled = False
+        explore_requested = False
         if env:
-            explore_enabled = (env.get("KILLER7_EXPLORE") or "").strip() == "1"
+            explore_requested = (env.get("KILLER7_EXPLORE") or "").strip() == "1"
+
+        if explore_requested:
+            merged_env["KILLER7_EXPLORE"] = "1"
+        else:
+            merged_env.pop("KILLER7_EXPLORE", None)
+
+        explore_enabled = (merged_env.get("KILLER7_EXPLORE") or "").strip() == "1"
 
         bad_env: list[str] = []
         for k, v in merged_env.items():

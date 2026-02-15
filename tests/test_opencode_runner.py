@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -452,6 +453,38 @@ class TestOpenCodeRunner(unittest.TestCase):
             stderr_txt = matches[0].parent / "stderr.txt"
             self.assertFalse(stdout_txt.exists())
             self.assertFalse(stderr_txt.exists())
+
+    def test_host_env_explore_does_not_enable_explore_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_tool_use(
+                fake, bash_command="git push origin HEAD"
+            )
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+
+            old = os.environ.get("KILLER7_EXPLORE")
+            os.environ["KILLER7_EXPLORE"] = "1"
+            try:
+                res = runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Correctness",
+                    message="hello",
+                )
+            finally:
+                if old is None:
+                    os.environ.pop("KILLER7_EXPLORE", None)
+                else:
+                    os.environ["KILLER7_EXPLORE"] = old
+
+            p = Path(str(res["result_path"]))
+            self.assertTrue(p.is_file())
+            traces = list(
+                (Path(out_dir) / "opencode").glob("correctness-*/tool-trace.jsonl")
+            )
+            self.assertFalse(traces)
 
     def test_explore_mode_writes_tool_bundle_from_read(self) -> None:
         with tempfile.TemporaryDirectory() as td:
