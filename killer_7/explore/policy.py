@@ -122,6 +122,10 @@ def validate_git_readonly_bash_command(command: str) -> None:
             raise BlockedError(
                 "Explore policy violation: git args must not use --output"
             )
+        if arg.startswith("--ext"):
+            raise BlockedError(
+                "Explore policy violation: git args must not use --ext-diff"
+            )
         if sub == "blame" and (arg.startswith("--c") or arg.startswith("--no-c")):
             raise BlockedError(
                 "Explore policy violation: git args must not use --contents"

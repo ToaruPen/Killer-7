@@ -43,6 +43,18 @@ class TestExplorePolicy(unittest.TestCase):
         validate_git_readonly_bash_command("git --no-pager show HEAD")
         validate_git_readonly_bash_command("git --no-pager blame README.md")
 
+    def test_git_ext_diff_blocked_for_non_diff_subcommands(self) -> None:
+        cases = [
+            "git --no-pager show --ext-diff HEAD",
+            "git --no-pager show --ext HEAD",
+            "git --no-pager log --ext-diff -n 1",
+            "git --no-pager blame --ext-diff README.md",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+
     def test_git_forbidden_global_opts_blocked_even_when_stuck(self) -> None:
         cases = [
             "git --no-pager --git-dir=/tmp/repo status",
