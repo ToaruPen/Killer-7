@@ -10,6 +10,7 @@ from pathlib import Path
 from killer_7.artifacts import ensure_artifacts_dir
 from killer_7.errors import BlockedError, ExecFailureError
 from killer_7.llm.opencode_runner import OpenCodeRunner
+from killer_7.validate.evidence import parse_context_bundle_index
 
 
 def _git_init(td: str) -> None:
@@ -767,7 +768,8 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertIn("L1: a", txt)
             self.assertNotIn("L2:", txt)
             self.assertNotIn("L3:", txt)
-            self.assertIn("# MISSING: L2", txt)
+            idx = parse_context_bundle_index(txt)
+            self.assertEqual(idx.get("x.txt"), {1})
 
     def test_explore_mode_blocks_reading_dot_git(self) -> None:
         with tempfile.TemporaryDirectory() as td:

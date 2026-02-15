@@ -861,15 +861,6 @@ def _explore_tool_bundle_text(
         for n in wanted:
             raw = line_by_n.get(n)
             if not isinstance(raw, str):
-                row = f"# MISSING: L{n}\n"
-                if used + len(row.encode("utf-8")) > max_bytes:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="tool bundle too large",
-                    )
-                out_chunks.append(row)
-                used += len(row.encode("utf-8"))
                 continue
 
             text = raw
