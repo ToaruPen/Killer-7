@@ -427,6 +427,22 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertIn('"tool": "glob"', txt)
             self.assertIn('"path": "."', txt)
 
+    def test_explore_repo_root_does_not_expand_when_out_dir_is_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            parent = str(Path(td).parent)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok_with_glob_path(fake, base_path=parent)
+
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(BlockedError):
+                runner.run_viewpoint(
+                    out_dir=td,
+                    viewpoint="Correctness",
+                    message="hello",
+                    env={"KILLER7_EXPLORE": "1"},
+                )
+
     def test_explore_mode_blocks_forbidden_git_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             _git_init(td)

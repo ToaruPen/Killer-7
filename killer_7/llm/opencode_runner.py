@@ -57,6 +57,14 @@ def opencode_artifacts_dir(out_dir: str, viewpoint: str) -> str:
     return os.path.join(out_dir, "opencode", _slugify(viewpoint))
 
 
+def _repo_root_from_out_dir(out_dir: str) -> str:
+    real_out = os.path.realpath(out_dir or ".")
+    if os.path.basename(real_out) == ".ai-review":
+        parent = os.path.dirname(real_out) or "."
+        return os.path.realpath(parent)
+    return real_out
+
+
 def _atomic_write_text(path: str, content: str) -> None:
     dir_name = os.path.dirname(path) or "."
     base = os.path.basename(path)
@@ -759,7 +767,7 @@ def _write_explore_trace_and_bundle(
     tool_uses: list[dict[str, Any]],
     env: dict[str, str] | None,
 ) -> None:
-    repo_root = os.path.realpath(os.path.dirname(out_dir) or ".")
+    repo_root = _repo_root_from_out_dir(out_dir)
     max_tool_calls, max_bash_calls, max_read_lines, max_files, max_bytes = (
         _explore_limits(env)
     )
@@ -983,7 +991,7 @@ class OpenCodeRunner:
 
             ensure_artifacts_dir()
             dst = os.path.join(artifacts_dir, "stdout.jsonl")
-            repo_root = os.path.realpath(os.path.dirname(out_dir) or ".")
+            repo_root = _repo_root_from_out_dir(out_dir)
 
             max_jsonl_bytes = 2_000_000
             raw = (
@@ -1227,7 +1235,7 @@ class OpenCodeRunner:
 
                 if stdout_jsonl_path:
                     try:
-                        repo_root = os.path.realpath(os.path.dirname(out_dir) or ".")
+                        repo_root = _repo_root_from_out_dir(out_dir)
                         _write_redacted_opencode_jsonl(
                             stdout_path,
                             stdout_jsonl_path,
