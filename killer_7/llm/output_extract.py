@@ -122,3 +122,49 @@ def extract_json_from_jsonl_lines(lines: Any) -> Any:
         raise ExecFailureError("OpenCode JSON events contained no final text output")
 
     return parse_json_from_text(last_text)
+
+
+def extract_json_and_tool_uses_from_jsonl_lines(
+    lines: Any,
+) -> tuple[Any, list[dict[str, Any]]]:
+    saw_event = False
+    last_text: str | None = None
+    tool_uses: list[dict[str, Any]] = []
+
+    for raw in lines:
+        if isinstance(raw, bytes):
+            line = raw.decode("utf-8", errors="replace").strip()
+        else:
+            line = str(raw).strip()
+        if not line:
+            continue
+        if not line.startswith("{"):
+            continue
+        saw_event = True
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ExecFailureError("OpenCode returned invalid JSONL event") from exc
+
+        if not isinstance(obj, dict):
+            continue
+
+        if obj.get("type") == "tool_use":
+            tool_uses.append(obj)
+            continue
+
+        if obj.get("type") != "text":
+            continue
+        part = obj.get("part") or {}
+        if not isinstance(part, dict):
+            continue
+        t = part.get("text")
+        if isinstance(t, str):
+            last_text = t
+
+    if not saw_event:
+        raise ExecFailureError("OpenCode returned no JSON events")
+    if last_text is None:
+        raise ExecFailureError("OpenCode JSON events contained no final text output")
+
+    return (parse_json_from_text(last_text), tool_uses)

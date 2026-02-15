@@ -719,6 +719,58 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_inline_mismatch(path: Path) -> None:
+    """Fake opencode that returns a P0 finding on a missing inline location."""
+
+    path.write_text(
+        r"""#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\s*(.+)\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\s*(.+)\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "correctness":
+  payload["status"] = "Blocked"
+  payload["findings"] = [
+    {
+      "title": "Missing inline location",
+      "body": "Issue outside diff.",
+      "priority": "P0",
+      "sources": ["hello.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "missing.txt", "line_range": {"start": 999, "end": 999}},
+    }
+  ]
+  payload["overall_explanation"] = "Location does not exist in diff."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_exec_failure(path: Path) -> None:
     """Fake opencode that always fails."""
 
@@ -2386,6 +2438,50 @@ class TestCli(unittest.TestCase):
             body = review_comments[0].get("body", "")
             self.assertIn("<!-- killer-7:inline:v1 fp=", body)
             self.assertEqual(review_comments[0].get("path"), "hello.txt")
+
+    def test_inline_does_not_block_when_unmappable_finding_downgraded_to_p3(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_inline_mismatch(fake_opencode)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--inline",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            comments = state.get("comments", [])
+            self.assertEqual(len(comments), 1)
+
+            review_comments = state.get("review_comments", [])
+            self.assertEqual(len(review_comments), 0)
+
+            summary_path = Path(td) / ".ai-review" / "review-summary.json"
+            self.assertTrue(summary_path.is_file())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            findings = summary.get("findings", [])
+            self.assertTrue(isinstance(findings, list) and findings)
+            first = findings[0] if isinstance(findings[0], dict) else {}
+            self.assertEqual(first.get("priority"), "P3")
+            self.assertEqual(first.get("original_priority"), "P0")
+            self.assertEqual(first.get("verified"), False)
 
     def test_post_summary_stale_head_overrides_blocked_result(self) -> None:
         with tempfile.TemporaryDirectory() as td:

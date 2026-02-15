@@ -68,6 +68,17 @@ killer-7 review --repo owner/name --pr 123 --post --inline
 - 追加: 特定観点のみリポジトリ内容へread-onlyアクセスを許可できる（allowlistでパス制限）
 - 不足情報は questions として回収し、追加の抜粋生成または対象観点のみ再実行で吸収する
 
+探索モード（作業ツリー探索 + 証跡）:
+
+- `--explore` 指定時、OpenCode に repo 探索（read/grep/glob + bash/git）を許可し、差分外の周辺文脈を確認できる
+- 探索の証跡（tool_use）を `.ai-review/` に保存し、必要に応じて監査・機械検証できる
+- bash は読み取り専用の git コマンドに限定し、許可外コマンド/必須フラグ欠落は Blocked（終了コード 1）とする
+- read は git 管理ファイルに限定し、`.git/` や `.env` など機微領域の読み取りは拒否する
+- grep/glob は範囲が広くなりがちなので、探索モードでは対象を絞る（例: `include`/`pattern` は拡張子を含むこと、`.env` を含む可能性がある指定は拒否する）
+- ポリシー適用は tool trace（OpenCodeのJSONLイベント）を事後検証して行う（違反は Blocked）。OpenCode 側の実行経路を完全にサンドボックス化するものではない
+- evidence 検証は (Context Bundle + SoT + tool bundle) を対象にし、探索に基づく sources でも unverified 扱いにならないようにする
+- tool bundle は証跡として (path + line numbers) を保存し、ファイル内容は永続化しない
+
 ### Q4: 完成と言える状態は？
 
 - GitHub上の任意のPRに対して、同一のCLI操作でレビューを実行できる
@@ -214,6 +225,10 @@ FR-7
 - [ ] AC-4: `--post` 指定でPRの要約コメントが冪等更新される（同一PRでコメントが増殖しない）
 - [ ] AC-5: `--inline` 指定でP0/P1のみがinline投稿され、再実行しても重複しない
 - [ ] AC-6: `--inline` 指定時にP0/P1が151件以上の場合、inline投稿は行わず要約へ退避し、終了コードがBlocked（1）になる（要約コメントは冪等更新される）
+- [ ] AC-6a: `--inline` 指定時に、evidence検証/ポリシー適用後の最終 findings が P0/P1 のまま残っているにも関わらず（downgrade により P3 になったものは対象外）、`code_location` が diff(right/new side) にマップできない場合、inline投稿は行わず終了コードがBlocked（1）になる（要約コメントは冪等更新される）
+- [ ] AC-7: `--explore` 指定時、tool trace と tool bundle が `.ai-review/` に保存される（例: `tool-trace.jsonl`, `tool-bundle.txt`, `opencode/*/stdout.jsonl`。stdoutはtool_useイベントのみで、output等を除去したredacted JSONL）
+- [ ] AC-8: `--explore` 指定時、bashの許可リスト外コマンドが実行された場合、レビューは Blocked（1）で失敗する
+- [ ] AC-9: `--explore` 指定時、探索に基づく findings の sources が evidence検証に通り、P0/P1 が不当に downgrade されない
 
 ### 異常系（必須: 最低1つ）
 

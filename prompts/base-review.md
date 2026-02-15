@@ -23,6 +23,10 @@ Scope ID: {{SCOPE_ID}}
 4. Be concrete and actionable. Explain impact and what to change.
 5. When claiming something is missing (validation/tests/docs), cite where it should exist by pointing to the closest relevant code location (e.g., function signature and nearby lines).
 6. Avoid tool-noise. Do not report pure formatting/lint that a formatter/linter would catch.
+7. If repository tools are available, you may inspect the repo to gather missing context, but:
+   - Do not write or edit files.
+   - For bash, use read-only git commands only, and always include `git --no-pager ...`.
+   - For `git diff`, always include `--no-ext-diff`.
 
 ## Aspect-specific instructions
 
@@ -59,7 +63,8 @@ Output MUST NOT include any other top-level keys.
   - code_location (object)
 
 - sources rules:
-  - Each entry MUST match a `# SRC: <path>` from the Inputs.
+  - Each entry MUST be a repo-relative path (optionally with `#Lx-Ly`).
+  - Sources must refer to content that is either present in the Inputs OR content you retrieved via repository tools during this run (e.g. via `read`).
   - Format: either `path/to/file.ext` or `path/to/file.ext#L10-L20`.
   - Include at least one source whose path matches `code_location.repo_relative_path`.
   - Do NOT output `verified` or `original_priority` in findings; those are reserved for machine verification.

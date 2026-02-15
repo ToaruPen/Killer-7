@@ -32,6 +32,9 @@ LLMのquota消費を抑えつつ、LLM由来のコード劣化とプロジェク
 - PRへの要約コメント投稿（冪等更新）
 - P0/P1のinlineコメント投稿（冪等、上限150）
 - ハイブリッド運用（通常はdiff+bundle+SoT、必要時のみrepo read-only + allowlist）
+- 探索モード（`--explore`）: repo探索（read/grep/glob + bash/git）を許可し、tool trace / tool bundle を保存する。bashは読み取り専用gitに制限し（許可外はBlocked）、readはgit管理ファイルに限定する。grep/globは対象を絞る（例: 拡張子を含む `include`/`pattern` を必須にし、`.env` 等を対象にし得る指定は拒否）。tool bundleは (path + line numbers) のみを保存する
+- 探索モードのポリシー適用は tool trace（OpenCodeのJSONLイベント）を事後検証して行う（違反は Blocked）。OpenCode の実行経路を完全にサンドボックス化するものではない
+- `--inline` のfail-fast: P0/P1 findings が diff(right/new side) にマップできない場合は Blocked として扱う
 
 **含まない（PRDのスコープ外を継承）:**
 - レビュー結果に基づくコード自動修正（自動コミット/PR自動作成）
@@ -139,6 +142,8 @@ Epic対応: 期限なし（段階リリース）
 - GitHub Actions運用時はfork PRをデフォルトで実行対象外とし（secrets保護）、結果はPRコメント（要約+P0/P1 inline）として掲示する（ただしinlineは上限超過時に抑制）
 - LLMには最小化したコンテキスト（diff + Context Bundle + SoT allowlist）を送る
 - repo全文へのアクセスはデフォルト無効（ハイブリッド）。必要時のみread-onlyかつパスallowlistで制限する
+- 探索モード（`--explore`）では、OpenCodeのrepo探索を許可する代わりに、tool trace/bundle を成果物として保存し、後段のevidence検証で探索由来の根拠も検証対象に含める（readはgit管理ファイルに限定し、bundleは内容を永続化しない）
+- `--inline` 実行時は、P0/P1 findings の `code_location` が diff にマップできない場合は品質ゲートとして Blocked にする（黙ってスキップしない）
 
 主要データフロー-1
 from: ユーザー（CLI起動）
