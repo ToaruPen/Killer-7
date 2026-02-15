@@ -22,6 +22,21 @@ class TestExplorePolicy(unittest.TestCase):
                 "git --no-pager diff --no-ext-diff --no-index /etc/passwd /dev/null"
             )
 
+    def test_git_diff_outside_paths_blocked(self) -> None:
+        cases = [
+            "git --no-pager diff --no-ext-diff README.md /etc/passwd",
+            "git --no-pager diff --no-ext-diff -- README.md /etc/passwd",
+            "git --no-pager diff --no-ext-diff ../secret.txt README.md",
+            "git --no-pager diff --no-ext-diff -- ../secret.txt README.md",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
+        validate_git_readonly_bash_command(
+            "git --no-pager diff --no-ext-diff main..HEAD"
+        )
+
     def test_git_readonly_subcommands_allowed(self) -> None:
         validate_git_readonly_bash_command("git --no-pager status")
         validate_git_readonly_bash_command("git --no-pager log --oneline -n 5")
@@ -64,6 +79,8 @@ class TestExplorePolicy(unittest.TestCase):
         cases = [
             "git --no-pager blame --contents=/etc/passwd README.md",
             "git --no-pager blame --contents /etc/passwd README.md",
+            "git --no-pager blame --cont=/etc/passwd README.md",
+            "git --no-pager blame --no-cont=/etc/passwd README.md",
         ]
         for cmd in cases:
             with self.subTest(cmd=cmd):

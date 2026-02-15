@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 
 from ..errors import BlockedError
@@ -84,10 +85,46 @@ def validate_git_readonly_bash_command(command: str) -> None:
 
     args = tokens[i:]
 
+    def is_abs_like_path(value: str) -> bool:
+        if not value:
+            return False
+        norm = value.replace("\\", "/")
+        if norm.startswith("/"):
+            return True
+        if norm.startswith("~"):
+            return True
+        if re.match(r"^[A-Za-z]:/", norm):
+            return True
+        return False
+
+    def has_dotdot_segment(value: str) -> bool:
+        if not value:
+            return False
+        norm = value.replace("\\", "/")
+        segs = [s for s in norm.split("/") if s]
+        return ".." in segs
+
+    def is_forbidden_relpath(value: str) -> bool:
+        norm = value.replace("\\", "/")
+        segs = [s for s in norm.split("/") if s]
+        while segs and segs[0] == ".":
+            segs = segs[1:]
+        if not segs:
+            return False
+        if segs[0] in {".git", ".ai-review", ".agentic-sdd"}:
+            return True
+        if any(s.startswith(".env") for s in segs):
+            return True
+        return False
+
     for arg in args:
         if arg == "--output" or arg.startswith("--output="):
             raise BlockedError(
                 "Explore policy violation: git args must not use --output"
+            )
+        if sub == "blame" and (arg.startswith("--cont") or arg.startswith("--no-cont")):
+            raise BlockedError(
+                "Explore policy violation: git args must not use --contents"
             )
         if arg == "--contents" or arg.startswith("--contents="):
             raise BlockedError(
@@ -107,3 +144,15 @@ def validate_git_readonly_bash_command(command: str) -> None:
             raise BlockedError(
                 "Explore policy violation: git diff must not use --ext-diff"
             )
+
+        for arg in args:
+            if not arg or arg.startswith("-"):
+                continue
+            if (
+                is_abs_like_path(arg)
+                or has_dotdot_segment(arg)
+                or is_forbidden_relpath(arg)
+            ):
+                raise BlockedError(
+                    "Explore policy violation: git diff must not use outside paths"
+                )
