@@ -106,6 +106,8 @@ def validate_git_readonly_bash_command(command: str) -> None:
 
     def is_forbidden_relpath(value: str) -> bool:
         norm = value.replace("\\", "/")
+        if norm.startswith(":(") or norm.startswith(":!") or norm.startswith(":^"):
+            return True
         segs = [s for s in norm.split("/") if s]
         while segs and segs[0] == ".":
             segs = segs[1:]
@@ -117,11 +119,32 @@ def validate_git_readonly_bash_command(command: str) -> None:
             return True
         return False
 
+    def show_rev_path_rhs(arg: str) -> str | None:
+        if sub != "show" or (":" not in arg):
+            return None
+        depth = 0
+        sep = -1
+        for idx, ch in enumerate(arg):
+            if ch == "{":
+                depth += 1
+                continue
+            if ch == "}":
+                if depth > 0:
+                    depth -= 1
+                continue
+            if ch == ":" and depth == 0:
+                sep = idx
+                break
+
+        if sep <= 0 or sep >= (len(arg) - 1):
+            return None
+        return arg[sep + 1 :]
+
     def candidate_paths_from_arg(arg: str) -> list[str]:
         if not arg or arg.startswith("-") or arg == "--":
             return []
-        if sub == "show" and ":" in arg:
-            _, rhs = arg.rsplit(":", 1)
+        rhs = show_rev_path_rhs(arg)
+        if rhs is not None:
             return [rhs]
         return [arg]
 
@@ -219,10 +242,9 @@ def validate_git_readonly_bash_command(command: str) -> None:
             for arg in args:
                 if not arg or arg.startswith("-") or arg == "--":
                     continue
-                if ":" in arg:
-                    _, rhs = arg.rsplit(":", 1)
-                    if rhs:
-                        scope_paths.append(rhs)
+                rhs = show_rev_path_rhs(arg)
+                if rhs:
+                    scope_paths.append(rhs)
 
         for p in scope_paths:
             if p.startswith("-"):

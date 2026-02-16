@@ -108,6 +108,8 @@ class TestExplorePolicy(unittest.TestCase):
     def test_git_non_diff_subcommands_must_not_reference_dot_env(self) -> None:
         cases = [
             "git --no-pager show HEAD:.env",
+            "git --no-pager show HEAD:.env:prod",
+            'git --no-pager show "HEAD@{2024-01-01T12:34:56}:.env"',
             "git --no-pager show HEAD:configs/.env/secrets.txt",
             "git --no-pager status .env",
             "git --no-pager log -- .env",
@@ -119,6 +121,21 @@ class TestExplorePolicy(unittest.TestCase):
                     validate_git_readonly_bash_command(cmd)
 
         validate_git_readonly_bash_command("git --no-pager show HEAD:README.md")
+        validate_git_readonly_bash_command(
+            'git --no-pager show "HEAD@{2024-01-01T12:34:56}:README.md"'
+        )
+
+    def test_git_pathspec_magic_blocked(self) -> None:
+        cases = [
+            "git --no-pager show HEAD -- :(glob)**/*",
+            "git --no-pager show HEAD::(glob).env*",
+            "git --no-pager log -p -n 1 -- :(glob)**/*",
+            "git --no-pager log -- :(glob).env*",
+        ]
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                with self.assertRaises(BlockedError):
+                    validate_git_readonly_bash_command(cmd)
 
     def test_git_log_patch_requires_scope(self) -> None:
         with self.assertRaises(BlockedError):
