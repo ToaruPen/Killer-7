@@ -125,6 +125,38 @@ def validate_git_readonly_bash_command(command: str) -> None:
             return [rhs]
         return [arg]
 
+    def show_emits_patch(args_list: list[str]) -> bool:
+        emits_patch = True
+        for a in args_list:
+            if a in {"--no-patch", "-s"}:
+                emits_patch = False
+                continue
+            if a in {"--patch", "-p", "-u"}:
+                emits_patch = True
+                continue
+            if a == "--unified" or a.startswith("--unified="):
+                emits_patch = True
+                continue
+            if a == "-U" or a.startswith("-U"):
+                emits_patch = True
+        return emits_patch
+
+    def log_emits_patch(args_list: list[str]) -> bool:
+        emits_patch = False
+        for a in args_list:
+            if a in {"--no-patch", "-s"}:
+                emits_patch = False
+                continue
+            if a in {"--patch", "-p", "-u"}:
+                emits_patch = True
+                continue
+            if a == "--unified" or a.startswith("--unified="):
+                emits_patch = True
+                continue
+            if a == "-U" or a.startswith("-U"):
+                emits_patch = True
+        return emits_patch
+
     def is_broad_scope_path(value: str) -> bool:
         norm = (value or "").replace("\\", "/").strip()
         if norm in {".", "./"}:
@@ -212,13 +244,12 @@ def validate_git_readonly_bash_command(command: str) -> None:
                     "Explore policy violation: git args must not use forbidden paths"
                 )
 
-        if sub == "show" and not scope_paths:
-            if "--no-patch" not in args:
-                raise BlockedError(
-                    "Explore policy violation: git show must be scoped with '-- <path>' or use --no-patch"
-                )
+        if sub == "show" and not scope_paths and show_emits_patch(args):
+            raise BlockedError(
+                "Explore policy violation: git show with patch output must be scoped with '-- <path>'"
+            )
 
-        if sub == "log" and ("-p" in args or "--patch" in args) and not scope_paths:
+        if sub == "log" and not scope_paths and log_emits_patch(args):
             raise BlockedError(
                 "Explore policy violation: git log with patch output must be scoped with '-- <path>'"
             )
