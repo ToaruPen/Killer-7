@@ -134,14 +134,23 @@ class TestExplorePolicy(unittest.TestCase):
             validate_git_readonly_bash_command("git --no-pager log -u -n 1")
 
         with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command("git --no-pager log -sp -n 1")
+
+        with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command("git --no-pager log --unified=0 -n 1")
 
         validate_git_readonly_bash_command("git --no-pager log -u -n 1 -- README.md")
+        validate_git_readonly_bash_command("git --no-pager log -sp -n 1 -- README.md")
 
     def test_git_show_patch_override_requires_scope(self) -> None:
         with self.assertRaises(BlockedError):
             validate_git_readonly_bash_command(
                 "git --no-pager show --no-patch --patch -n 1"
+            )
+
+        with self.assertRaises(BlockedError):
+            validate_git_readonly_bash_command(
+                "git --no-pager show --no-patch --patch-with-stat -n 1"
             )
 
         with self.assertRaises(BlockedError):

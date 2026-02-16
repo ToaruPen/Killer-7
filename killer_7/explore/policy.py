@@ -125,36 +125,30 @@ def validate_git_readonly_bash_command(command: str) -> None:
             return [rhs]
         return [arg]
 
-    def show_emits_patch(args_list: list[str]) -> bool:
-        emits_patch = True
+    def emits_patch_output(*, args_list: list[str], default: bool) -> bool:
+        emits_patch = default
         for a in args_list:
-            if a in {"--no-patch", "-s"}:
+            if a == "--no-patch":
                 emits_patch = False
                 continue
-            if a in {"--patch", "-p", "-u"}:
+            if a == "--patch" or a.startswith("--patch-") or a.startswith("--patch="):
                 emits_patch = True
                 continue
             if a == "--unified" or a.startswith("--unified="):
                 emits_patch = True
                 continue
-            if a == "-U" or a.startswith("-U"):
-                emits_patch = True
-        return emits_patch
+            if a.startswith("--"):
+                continue
 
-    def log_emits_patch(args_list: list[str]) -> bool:
-        emits_patch = False
-        for a in args_list:
-            if a in {"--no-patch", "-s"}:
-                emits_patch = False
-                continue
-            if a in {"--patch", "-p", "-u"}:
-                emits_patch = True
-                continue
-            if a == "--unified" or a.startswith("--unified="):
-                emits_patch = True
-                continue
-            if a == "-U" or a.startswith("-U"):
-                emits_patch = True
+            if a.startswith("-") and len(a) > 1:
+                short = a[1:]
+                if short.startswith("U"):
+                    emits_patch = True
+                for ch in short:
+                    if ch in {"p", "u"}:
+                        emits_patch = True
+                    if ch == "s":
+                        emits_patch = False
         return emits_patch
 
     def is_broad_scope_path(value: str) -> bool:
@@ -244,12 +238,20 @@ def validate_git_readonly_bash_command(command: str) -> None:
                     "Explore policy violation: git args must not use forbidden paths"
                 )
 
-        if sub == "show" and not scope_paths and show_emits_patch(args):
+        if (
+            sub == "show"
+            and not scope_paths
+            and emits_patch_output(args_list=args, default=True)
+        ):
             raise BlockedError(
                 "Explore policy violation: git show with patch output must be scoped with '-- <path>'"
             )
 
-        if sub == "log" and not scope_paths and log_emits_patch(args):
+        if (
+            sub == "log"
+            and not scope_paths
+            and emits_patch_output(args_list=args, default=False)
+        ):
             raise BlockedError(
                 "Explore policy violation: git log with patch output must be scoped with '-- <path>'"
             )
