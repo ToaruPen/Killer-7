@@ -21,6 +21,7 @@ These docs are language/framework-agnostic and concept-based.
 
 - [api-endpoint.md](./api-endpoint.md): REST API endpoint design
 - [crud-screen.md](./crud-screen.md): CRUD screen design
+- [ui-redesign.md](./ui-redesign.md): iterative UI redesign (capture -> patch -> verify)
 - [estimation.md](./estimation.md): estimation (create a Full estimate before implementation)
 
 ### Process Skills
@@ -43,9 +44,12 @@ Before running /impl #123, check relevant skills:
 - Security requirements -> security.md
 - Implementing an API -> api-endpoint.md
 - Implementing a screen -> crud-screen.md
+- Iterating an existing UI redesign -> ui-redesign.md
 - Designing error handling -> error-handling.md
 - Debugging issues -> debugging.md
 ```
+
+For a structured debugging/investigation note (Issue comment or a new Investigation Issue), see `/debug`.
 
 ### 2) Use as a checklist
 

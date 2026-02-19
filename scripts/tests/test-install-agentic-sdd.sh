@@ -73,18 +73,23 @@ if [[ ! -d "$proj2/.agent" ]]; then
   exit 1
 fi
 
-if [[ -f "$proj2/.agent/commands/checkin.md" ]]; then
-  eprint "Did not expect Shogun Ops command doc to be installed by default: .agent/commands/checkin.md"
+if [[ ! -f "$proj2/.agent/commands/ui-iterate.md" ]]; then
+  eprint "Expected UI iterate command doc to be installed: .agent/commands/ui-iterate.md"
   exit 1
 fi
 
-if [[ -e "$proj2/scripts/shogun-ops.py" ]]; then
-  eprint "Did not expect Shogun Ops script to be installed by default: scripts/shogun-ops.py"
+if [[ ! -f "$proj2/skills/ui-redesign.md" ]]; then
+  eprint "Expected UI redesign skill to be installed: skills/ui-redesign.md"
   exit 1
 fi
 
-if [[ -e "$proj2/scripts/tmux" ]]; then
-  eprint "Did not expect Shogun Ops tmux shim to be installed by default: scripts/tmux"
+if [[ ! -f "$proj2/scripts/ui-iterate.sh" ]]; then
+  eprint "Expected UI iterate helper script to be installed: scripts/ui-iterate.sh"
+  exit 1
+fi
+
+if [[ ! -f "$proj2/scripts/update-agentic-sdd.sh" ]]; then
+  eprint "Expected subtree update helper script to be installed: scripts/update-agentic-sdd.sh"
   exit 1
 fi
 
@@ -105,11 +110,6 @@ fi
 
 if [[ ! -f "$proj2/.opencode/commands/create-pr.md" ]]; then
   eprint "Expected OpenCode command to exist: .opencode/commands/create-pr.md"
-  exit 1
-fi
-
-if [[ -f "$proj2/.opencode/commands/checkin.md" ]]; then
-  eprint "Did not expect Shogun Ops OpenCode command to be installed by default: .opencode/commands/checkin.md"
   exit 1
 fi
 
@@ -158,6 +158,11 @@ if [[ ! -f "$proj3/.github/ISSUE_TEMPLATE/feature.md" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$proj3/.github/ISSUE_TEMPLATE/ui-iteration.md" ]]; then
+  eprint "Expected UI iteration issue template to be installed in mode=full"
+  exit 1
+fi
+
 if [[ -d "$proj3/.github/workflows" ]]; then
   eprint "Did not expect workflows to be installed"
   exit 1
@@ -174,44 +179,23 @@ if [[ ! -f "$proj4/.github/workflows/agentic-sdd-ci.yml" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$proj4/.github/workflows/agentic-sdd-pr-autofix.yml" ]]; then
+  eprint "Expected PR autofix workflow to be installed: .github/workflows/agentic-sdd-pr-autofix.yml"
+  exit 1
+fi
+
 if [[ ! -f "$proj4/scripts/agentic-sdd-ci.sh" ]]; then
   eprint "Expected CI script to be installed: scripts/agentic-sdd-ci.sh"
   exit 1
 fi
 
+if [[ ! -f "$proj4/scripts/agentic-sdd-pr-autofix.sh" ]]; then
+  eprint "Expected PR autofix script to be installed: scripts/agentic-sdd-pr-autofix.sh"
+  exit 1
+fi
+
 if [[ -f "$proj4/.github/workflows/release.yml" ]]; then
   eprint "Did not expect Agentic-SDD internal workflow to be installed: .github/workflows/release.yml"
-  exit 1
-fi
-
-# 5) Opt-in Shogun Ops should install ops scripts + commands
-proj5="$tmpdir/proj5"
-mkproj "$proj5"
-
-"$installer" --target "$proj5" --mode minimal --tool opencode --shogun-ops >/dev/null
-
-if [[ ! -f "$proj5/scripts/shogun-ops.py" ]]; then
-  eprint "Expected Shogun Ops script to be installed with --shogun-ops: scripts/shogun-ops.py"
-  exit 1
-fi
-
-if [[ ! -f "$proj5/scripts/shogun-tmux.sh" ]]; then
-  eprint "Expected Shogun Ops script to be installed with --shogun-ops: scripts/shogun-tmux.sh"
-  exit 1
-fi
-
-if [[ ! -f "$proj5/scripts/tmux" ]]; then
-  eprint "Expected tmux shim to be installed with --shogun-ops: scripts/tmux"
-  exit 1
-fi
-
-if [[ ! -f "$proj5/.agent/commands/checkin.md" ]]; then
-  eprint "Expected Shogun Ops command doc to be installed with --shogun-ops: .agent/commands/checkin.md"
-  exit 1
-fi
-
-if [[ ! -f "$proj5/.opencode/commands/checkin.md" ]]; then
-  eprint "Expected Shogun Ops OpenCode command to exist with --shogun-ops: .opencode/commands/checkin.md"
   exit 1
 fi
 

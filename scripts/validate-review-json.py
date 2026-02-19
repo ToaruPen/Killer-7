@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 
-"""Validate review-cycle's review.json output.
-
-This script is part of the Agentic-SDD *review-cycle* tooling. It validates the JSON
-contract used by `scripts/review-cycle.sh` (default schema: `.agent/schemas/review.json`).
-
-Note: Killer-7's own per-aspect review JSON contract is validated by Killer-7 at runtime
-using `schemas/aspect-review.schema.json` (and may intentionally differ from review-cycle).
-"""
-
 import argparse
 import json
 import os
 import sys
 from typing import Any, Dict, List, Optional
-
 
 STATUS_ALLOWED = {"Approved", "Approved with nits", "Blocked", "Question"}
 PRIORITY_ALLOWED = {"P0", "P1", "P2", "P3"}
@@ -101,18 +91,12 @@ def validate_review(
         if not isinstance(item, dict):
             errors.append(f"findings[{idx}] is not an object")
             continue
-        required_finding_keys = {
-            "title",
-            "body",
-            "priority",
-            "code_location",
-        }
+        required_finding_keys = {"title", "body", "priority", "code_location"}
         for k in sorted(required_finding_keys):
             if k not in item:
                 errors.append(f"findings[{idx}] missing key: {k}")
 
-        allowed_finding_keys = set(required_finding_keys)
-        extra_finding = set(item.keys()) - allowed_finding_keys
+        extra_finding = set(item.keys()) - required_finding_keys
         if extra_finding:
             errors.append(f"findings[{idx}] unexpected keys: {sorted(extra_finding)}")
 

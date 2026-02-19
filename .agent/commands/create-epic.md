@@ -12,6 +12,26 @@ The generated Epic document remains in Japanese (use `docs/epics/_template.md`).
 
 ## Flow
 
+### Phase 0: Run `/research epic` (required)
+
+Before creating the Epic, you must run research and persist it as a reusable artifact.
+
+Run:
+
+```
+/research epic [prd-file]
+```
+
+Requirements:
+
+- Save the research output under `docs/research/epic/<prd-name>/<YYYY-MM-DD>.md`
+- Use the template: `docs/research/epic/_template.md`
+- The output must be in Japanese
+
+Stop condition:
+
+- If the research artifact does not exist yet, stop and create it first.
+
 ### Phase 1: Read the PRD
 
 1. Read the specified PRD file
@@ -46,7 +66,7 @@ Balanced:
 
 ### Phase 4: Create the 3 required lists
 
-Always include these three lists in the Epic (write "なし" if not applicable):
+Always include these three lists in the Epic (write `なし` (Japanese for "none") if not applicable):
 
 - External services
 - Components
@@ -68,8 +88,29 @@ Based on PRD Q6 answers, include the required production quality sections in sec
 
 Rules:
 - If Q6 is "Yes": fill the section with specific details
-- If Q6 is "No": write "N/A（理由）" in the section
+- If Q6 is "No": write `N/A（理由）` (Japanese; "N/A (reason)") in the section
 - If Q6 is "Unknown": resolve Unknown first (Phase 2)
+
+### Phase 4.7: Repository legibility baseline (required)
+
+Based on Harness Engineering principles (map-first, progressive disclosure, mechanical enforcement),
+every Epic must define the following as mandatory design artifacts:
+
+1. **Project-optimized folder structure**
+   - Design a folder structure that matches the target project's domains and development workflow.
+   - Explain why each top-level directory exists and what belongs there.
+2. **Per-folder `AGENTS.md` map placement plan**
+   - Define where scoped `AGENTS.md` files are placed (for example: root + domain subdirectories).
+   - For each scoped `AGENTS.md`, define purpose/ownership/scope and links to deeper source-of-truth docs.
+   - Keep each `AGENTS.md` concise and map-like (table-of-contents style), not a monolithic manual.
+3. **Modern fast lint/format/typecheck toolchain selection**
+   - Select tools that are currently maintained, performant, and widely adopted in the target ecosystem.
+   - Record concrete selection reasons (speed/maintenance/adoption/CI compatibility) and at least one simpler alternative.
+   - Define integration points for local and CI execution (where and how checks run).
+
+Fail-fast rule:
+
+- If any of the 3 artifacts above is missing or unspecified, do not finalize the Epic.
 
 ### Phase 5: Apply counting definitions
 
@@ -80,7 +121,7 @@ Rules:
 ### Phase 6: Provide simpler alternatives
 
 If a simpler alternative exists, present both options and record the chosen option and the reason
-in the Epic (follow the template's "技術選定" section style).
+in the Epic (follow the template's `技術選定` section style).
 
 ### Phase 7: Create an Issue split proposal
 
@@ -99,13 +140,17 @@ Split Issues following `.agent/rules/issue.md`:
 [] Simpler alternative(s) are presented when applicable
 [] No item is justified only by "for future extensibility"
 [] The 3 required lists are present
+[] A project-optimized folder structure is explicitly designed
+[] Scoped `AGENTS.md` placement is defined for relevant folders
+[] A modern fast lint/format/typecheck toolchain is selected with rationale and CI/local integration points
 ```
 
 ### Phase 9: Generate the Epic
 
 1. Copy `docs/epics/_template.md`
 2. Fill in the collected information
-3. Save as `docs/epics/[prd-name]-epic.md`
+3. Add a reference to the research artifact in the Epic (recommended location: `## メタ情報`)
+4. Save as `docs/epics/[prd-name]-epic.md`
 
 ## Output
 
@@ -125,6 +170,7 @@ docs/epics/[prd-name]-epic.md
 - `.agent/rules/epic.md` - epic generation rules
 - `.agent/rules/issue.md` - issue granularity rules
 - `.agent/rules/docs-sync.md` - documentation sync rules
+- `.agent/commands/research.md` - research artifact generation
 
 ## Next command
 

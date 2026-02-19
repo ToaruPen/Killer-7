@@ -4,10 +4,9 @@ Create a Pull Request for an Issue (push + PR creation).
 
 This command assumes GitHub is the source of truth for Issues and linked branches.
 User-facing output remains in Japanese.
-
-PR titles/bodies should be written in Japanese.
-Exception: If you use a Conventional Commits style prefix in the PR title (e.g. `feat(schema):`), keep the prefix as-is, but write the description part in Japanese.
-Note: `Closes #<issue-number>` should remain as-is to preserve GitHub auto-close behavior.
+PR titles and bodies are user-facing artifacts and must remain in Japanese.
+Exception: Conventional Commit-style prefixes at the start of the title (e.g. `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`) may remain in English.
+Exception: GitHub closing keywords may remain in English (e.g. `Closes #123`, `Fixes #123`).
 
 ## Usage
 
@@ -18,7 +17,7 @@ Note: `Closes #<issue-number>` should remain as-is to preserve GitHub auto-close
 Notes:
 
 - If omitted, infer the Issue number from the current branch name (`issue-<n>`).
-- This command is intended to run after `/review` is approved.
+- This command is intended to run after `/final-review` is approved.
 
 ## Flow
 
@@ -32,7 +31,19 @@ Required:
    - List linked branches (SoT): `gh issue develop --list <issue-number>`
    - If any linked branch exists and you are not on it, report and stop.
 4. `/review-cycle` has a passing `review.json` for this Issue scope (`Approved` or `Approved with nits`).
-   - If missing or not passing, stop and ask to re-run `/review-cycle`.
+    - If missing or not passing, stop and ask to re-run `/review-cycle`.
+    - `review-metadata.json` must match the current branch state:
+      - `head_sha` equals current `HEAD`
+      - `diff_source` must be `range`
+      - if `base_sha` is present, the same `base_ref` still points to that `base_sha`
+      - if `base_sha` is present, the PR target base (`--base` or default base) must match the reviewed base branch
+5. `/test-review` has a passing `test-review.json` for this Issue scope (`Approved` or `Approved with nits`).
+   - If missing or not passing, stop and ask to re-run `/test-review`.
+   - `test-review-metadata.json` must match the current branch state:
+      - `head_sha` equals current `HEAD`
+      - `diff_mode` must be `range`
+      - if `base_sha` is present, the same `base_ref` still points to that `base_sha`
+      - if `base_sha` is present, the PR target base (`--base` or default base) must match the reviewed base branch
 
 ### Phase 1: Push
 
@@ -55,7 +66,7 @@ git push -u origin HEAD
 
 Guidelines:
 
-- Title: reuse the Issue title (or a minimal, accurate title) in Japanese.
+- Title: reuse the Issue title (or a minimal, accurate title).
 - Body must include `Closes #<issue-number>`.
 - Keep the body short (1-3 bullets) and focused on "why".
 
@@ -73,11 +84,11 @@ Notes:
 
 ## Related
 
-- `.agent/commands/review.md` - final review gate
+- `.agent/commands/final-review.md` - final review gate
 - `.agent/commands/review-cycle.md` - local review cycle (review.json)
 - `.agent/commands/worktree.md` - worktree + linked branch flow
 - `.agent/rules/branch.md` - branch naming rules
 
 ## Next command
 
-After PR creation, optionally run `/review <pr-number>` to review the PR diff.
+After PR creation, optionally run `/final-review <pr-number>` to review the PR diff.

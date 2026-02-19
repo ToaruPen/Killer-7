@@ -2,10 +2,9 @@
 
 import json
 import os
+import subprocess
 import sys
 from typing import List, Optional
-
-import subprocess
 
 
 def eprint(msg: str) -> None:
@@ -17,7 +16,7 @@ def run(
     cwd: Optional[str] = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         cmd,
         cwd=cwd,
         text=True,
@@ -61,6 +60,20 @@ def main() -> int:
     root = repo_root()
     if not root:
         return 0
+
+    worktree_gate = os.path.join(root, "scripts", "validate-worktree.py")
+    if os.path.isfile(worktree_gate):
+        try:
+            p = run([sys.executable, worktree_gate], cwd=root, check=False)
+        except Exception as exc:  # noqa: BLE001
+            eprint(f"[agentic-sdd gate] error: {exc}")
+            return 1
+        if p.stdout:
+            sys.stdout.write(p.stdout)
+        if p.stderr:
+            sys.stderr.write(p.stderr)
+        if p.returncode != 0:
+            return p.returncode
 
     script = os.path.join(root, "scripts", "validate-approval.py")
     if not os.path.isfile(script):

@@ -2,7 +2,7 @@
 
 Rules for AI agents working in this repository.
 
-Note: User-facing interactions and generated artifacts (PRDs/Epics/Issues) remain in Japanese.
+Note: User-facing interactions and generated artifacts (PRDs/Epics/Issues/PRs) remain in Japanese.
 This control documentation is written in English to reduce token usage during agent bootstrap.
 
 ## Start Here (Development Cycle Protocol)
@@ -14,6 +14,27 @@ Invariant (SoT)
 - Priority order: PRD (requirements) > Epic (implementation plan) > Implementation (code)
 - If you detect a contradiction, STOP and ask a human with references (PRD/Epic/code:line).
   Do not invent requirements.
+
+Fail-fast (no fallback in implementation)
+- During implementation, do not add "fallback" behavior that silently changes outcomes.
+  If a required input/assumption is missing or ambiguous, fail fast with an explicit error,
+  and ask a human (with PRD/Epic/code references) instead of guessing.
+- Backward-compat shims or fallback paths are allowed only when they are behavior-preserving,
+  do not hide errors, and add no cyclomatic complexity.
+
+Agent Guidelines (simplicity-first)
+- Always prefer simplicity over pathological correctness.
+- YAGNI, KISS, DRY.
+- Prefer explicit failure over compatibility shims when requirements or inputs are missing.
+
+Questions (user interaction)
+- When you need to ask the user a question, you MUST use the QuestionTool (the `question` tool).
+  Do not ask questions in free-form text.
+
+Static analysis (required)
+- You must introduce and keep running static analysis: lint, format, and typecheck.
+- If the repository has no lint/format/typecheck yet, treat it as a blocker and introduce the minimal viable checks before proceeding.
+- If you cannot introduce or run a required check due to environment or constraints, STOP and ask a human for an explicit exception (with rationale and impact).
 
 Release hygiene (required)
 - After making changes to this repo, you MUST update `CHANGELOG.md`, publish a GitHub Release (tag),
@@ -43,15 +64,12 @@ Bug fix Issues require Priority (P0-P4). See `.agent/rules/issue.md` for details
 2) Complete one Issue (iterate)
 - /impl or /tdd: pass the implementation gates (.agent/rules/impl-gate.md)
   - Full estimate (11 sections) -> user approval -> implement -> add/run tests
+  - Worktree is required for Issue branches (see `.agent/rules/impl-gate.md` Gate -1)
 - /review-cycle: run locally before committing (fix -> re-run)
-- /review: always run /sync-docs; if there is a diff, follow SoT and re-check
+- /final-review: always run /sync-docs; if there is a diff, follow SoT and re-check
 
 3) PR / merge
-- Create a PR only after /review passes (do not change anything outside the Issue scope)
-  - Before creating a PR, you MUST run the local equivalent of CI and ensure it passes.
-    - Minimum required: `python3 -m unittest`, `python3 -m ruff check`, `python3 -m ruff format --check`
-    - If `.github/workflows/ci.yml` exists, match its steps as closely as possible.
-    - If you cannot run a CI step locally (missing tool/OS constraint), STOP and ask a human.
+- Create a PR only after /final-review passes (do not change anything outside the Issue scope)
   - Then run: /create-pr
 ```
 
@@ -91,11 +109,7 @@ Absolute prohibitions with no exceptions:
    - Failure reproducibility: Test must fail before the change
    - Correction assurance: Test must pass after the change
    - Without both conditions, the test is not valid evidence
-
-6. **No surprise dependencies/components**
-   - Do not add new dependencies or components "because it seems useful"
-   - Only add them when explicitly justified in the current Epic/Issue (must-have, or clear effort reduction + higher certainty, or well-known maintained OSS)
-</non_negotiables>
+     </non_negotiables>
 
 ---
 
@@ -120,18 +134,22 @@ A workflow template to help non-engineers run AI-driven development while preven
 
 ## Commands
 
+- `/init`: initialize the Agentic-SDD checklist (OpenCode alias: `/sdd-init`)
 - `/create-prd`: create a PRD (7 questions)
+- `/research`: create reusable research artifacts for PRD/Epic/estimation
 - `/create-epic`: create an Epic (requires 3 lists: external services / components / new tech)
 - `/generate-project-config`: generate project-specific skills/rules from Epic
 - `/create-issues`: create Issues (granularity rules)
+- `/debug`: create a structured debugging/investigation note (Issue comment or a new Investigation Issue)
 - `/estimation`: create a Full estimate (11 sections) and get approval
 - `/impl`: implement an Issue (Full estimate required)
 - `/tdd`: implement via TDD (Red -> Green -> Refactor)
-- `/refactor-draft`: create a refactor draft YAML (Lower-only; no GitHub writes) (Shogun Ops opt-in; requires `--shogun-ops`)
-- `/refactor-issue`: create a GitHub Issue from a refactor draft (Middle-only) (Shogun Ops opt-in; requires `--shogun-ops`)
+- `/ui-iterate`: iterate UI redesign in short loops (capture -> patch -> verify)
+- `/test-review`: run fail-fast test review checks before review/PR gates
 - `/review-cycle`: local review loop (codex exec -> review.json)
-- `/review`: review (DoD check)
+- `/final-review`: review (DoD check)
 - `/create-pr`: push branch and create a PR (gh)
+- `/codex-pr-review`: request a Codex bot review on a PR and iterate until feedback is resolved
 - `/sync-docs`: consistency check between PRD/Epic/code
 - `/worktree`: manage git worktrees for parallel Issues
 - `/cleanup`: clean up worktree and local branch after merge
@@ -147,7 +165,7 @@ To keep this bootstrap file small, detailed rules live in these files:
 - Project Config: `.agent/commands/generate-project-config.md`, `templates/project-config/`
 - Issues: `.agent/commands/create-issues.md`, `.agent/rules/issue.md`
 - Estimation: `.agent/commands/estimation.md`, `.agent/rules/impl-gate.md`
-- Review: `.agent/commands/review.md`, `.agent/rules/dod.md`, `.agent/rules/docs-sync.md`
+- Review: `.agent/commands/final-review.md`, `.agent/rules/dod.md`, `.agent/rules/docs-sync.md`
 - Production Quality: `.agent/rules/security.md`, `.agent/rules/performance.md`, `.agent/rules/observability.md`, `.agent/rules/availability.md`
 
 ---
@@ -155,4 +173,5 @@ To keep this bootstrap file small, detailed rules live in these files:
 ## References
 
 - Glossary: `docs/glossary.md`
-- Decisions: `docs/decisions.md`
+- Decisions index: `docs/decisions.md`
+- Decisions body rules: `docs/decisions/README.md`

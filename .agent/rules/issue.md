@@ -12,6 +12,14 @@ Rules defining the appropriate size and structure of a single Issue.
 
 ---
 
+## Language (user-facing)
+
+Issue titles and bodies are user-facing artifacts and must remain in Japanese.
+Exception: Conventional Commit-style prefixes at the start of the title (e.g. `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`) may remain in English.
+Exception: machine-readable keys/tokens used for automation may remain in English (e.g. `- PRD:`, `- Epic:`, `Blocked by:`, label names like `parallel-ok` / `blocked` / `priority:P[0-4]`).
+
+---
+
 ## Priority (Triage)
 
 For bug fix / urgent response Issues, assign Priority:
@@ -139,7 +147,7 @@ Example:
 Required fields:
 
 1. Blocked by: dependent Issue number and reason
-2. 先に終わると何が可能になるか: one-line description of what becomes possible after completion
+2. `先に終わると何が可能になるか`: one-line description of what becomes possible after completion (Japanese field label; keep as-is)
 
 Example:
 

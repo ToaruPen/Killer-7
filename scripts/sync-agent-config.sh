@@ -225,8 +225,8 @@ sync_opencode() {
                 tdd)
                     cmd_description="Implement an issue via strict TDD (Red -> Green -> Refactor)"
                     ;;
-                review)
-                    cmd_description="Review with DoD and sync-docs"
+                final-review)
+                    cmd_description="Final review with DoD and sync-docs"
                     cmd_agent="sdd-reviewer"
                     ;;
                 review-cycle)
@@ -237,6 +237,9 @@ sync_opencode() {
                     ;;
                 create-pr)
                     cmd_description="Push branch and create a Pull Request via gh"
+                    ;;
+                codex-pr-review)
+                    cmd_description="Request a Codex bot PR review (@codex review) and iterate until resolved"
                     ;;
                 worktree)
                     cmd_description="Manage git worktrees for parallel Issues"
@@ -395,7 +398,7 @@ export const AgenticSddGatePlugin = async ({ $, worktree }) => {
   }
 
   const validate = async () => {
-    // Run from the worktree root to keep paths stable.
+    await $`cd ${worktree} && python3 scripts/validate-worktree.py`
     await $`cd ${worktree} && python3 scripts/validate-approval.py`
   }
 
@@ -403,7 +406,10 @@ export const AgenticSddGatePlugin = async ({ $, worktree }) => {
     "tool.execute.before": async (input, output) => {
       if (input.tool === "edit" || input.tool === "write") {
         const p = getPathFromArgs(output.args)
-        if (isAllowedPath(p)) return
+        if (isAllowedPath(p)) {
+          await $`cd ${worktree} && python3 scripts/validate-worktree.py`
+          return
+        }
         await validate()
         return
       }
@@ -440,7 +446,7 @@ confirm_sync() {
         esac
     done
     echo ""
-    read -r -p "続行しますか？ (y/N): " response
+    read -p "続行しますか？ (y/N): " response
     case "$response" in
         [yY][eE][sS]|[yY])
             return 0

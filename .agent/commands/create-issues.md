@@ -2,8 +2,9 @@
 
 Create Issues from an Epic.
 
-Issue titles/bodies are user-facing artifacts and should remain in Japanese.
-Exception: If you use a Conventional Commits style prefix (e.g. `feat(schema):`), keep the prefix as-is, but write the description part in Japanese.
+Issue titles and bodies are user-facing artifacts and must remain in Japanese.
+Exception: Conventional Commit-style prefixes at the start of the title (e.g. `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`) may remain in English.
+Exception: machine-readable keys/tokens used for automation may remain in English (e.g. `- PRD:`, `- Epic:`, `Blocked by:`, label names like `parallel-ok` / `blocked` / `priority:P[0-4]`).
 
 ## Usage
 
@@ -64,16 +65,13 @@ Always include:
 
 ### Phase 6: Create Issues
 
-Confirm the output destination with the user (do not recommend).
+GitHub Issues are the required output destination.
 
-1. If GitHub Issues are an option, preflight the environment:
+1. Preflight the environment:
    - Check git remotes: `git remote -v`
    - Check GitHub auth: `gh auth status`
-2. Present choices (no "recommended" label):
-   - Create GitHub Issues via `gh issue create`
-   - Output local markdown files under `issues/`
-3. Follow the user's selection.
-4. If the user does not choose, run `--dry-run` and stop.
+2. Create Issues via `gh issue create`.
+3. If the environment is not ready (no `gh`, not authenticated, wrong repo), stop and ask the user to fix it.
 
 ## Output format
 
@@ -83,19 +81,9 @@ GitHub Issues:
 gh issue create --title "[title]" --body "[body]" --label "[labels]"
 ```
 
-Local files:
-
-```
-issues/
-- 001-setup.md
-- 002-db-schema.md
-- 003-user-api.md
-```
-
 ## Options
 
 - `--dry-run`: preview only
-- `--local`: output local files instead of GitHub Issues
 - `--start [number]`: start from a specific Issue number
 
 ## Related

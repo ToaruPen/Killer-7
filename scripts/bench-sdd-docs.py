@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-
 COMMANDS = [
     "/sdd-init",
+    "/research",
     "/create-prd",
     "/create-epic",
     "/create-issues",
@@ -19,7 +19,7 @@ COMMANDS = [
     "/impl",
     "/tdd",
     "/review-cycle",
-    "/review",
+    "/final-review",
     "/sync-docs",
     "/create-pr",
     "/worktree",
@@ -167,7 +167,7 @@ def run_one(
 
     start = time.monotonic()
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603
             cmd,
             text=True,
             stdout=subprocess.PIPE,

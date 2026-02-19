@@ -62,7 +62,9 @@ Required environment:
                    For large PRD+Epic+diff combinations, consider setting SOT_MAX_CHARS.
 
   Common options:
-  EXEC_TIMEOUT_SEC Optional timeout (uses timeout/gtimeout if available)
+  EXEC_TIMEOUT_SEC Optional timeout in seconds (unset/empty => no timeout; uses timeout/gtimeout if available)
+  MAX_DIFF_BYTES   Optional hard limit for diff.patch bytes (0/empty disables; min 1 when enabled)
+  MAX_PROMPT_BYTES Optional hard limit for prompt.txt bytes (0/empty disables; min 1 when enabled)
   FORMAT_JSON      1 to pretty-format output JSON (default: 1)
 
 Notes:
@@ -201,6 +203,8 @@ claude_model="${claude_model_cli:-${CLAUDE_MODEL:-claude-opus-4-5-20250929}}"
 # Common options
 exec_timeout_sec="${EXEC_TIMEOUT_SEC:-}"
 format_json="${FORMAT_JSON:-1}"
+max_diff_bytes_raw="${MAX_DIFF_BYTES:-}"
+max_prompt_bytes_raw="${MAX_PROMPT_BYTES:-}"
 
 sot="${SOT:-}"
 tests_summary="${TESTS:-}"
@@ -268,6 +272,32 @@ out_issue_body="${run_dir}/issue.txt"
 diff_source=""
 diff_detail=""
 diff_base_sha=""
+tests_exit_code=""
+tests_fingerprint_input_sha256=""
+diff_bytes=0
+sot_bytes=0
+prompt_bytes=0
+engine_runtime_ms=0
+# Internal compatibility token for incremental cache reuse.
+# Bump when prompt composition or reuse eligibility semantics change.
+script_semantics_version="v2"
+
+review_cycle_incremental="${REVIEW_CYCLE_INCREMENTAL:-0}"
+if [[ "$review_cycle_incremental" != "0" && "$review_cycle_incremental" != "1" ]]; then
+  eprint "Invalid REVIEW_CYCLE_INCREMENTAL: $review_cycle_incremental (use 0|1)"
+  exit 2
+fi
+
+sha256_file() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as fh:
+    print(hashlib.sha256(fh.read()).hexdigest())
+PY
+}
 
 timeout_bin=""
 if [[ -n "$exec_timeout_sec" ]]; then
@@ -283,6 +313,34 @@ fi
 ensure_run_dir() {
   mkdir -p "$run_dir"
 }
+
+parse_optional_byte_limit() {
+  local name="$1"
+  local raw="$2"
+  local min_value="$3"
+  local parsed=0
+  if [[ -z "$raw" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
+    eprint "Invalid ${name}: ${raw} (expected integer; use 0 to disable)"
+    exit 2
+  fi
+  parsed=$((10#$raw))
+  if (( parsed == 0 )); then
+    printf '0\n'
+    return 0
+  fi
+  if (( parsed < min_value )); then
+    eprint "Invalid ${name}: ${raw} (minimum ${min_value} bytes when enabled; use 0 to disable)"
+    exit 2
+  fi
+  printf '%s\n' "$parsed"
+}
+
+max_diff_bytes="$(parse_optional_byte_limit "MAX_DIFF_BYTES" "$max_diff_bytes_raw" 1)"
+max_prompt_bytes="$(parse_optional_byte_limit "MAX_PROMPT_BYTES" "$max_prompt_bytes_raw" 1)"
 
 git_ref_exists() {
   local ref="$1"
@@ -349,6 +407,36 @@ fetch_remote_tracking_ref() {
 	    bash -lc "$test_command" >"$tmp_tests_stdout" 2>"$out_tests_stderr"
 	    exit_code=$?
 	    set -e
+	    tests_exit_code="$exit_code"
+
+	    tests_fingerprint_input_sha256="$(python3 - "$tmp_tests_stdout" "$out_tests_stderr" "$test_command" "$exit_code" "$test_stderr_policy" <<'PY'
+import hashlib
+import json
+import sys
+
+stdout_path = sys.argv[1]
+stderr_path = sys.argv[2]
+test_command = sys.argv[3]
+exit_code = sys.argv[4]
+stderr_policy = sys.argv[5]
+
+with open(stdout_path, "rb") as fh:
+    stdout_sha256 = hashlib.sha256(fh.read()).hexdigest()
+
+with open(stderr_path, "rb") as fh:
+    stderr_sha256 = hashlib.sha256(fh.read()).hexdigest()
+
+payload = {
+    "test_command": test_command,
+    "exit_code": exit_code,
+    "stderr_policy": stderr_policy,
+    "stdout_sha256": stdout_sha256,
+    "stderr_sha256": stderr_sha256,
+}
+encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+print(hashlib.sha256(encoded).hexdigest())
+PY
+)"
 
 	    if grep -qE '^[[:space:]]*stderr [|]' "$tmp_tests_stdout"; then
 	      reported_stderr=1
@@ -439,7 +527,16 @@ fetch_remote_tracking_ref() {
       printf 'Summary: %s\n' "$tests_summary"
       printf 'Recorded: %s\n' "$(date +"%Y-%m-%dT%H:%M:%S%z")"
     } > "$out_tests"
+    tests_exit_code=""
     tests_stderr_summary="not checked (no TEST_COMMAND)"
+    tests_fingerprint_input_sha256="$(python3 - "$tests_summary" <<'PY'
+import hashlib
+import sys
+
+summary = sys.argv[1]
+print(hashlib.sha256(summary.encode("utf-8")).hexdigest())
+PY
+)"
   fi
 }
 
@@ -616,6 +713,9 @@ print_plan() {
     eprint "- exec_timeout_sec: $exec_timeout_sec"
   fi
   eprint "- constraints: $constraints"
+  eprint "- max_diff_bytes: $max_diff_bytes"
+  eprint "- max_prompt_bytes: $max_prompt_bytes"
+  eprint "- review_cycle_incremental: $review_cycle_incremental"
   if [[ -n "$gh_issue" ]]; then
     eprint "- gh_issue: $gh_issue"
     if [[ -n "$gh_repo" ]]; then
@@ -710,6 +810,15 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
+diff_bytes="$(wc -c < "$out_diff" | tr -d ' ')"
+sot_bytes="$(wc -c < "$out_sot" | tr -d ' ')"
+
+if (( max_diff_bytes > 0 && diff_bytes > max_diff_bytes )); then
+  eprint "Diff bytes exceeded MAX_DIFF_BYTES: diff_bytes=$diff_bytes max=$max_diff_bytes"
+  eprint "Narrow the review input scope (DIFF_FILE/DIFF_MODE/include/exclude) and retry."
+  exit 2
+fi
+
 if [[ "$tests_stderr_violation" -eq 1 ]]; then
   eprint "TEST_STDERR_POLICY=fail: failing due to stderr output from test command."
   eprint "See: $out_tests_stderr"
@@ -722,37 +831,269 @@ if [[ ! -f "$schema_path" ]]; then
   exit 1
 fi
 
-# Validate engine selection and check binary availability
-case "$review_engine" in
-  codex)
-    if ! command -v "$codex_bin" >/dev/null 2>&1; then
-      eprint "codex not found: $codex_bin"
-      exit 1
-    fi
-    ;;
-  claude)
-    if ! command -v "$claude_bin" >/dev/null 2>&1; then
-      eprint "claude not found: $claude_bin"
-      exit 1
-    fi
-    ;;
-  *)
-    eprint "Invalid REVIEW_ENGINE: $review_engine (use codex|claude)"
-    exit 2
-    ;;
-esac
-
 if ! command -v python3 >/dev/null 2>&1; then
   eprint "python3 not found (required for validation)."
   exit 1
 fi
 
+head_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+if [[ -z "$head_sha" ]]; then
+  eprint "Failed to resolve current HEAD SHA for review metadata."
+  exit 1
+fi
+
+meta_base_ref=""
+meta_base_sha=""
+if [[ "$diff_source" == "range" && -n "$diff_detail" ]]; then
+  meta_base_ref="$diff_detail"
+  meta_base_sha="$diff_base_sha"
+  if [[ -z "$meta_base_sha" ]]; then
+    eprint "Failed to resolve pinned base SHA for review metadata: $meta_base_ref"
+    exit 1
+  fi
+fi
+
+diff_sha256="$(sha256_file "$out_diff")"
+sot_fingerprint="$(sha256_file "$out_sot")"
+tests_fingerprint="$(python3 - "$out_tests" "$tests_summary" "$tests_stderr_summary" "$test_stderr_policy" "$tests_exit_code" "$tests_fingerprint_input_sha256" <<'PY'
+import hashlib
+import json
+import sys
+
+_tests_path = sys.argv[1]
+tests_summary = sys.argv[2]
+tests_stderr_summary = sys.argv[3]
+tests_stderr_policy = sys.argv[4]
+tests_exit_code = sys.argv[5]
+tests_input_sha256 = sys.argv[6]
+
+payload = {
+    "tests_summary": tests_summary,
+    "tests_stderr_summary": tests_stderr_summary,
+    "tests_stderr_policy": tests_stderr_policy,
+    "tests_exit_code": tests_exit_code,
+    "tests_input_sha256": tests_input_sha256,
+}
+encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+print(hashlib.sha256(encoded).hexdigest())
+PY
+)"
+schema_sha256="$(sha256_file "$schema_path")"
+
 tmp_json="${out_json}.tmp.$$"
 tmp_prompt="${run_dir}/prompt.txt"
 
-# Build prompt
-{
-  cat <<'PROMPT'
+engine_version_output=""
+case "$review_engine" in
+  codex)
+    engine_version_output="$("$codex_bin" --version 2>/dev/null || true)"
+    ;;
+  claude)
+    engine_version_output="$("$claude_bin" --version 2>/dev/null || true)"
+    ;;
+esac
+engine_version_available=0
+if [[ -n "$engine_version_output" ]]; then
+  engine_version_available=1
+fi
+
+engine_fingerprint=""
+
+reuse_candidate_run=""
+reuse_candidate_meta=""
+reuse_candidate_json=""
+reuse_eligible=0
+reuse_reason="no-previous-run"
+reused=0
+reused_from_run=""
+
+if [[ -f "$current_run_file" ]]; then
+  candidate_run="$(cat "$current_run_file" 2>/dev/null || true)"
+  if [[ "$candidate_run" =~ ^[A-Za-z0-9._-]+$ && "$candidate_run" != "." && "$candidate_run" != ".." ]]; then
+    candidate_meta="$scope_root/$candidate_run/review-metadata.json"
+    candidate_json="$scope_root/$candidate_run/review.json"
+    if [[ -f "$candidate_meta" && -f "$candidate_json" ]]; then
+      reuse_candidate_run="$candidate_run"
+      reuse_candidate_meta="$candidate_meta"
+      reuse_candidate_json="$candidate_json"
+    else
+      reuse_reason="candidate-artifacts-missing"
+    fi
+  else
+    reuse_reason="candidate-run-invalid"
+  fi
+fi
+
+if [[ "$review_cycle_incremental" == "1" && -n "$reuse_candidate_meta" ]]; then
+  reuse_state_fast="$(python3 - "$reuse_candidate_meta" "$reuse_candidate_json" "$head_sha" "$meta_base_ref" "$meta_base_sha" "$diff_source" "$diff_sha256" "$sot_fingerprint" "$tests_fingerprint" "$engine_version_available" "$review_engine" "$model" "$effort" "$claude_model" "$schema_sha256" "$constraints" "$engine_version_output" "$script_semantics_version" "$max_prompt_bytes" <<'PY'
+import json
+import sys
+
+meta_path = sys.argv[1]
+review_path = sys.argv[2]
+curr_head = sys.argv[3]
+curr_base_ref = sys.argv[4]
+curr_base_sha = sys.argv[5]
+curr_diff_source = sys.argv[6]
+curr_diff_sha256 = sys.argv[7]
+curr_sot_fp = sys.argv[8]
+curr_tests_fp = sys.argv[9]
+curr_engine_version_available = sys.argv[10] == "1"
+curr_review_engine = sys.argv[11]
+curr_codex_model = sys.argv[12]
+curr_reasoning_effort = sys.argv[13]
+curr_claude_model = sys.argv[14]
+curr_schema_sha256 = sys.argv[15]
+curr_constraints = sys.argv[16]
+curr_engine_version_output = sys.argv[17]
+curr_script_semantics_version = sys.argv[18]
+curr_max_prompt_bytes = int(sys.argv[19])
+
+def out(eligible: bool, reason: str, engine_fingerprint: str = "", prompt_bytes=None) -> None:
+    print("eligible=1" if eligible else "eligible=0")
+    print(f"reason={reason}")
+    if engine_fingerprint:
+        print(f"engine_fingerprint={engine_fingerprint}")
+    if prompt_bytes is not None:
+        print(f"prompt_bytes={prompt_bytes}")
+
+try:
+    with open(meta_path, "r", encoding="utf-8") as fh:
+        meta = json.load(fh)
+except Exception:
+    out(False, "metadata-unreadable")
+    raise SystemExit(0)
+
+try:
+    with open(review_path, "r", encoding="utf-8") as fh:
+        review = json.load(fh)
+except Exception:
+    out(False, "review-unreadable")
+    raise SystemExit(0)
+
+required = [
+    "head_sha",
+    "base_ref",
+    "base_sha",
+    "diff_source",
+    "diff_sha256",
+    "sot_fingerprint",
+    "tests_fingerprint",
+    "engine_fingerprint",
+    "review_engine",
+    "codex_model",
+    "reasoning_effort",
+    "claude_model",
+    "schema_sha256",
+    "constraints",
+    "engine_version_output",
+    "script_semantics_version",
+]
+for key in required:
+    value = meta.get(key)
+    if not isinstance(value, str):
+        out(False, f"missing-{key}")
+        raise SystemExit(0)
+
+if meta.get("schema_version") != 1:
+    out(False, "schema-version-mismatch")
+    raise SystemExit(0)
+
+if not curr_engine_version_available:
+    out(False, "engine-version-unavailable")
+    raise SystemExit(0)
+
+if meta.get("engine_version_available") is not True:
+    out(False, "cached-engine-version-unavailable")
+    raise SystemExit(0)
+
+status = str(review.get("status") or "")
+if status not in {"Approved", "Approved with nits"}:
+    out(False, "status-not-reusable")
+    raise SystemExit(0)
+
+if meta.get("review_completed") is not True:
+    out(False, "review-not-completed")
+    raise SystemExit(0)
+
+tests_exit_code = meta.get("tests_exit_code")
+if tests_exit_code is not None and tests_exit_code != 0:
+    out(False, "tests-exit-nonzero")
+    raise SystemExit(0)
+
+meta_prompt_bytes = meta.get("prompt_bytes")
+if curr_max_prompt_bytes > 0:
+    if not isinstance(meta_prompt_bytes, int) or meta_prompt_bytes < 0:
+        out(False, "prompt-bytes-missing")
+        raise SystemExit(0)
+    if meta_prompt_bytes > curr_max_prompt_bytes:
+        out(False, "prompt-bytes-exceeded")
+        raise SystemExit(0)
+
+checks = [
+    ("head_sha", curr_head),
+    ("base_ref", curr_base_ref),
+    ("base_sha", curr_base_sha),
+    ("diff_source", curr_diff_source),
+    ("diff_sha256", curr_diff_sha256),
+    ("sot_fingerprint", curr_sot_fp),
+    ("tests_fingerprint", curr_tests_fp),
+    ("review_engine", curr_review_engine),
+    ("codex_model", curr_codex_model if curr_review_engine == "codex" else ""),
+    ("reasoning_effort", curr_reasoning_effort if curr_review_engine == "codex" else ""),
+    ("claude_model", curr_claude_model if curr_review_engine == "claude" else ""),
+    ("schema_sha256", curr_schema_sha256),
+    ("constraints", curr_constraints),
+    ("engine_version_output", curr_engine_version_output),
+    ("script_semantics_version", curr_script_semantics_version),
+]
+
+for key, expected in checks:
+    if str(meta.get(key)) != expected:
+        out(False, f"{key}-mismatch")
+        raise SystemExit(0)
+
+if not isinstance(meta_prompt_bytes, int) or meta_prompt_bytes < 0:
+    meta_prompt_bytes = 0
+
+out(True, "cache-hit-fast", str(meta.get("engine_fingerprint")), meta_prompt_bytes)
+PY
+)"
+  reuse_eligible=0
+  reuse_reason="unknown"
+  cached_engine_fingerprint=""
+  cached_prompt_bytes=0
+  while IFS= read -r line; do
+    case "$line" in
+      eligible=1) reuse_eligible=1 ;;
+      eligible=0) reuse_eligible=0 ;;
+      reason=*) reuse_reason="${line#reason=}" ;;
+      engine_fingerprint=*) cached_engine_fingerprint="${line#engine_fingerprint=}" ;;
+      prompt_bytes=*) cached_prompt_bytes="${line#prompt_bytes=}" ;;
+    esac
+  done <<< "$reuse_state_fast"
+
+  if [[ "$reuse_eligible" -eq 1 ]]; then
+    if python3 "$script_dir/validate-review-json.py" "$reuse_candidate_json" --scope-id "$scope_id" >/dev/null 2>&1; then
+      ensure_run_dir
+      if [[ "$reuse_candidate_json" != "$out_json" ]]; then
+        cp -p "$reuse_candidate_json" "$out_json"
+      fi
+      reused=1
+      reused_from_run="$reuse_candidate_run"
+      engine_fingerprint="$cached_engine_fingerprint"
+      prompt_bytes="$cached_prompt_bytes"
+    else
+      reuse_eligible=0
+      reuse_reason="candidate-review-invalid"
+    fi
+  fi
+fi
+
+if [[ "$reused" -eq 0 ]]; then
+  # Build prompt
+  {
+    cat <<'PROMPT'
 You are a code reviewer.
 
 Output JSON only. Your output MUST validate against the provided JSON schema.
@@ -794,44 +1135,104 @@ Output requirements:
 - questions must be an array (use [] when none)
 - No markdown fences, no extra prose.
 PROMPT
-  printf 'Schema-Version: 3\n'
-  printf 'Scope-ID: %s\n' "$scope_id"
-  printf 'SoT:\n'
-  cat "$out_sot"
-  printf '\n'
-  printf 'Tests: %s\n' "$tests_summary"
-  printf 'Tests-Stderr: %s\n' "$tests_stderr_summary"
-  printf 'Tests-Stderr-Policy: %s\n' "$test_stderr_policy"
-  printf 'Constraints: %s\n' "$constraints"
-  printf 'Diff:\n'
-  cat "$out_diff"
-} > "$tmp_prompt"
+    printf 'Schema-Version: 3\n'
+    printf 'Scope-ID: %s\n' "$scope_id"
+    printf 'SoT:\n'
+    cat "$out_sot"
+    printf '\n'
+    printf 'Tests: %s\n' "$tests_summary"
+    printf 'Tests-Stderr: %s\n' "$tests_stderr_summary"
+    printf 'Tests-Stderr-Policy: %s\n' "$test_stderr_policy"
+    printf 'Constraints: %s\n' "$constraints"
+    printf 'Diff:\n'
+    cat "$out_diff"
+  } > "$tmp_prompt"
 
-# Execute review engine
-case "$review_engine" in
-  codex)
-    cmd=(
-      "$codex_bin" exec
-      --sandbox read-only
-      -m "$model"
-      -c "reasoning.effort=\"${effort}\""
-      --output-last-message "$tmp_json"
-      --output-schema "$schema_path"
-      -
-    )
+  prompt_bytes="$(wc -c < "$tmp_prompt" | tr -d ' ')"
+  if (( max_prompt_bytes > 0 && prompt_bytes > max_prompt_bytes )); then
+    eprint "Prompt bytes exceeded MAX_PROMPT_BYTES: prompt_bytes=$prompt_bytes max=$max_prompt_bytes"
+    eprint "Reduce SoT/diff input size and retry."
+    exit 2
+  fi
 
-    if [[ -n "$exec_timeout_sec" && -n "$timeout_bin" ]]; then
-      cmd=("$timeout_bin" "$exec_timeout_sec" "${cmd[@]}")
-    fi
+  case "$review_engine" in
+    codex)
+      if ! command -v "$codex_bin" >/dev/null 2>&1; then
+        eprint "codex not found: $codex_bin"
+        exit 1
+      fi
+      ;;
+    claude)
+      if ! command -v "$claude_bin" >/dev/null 2>&1; then
+        eprint "claude not found: $claude_bin"
+        exit 1
+      fi
+      ;;
+    *)
+      eprint "Invalid REVIEW_ENGINE: $review_engine (use codex|claude)"
+      exit 2
+      ;;
+  esac
 
-    "${cmd[@]}" < "$tmp_prompt"
-    ;;
+  prompt_sha256="$(sha256_file "$tmp_prompt")"
+  engine_fingerprint="$(python3 - "$review_engine" "$model" "$effort" "$claude_model" "$schema_sha256" "$constraints" "$engine_version_output" "$prompt_sha256" "$script_semantics_version" <<'PY'
+import hashlib
+import json
+import sys
 
-  claude)
-    # Claude CLI --json-schema expects JSON string, not file path.
-    # Read the schema file content and remove $schema meta field if present
-    # (Claude CLI doesn't handle JSON Schema meta fields correctly).
-    schema_content="$(python3 -c "
+engine = sys.argv[1]
+codex_model = sys.argv[2]
+effort = sys.argv[3]
+claude_model = sys.argv[4]
+schema_sha256 = sys.argv[5]
+constraints = sys.argv[6]
+engine_version_output = sys.argv[7]
+prompt_sha256 = sys.argv[8]
+script_semantics_version = sys.argv[9]
+material = {
+    "review_engine": engine,
+    "codex_model": codex_model if engine == "codex" else "",
+    "reasoning_effort": effort if engine == "codex" else "",
+    "claude_model": claude_model if engine == "claude" else "",
+    "schema_sha256": schema_sha256,
+    "constraints": constraints,
+    "engine_version_output": engine_version_output,
+    "prompt_sha256": prompt_sha256,
+    "script_semantics_version": script_semantics_version,
+}
+encoded = json.dumps(material, ensure_ascii=False, sort_keys=True).encode("utf-8")
+print(hashlib.sha256(encoded).hexdigest())
+PY
+)"
+fi
+
+if [[ "$reused" -eq 0 ]]; then
+  engine_start_ms="$(python3 - <<'PY'
+import time
+print(time.time_ns() // 1_000_000)
+PY
+)"
+
+  case "$review_engine" in
+    codex)
+      cmd=(
+        "$codex_bin" exec
+        --sandbox read-only
+        -m "$model"
+        -c "reasoning.effort=\"${effort}\""
+        --output-last-message "$tmp_json"
+        --output-schema "$schema_path"
+        -
+      )
+
+      if [[ -n "$exec_timeout_sec" && -n "$timeout_bin" ]]; then
+        cmd=("$timeout_bin" "$exec_timeout_sec" "${cmd[@]}")
+      fi
+
+      "${cmd[@]}" < "$tmp_prompt"
+      ;;
+    claude)
+      schema_content="$(python3 -c "
 import json
 import sys
 with open('$schema_path', 'r', encoding='utf-8') as f:
@@ -840,28 +1241,22 @@ schema.pop('\$schema', None)
 print(json.dumps(schema, ensure_ascii=False))
 ")"
 
-    cmd=(
-      "$claude_bin" -p
-      --model "$claude_model"
-      --json-schema "$schema_content"
-      --output-format json
-      --betas interleaved-thinking
-    )
+      cmd=(
+        "$claude_bin" -p
+        --model "$claude_model"
+        --json-schema "$schema_content"
+        --output-format json
+        --betas interleaved-thinking
+      )
 
-    if [[ -n "$exec_timeout_sec" && -n "$timeout_bin" ]]; then
-      cmd=("$timeout_bin" "$exec_timeout_sec" "${cmd[@]}")
-    fi
+      if [[ -n "$exec_timeout_sec" && -n "$timeout_bin" ]]; then
+        cmd=("$timeout_bin" "$exec_timeout_sec" "${cmd[@]}")
+      fi
 
-    # Claude CLI outputs wrapped JSON with structured_output field.
-    # Extract the structured_output and check for errors.
-    tmp_claude_out="${tmp_json}.claude.$$"
-    "${cmd[@]}" < "$tmp_prompt" > "$tmp_claude_out"
+      tmp_claude_out="${tmp_json}.claude.$$"
+      "${cmd[@]}" < "$tmp_prompt" > "$tmp_claude_out"
 
-    # Extract structured_output from Claude's wrapped response.
-    # Claude CLI with --output-format json wraps the schema output in:
-    # {"type":"result", "structured_output": {...}, ...}
-    # If structured_output is missing, assume the output is already unwrapped.
-    python3 -c "
+      python3 -c "
 import json
 import sys
 
@@ -876,11 +1271,9 @@ if not isinstance(data, dict):
     print('Claude output is not a JSON object', file=sys.stderr)
     sys.exit(1)
 
-# Check for Claude CLI wrapper format (has 'type' and 'subtype' fields)
 is_wrapped = 'type' in data and data.get('type') == 'result'
 
 if is_wrapped:
-    # Check for errors
     subtype = data.get('subtype', '')
     if subtype and subtype != 'success':
         errors = data.get('errors', [])
@@ -890,7 +1283,6 @@ if is_wrapped:
                 print(f'  {err}', file=sys.stderr)
         sys.exit(1)
 
-    # Extract structured_output
     structured = data.get('structured_output')
     if structured is None:
         print('Claude output missing structured_output field', file=sys.stderr)
@@ -899,29 +1291,38 @@ if is_wrapped:
         sys.exit(1)
     output = structured
 else:
-    # Not wrapped - use as-is (e.g., test stub output)
     output = data
 
-# Write extracted JSON
 with open('$tmp_json', 'w', encoding='utf-8') as f:
     json.dump(output, f, ensure_ascii=False)
 "
-    extract_exit=$?
-    rm -f "$tmp_claude_out"
+      extract_exit=$?
+      rm -f "$tmp_claude_out"
 
-    if [[ $extract_exit -ne 0 ]]; then
-      eprint "Failed to extract structured_output from Claude response"
-      exit 1
-    fi
-    ;;
-esac
+      if [[ $extract_exit -ne 0 ]]; then
+        eprint "Failed to extract structured_output from Claude response"
+        exit 1
+      fi
+      ;;
+  esac
 
-if [[ ! -f "$tmp_json" || ! -s "$tmp_json" ]]; then
-  eprint "$review_engine did not produce output: $tmp_json"
-  exit 1
+  engine_end_ms="$(python3 - <<'PY'
+import time
+print(time.time_ns() // 1_000_000)
+PY
+)"
+  engine_runtime_ms="$((engine_end_ms - engine_start_ms))"
+  if [[ "$engine_runtime_ms" -lt 0 ]]; then
+    engine_runtime_ms=0
+  fi
+
+  if [[ ! -f "$tmp_json" || ! -s "$tmp_json" ]]; then
+    eprint "$review_engine did not produce output: $tmp_json"
+    exit 1
+  fi
+
+  mv "$tmp_json" "$out_json"
 fi
-
-mv "$tmp_json" "$out_json"
 
 validate_args=("$out_json" --scope-id "$scope_id")
 if [[ "$format_json" != "0" ]]; then
@@ -929,26 +1330,17 @@ if [[ "$format_json" != "0" ]]; then
 fi
 python3 "$script_dir/validate-review-json.py" "${validate_args[@]}"
 
-head_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
-if [[ -z "$head_sha" ]]; then
-  eprint "Failed to resolve current HEAD SHA for review metadata."
-  exit 1
-fi
-
-meta_base_ref=""
-meta_base_sha=""
-if [[ "$diff_source" == "range" && -n "$diff_detail" ]]; then
-  meta_base_ref="$diff_detail"
-  meta_base_sha="$diff_base_sha"
-  if [[ -z "$meta_base_sha" ]]; then
-    eprint "Failed to resolve pinned base SHA for review metadata: $meta_base_ref"
-    exit 1
+non_reuse_reason=""
+if [[ "$reused" -eq 0 ]]; then
+  if [[ "$review_cycle_incremental" != "1" ]]; then
+    non_reuse_reason="incremental-disabled"
+  else
+    non_reuse_reason="$reuse_reason"
   fi
 fi
 
-python3 - "$out_meta" "$scope_id" "$run_id" "$diff_source" "$meta_base_ref" "$meta_base_sha" "$head_sha" "$out_diff" <<'PY'
+python3 - "$out_meta" "$scope_id" "$run_id" "$diff_source" "$meta_base_ref" "$meta_base_sha" "$head_sha" "$diff_sha256" "$sot_fingerprint" "$tests_fingerprint" "$engine_fingerprint" "$engine_version_available" "$review_cycle_incremental" "$reuse_eligible" "$reused" "$reuse_reason" "$non_reuse_reason" "$reused_from_run" "$tests_exit_code" "$prompt_bytes" "$sot_bytes" "$diff_bytes" "$engine_runtime_ms" "$review_engine" "$model" "$effort" "$claude_model" "$schema_sha256" "$constraints" "$engine_version_output" "$script_semantics_version" <<'PY'
 import datetime
-import hashlib
 import json
 import os
 import sys
@@ -960,10 +1352,43 @@ diff_source = sys.argv[4]
 base_ref = sys.argv[5]
 base_sha = sys.argv[6]
 head_sha = sys.argv[7]
-diff_path = sys.argv[8]
+diff_sha256 = sys.argv[8]
+sot_fingerprint = sys.argv[9]
+tests_fingerprint = sys.argv[10]
+engine_fingerprint = sys.argv[11]
+engine_version_available = sys.argv[12] == "1"
+incremental_enabled = sys.argv[13] == "1"
+reuse_eligible = sys.argv[14] == "1"
+reused = sys.argv[15] == "1"
+reuse_reason = sys.argv[16]
+non_reuse_reason = sys.argv[17]
+reused_from_run = sys.argv[18]
+tests_exit_code_raw = sys.argv[19]
+prompt_bytes_raw = sys.argv[20]
+sot_bytes_raw = sys.argv[21]
+diff_bytes_raw = sys.argv[22]
+engine_runtime_ms_raw = sys.argv[23]
+review_engine = sys.argv[24]
+model = sys.argv[25]
+reasoning_effort = sys.argv[26]
+claude_model = sys.argv[27]
+schema_sha256 = sys.argv[28]
+constraints = sys.argv[29]
+engine_version_output = sys.argv[30]
+script_semantics_version = sys.argv[31]
 
-with open(diff_path, "rb") as fh:
-    diff_sha256 = hashlib.sha256(fh.read()).hexdigest()
+tests_exit_code = None
+if tests_exit_code_raw:
+    try:
+        tests_exit_code = int(tests_exit_code_raw)
+    except ValueError:
+        tests_exit_code = None
+
+def parse_int(raw: str, default: int = 0) -> int:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
 
 payload = {
     "schema_version": 1,
@@ -975,6 +1400,30 @@ payload = {
     "base_sha": base_sha,
     "head_sha": head_sha,
     "diff_sha256": diff_sha256,
+    "sot_fingerprint": sot_fingerprint,
+    "tests_fingerprint": tests_fingerprint,
+    "engine_fingerprint": engine_fingerprint,
+    "review_engine": review_engine,
+    "codex_model": model if review_engine == "codex" else "",
+    "reasoning_effort": reasoning_effort if review_engine == "codex" else "",
+    "claude_model": claude_model if review_engine == "claude" else "",
+    "schema_sha256": schema_sha256,
+    "constraints": constraints,
+    "engine_version_output": engine_version_output,
+    "script_semantics_version": script_semantics_version,
+    "engine_version_available": engine_version_available,
+    "incremental_enabled": incremental_enabled,
+    "reuse_eligible": reuse_eligible,
+    "reused": reused,
+    "reuse_reason": reuse_reason,
+    "non_reuse_reason": non_reuse_reason,
+    "reused_from_run": reused_from_run,
+    "review_completed": True,
+    "tests_exit_code": tests_exit_code,
+    "prompt_bytes": parse_int(prompt_bytes_raw),
+    "sot_bytes": parse_int(sot_bytes_raw),
+    "diff_bytes": parse_int(diff_bytes_raw),
+    "engine_runtime_ms": parse_int(engine_runtime_ms_raw),
 }
 
 os.makedirs(os.path.dirname(out_meta), exist_ok=True)

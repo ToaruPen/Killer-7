@@ -13,11 +13,55 @@ User-facing output and artifacts remain in Japanese.
 
 ## Flow
 
+### Phase 0: Worktree/branch precondition (required)
+
+Before writing an estimate, you MUST work on a per-Issue branch created via `/worktree`.
+
+Rationale:
+
+- Branch/worktree state is part of the deterministic SoT for in-progress work.
+- It prevents estimating against an ambiguous or wrong branch.
+
+Steps:
+
+1. List linked branches (SoT): `gh issue develop --list <issue-number>`
+2. If no linked branch exists, STOP and create one via:
+
+```
+/worktree new --issue <issue-number> --desc "<ascii short desc>"
+```
+
+Then re-run `/estimation` inside that worktree.
+
+3. If linked branches exist but you are not on the linked branch/worktree, STOP and switch into it.
+
 ### Phase 1: Read the Issue
 
 1. Read the specified Issue
 2. Identify the related Epic and PRD
 3. Extract AC
+
+### Phase 1.5: Run `/research estimation` (conditional)
+
+If uncertainty/novelty is high, you must run `/research estimation` and stop until the research artifact exists.
+
+Run:
+
+```
+/research estimation [issue-number]
+```
+
+High-novelty triggers (any):
+
+- Fewer than 2 direct precedents exist
+- PRD/Epic/Issue still has `Unknown` / ambiguous assumptions
+- Any of PRD Q6-5..8 is `Yes` (PII / audit / performance / availability)
+
+Requirements:
+
+- Save the research output under `docs/research/estimation/issue-<n>/<YYYY-MM-DD>.md`
+- Use the template: `docs/research/estimation/_template.md`
+- The output must be in Japanese
 
 ### Phase 2: Create the Full estimate (required)
 
@@ -32,6 +76,7 @@ Write all 11 sections. If a section is not applicable, write `N/A (reason)`.
 - Epic: [Epicファイル]
 - PRD: [PRDファイル]
 - 技術方針: [シンプル優先/バランス/拡張性優先]
+- 設定値/定数の方針: [設定化する値 / 固定する値 / 上限・下限 / 変更手段]
 
 ### 1. 依頼内容の解釈
 

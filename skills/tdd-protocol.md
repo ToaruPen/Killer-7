@@ -128,6 +128,7 @@ Mitigations:
   - e.g. inject `now()`, `uuid()`, `nextIndex()`, `httpClient`
 - In tests, pass fixed values or fakes
 - Keep I-O/framework details thin; keep core logic testable (Humble Object)
+- If using PBT (generative tests), fix randomness (seed) and keep counterexamples as concrete regression tests
 
 ### 4) Legacy tactics (Extract vs Sprout)
 
@@ -179,7 +180,7 @@ Before submit:
 - [ ] Tests are not overly coupled to implementation details
 - [ ] Non-determinism is injected/fixed
 - [ ] Run `/review-cycle` after implementation (same as `/impl`), fix findings until it passes
-- [ ] Then run `/review` as the final DoD + `/sync-docs` gate
+- [ ] Then run `/final-review` as the final DoD + `/sync-docs` gate
 
 ---
 
