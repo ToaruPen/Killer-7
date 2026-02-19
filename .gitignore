@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agentic-SDD local files
+.agent/agents/*.local.md
+.claude/settings.local.json
+
+# Local review-cycle outputs
+.agentic-sdd/
+
+# Tool-specific generated directories (from sync-agent-config.sh)
+.codex/
+.opencode/
+
+# Local-only PRD/Epic (sync-docs helper)
+docs/prd/*.local.md
+docs/epics/*.local-epic.md
+
+# Python
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.venv/

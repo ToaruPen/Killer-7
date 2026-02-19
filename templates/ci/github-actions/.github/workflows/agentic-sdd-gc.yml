@@ -1,0 +1,36 @@
+name: agentic-sdd-gc
+
+# GC / doc-gardening starter template.
+#
+# What this workflow does:
+# - Runs repo-local checks (currently: docs/SoT lint) on a schedule.
+# - Leaves evidence in the GitHub Actions logs.
+#
+# What this workflow intentionally does NOT do:
+# - It does not open Issues/PRs or push commits.
+#
+# Recovery / collection (choose one for your repo):
+# - Create a small PR that fixes the findings (recommended), or
+# - Create an Issue that tracks the findings and assigns an owner.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docs / SoT lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ./scripts/lint-sot.py
+          python3 ./scripts/lint-sot.py docs
