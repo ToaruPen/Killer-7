@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
+- Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
 
 ## [0.1.1] - 2026-02-11
 
