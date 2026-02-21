@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mypy
+          mypy scripts
 
       - name: Shellcheck
         shell: bash

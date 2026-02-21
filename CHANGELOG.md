@@ -13,6 +13,7 @@ All notable changes to this project are documented in this file.
 - Improved `killer-7 review --help` examples and validation around aspect selection.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.
 - Extended PR input metadata (`meta.json`) with `diff_mode` and `base_head_sha`.
+- Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
 
 ## [0.1.1] - 2026-02-11
 

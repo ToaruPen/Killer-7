@@ -81,6 +81,10 @@ When using `git worktree` to implement multiple Issues in parallel:
 - If multiple related Issues overlap heavily, create a single "parent" Issue as the implementation unit and keep the related Issues as tracking-only children (no branches/worktrees for children).
 - Do not edit PRD/Epic across parallel branches; serialize SoT changes
 - Apply `parallel-ok` only when declared change-target file sets are disjoint (validate via `./scripts/worktree.sh check`)
+- Before high-impact operations (`/review-cycle`, `/create-pr`, `/pr-bots-review`, manual conflict resolution), run a Scope Lock check and stop on mismatch:
+  - `git branch --show-current`
+  - `gh issue develop --list <issue-number>` (Issue-scoped work)
+  - `gh pr view <pr-number-or-url> --json headRefName --jq '.headRefName'` (PR-scoped work)
 
 ---
 
@@ -149,7 +153,7 @@ A workflow template to help non-engineers run AI-driven development while preven
 - `/review-cycle`: local review loop (codex exec -> review.json)
 - `/final-review`: review (DoD check)
 - `/create-pr`: push branch and create a PR (gh)
-- `/codex-pr-review`: request a Codex bot review on a PR and iterate until feedback is resolved
+- `/pr-bots-review`: request a PR review-bot check on a PR and iterate until feedback is resolved
 - `/sync-docs`: consistency check between PRD/Epic/code
 - `/worktree`: manage git worktrees for parallel Issues
 - `/cleanup`: clean up worktree and local branch after merge

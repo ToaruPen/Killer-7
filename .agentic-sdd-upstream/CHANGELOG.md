@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-02-21
+
+- docs(scope-lock): Add explicit branch/issue context preflight checks in `.agent/commands/impl.md` (Phase 1 work-status), `.agent/commands/tdd.md` (Phase 0 gate), `.agent/commands/review-cycle.md` (Phase 0 Scope Lock), and `.agent/commands/worktree.md` (existing-issue continuation), plus high-impact guardrail updates in `AGENTS.md` (Parallel work) and `README.md` (Guardrails).
+- docs(sync): Align docs with current behavior by clarifying CI env vars (3 required + optional `AGENTIC_SDD_CI_DOCS_CMD`), updating subtree examples to `v0.3.10`, clarifying `DESIGN.md` as historical context, and fixing command docs for dynamic-check/autofix script references.
+- docs(readme): Sync Directory Structure with current tree by adding `docs/memo`, `docs/releasing.md`, `scripts/codex-review-event.sh`, `scripts/tests/test-codex-review-event.sh`, `scripts/tests/test-watch-codex-review.sh`, and `templates/ci/github-actions`.
+- chore(release): Bump `scripts/agentic-sdd` `DEFAULT_REF_FALLBACK` to `v0.3.10`.
+
+## [0.3.09] - 2026-02-21
+
+- feat(autofix): Extend the GitHub Actions workflow `templates/ci/github-actions/.github/workflows/agentic-sdd-pr-autofix.yml` to trigger on `issue_comment`, `pull_request_review`, and `pull_request_review_comment`.
+- feat(autofix): Update `templates/ci/github-actions/scripts/agentic-sdd-pr-autofix.sh` to normalize multi-event payloads, pass `AGENTIC_SDD_AUTOFIX_EVENT_TYPE`, suppress duplicate source events, and include target SHA/run URL/source event in failure output.
+- feat(autofix): After successful autofix push, automatically post `@codex review` with current head SHA.
+- docs(autofix): Update `README.md` and `.agent/commands/codex-pr-review.md` to document event-driven autofix loop behavior.
+- feat(codex-review): Add event-driven Codex/Coderabbit monitoring workflow at `.github/workflows/codex-review-events.yml` for `issue_comment`, `pull_request_review`, and `pull_request_review_comment` triggers.
+- feat(codex-review): Add `scripts/codex-review-event.sh` to normalize event payloads, filter allowlisted bot actors, emit consistent PR/type/snippet logs, and fail fast on auth/permission errors.
+- docs(codex-review): Update `README.md` and `.agent/commands/codex-pr-review.md` to recommend event-driven monitoring and keep `scripts/watch-codex-review.sh` as fallback.
+- test(codex-review): Add `scripts/tests/test-codex-review-event.sh` coverage for allowlisted processing, non-target no-op behavior, and auth fail-fast path.
+- feat(pr-bots-review): Rename `/codex-pr-review` to `/pr-bots-review` and align command docs/config sync references across agent commands and README guidance.
+- fix(autofix): Make re-review mention configurable via `AGENTIC_SDD_PR_REVIEW_MENTION` and cover non-target review events in script tests.
+- break(review-loop): Require `CODEX_BOT_LOGINS` and `AGENTIC_SDD_AUTOFIX_BOT_LOGINS` to be explicitly configured; missing values now fail fast with actionable error messages.
+
+## [0.3.08] - 2026-02-21
+
+- fix(review-cycle): Switch `REVIEW_CYCLE_INCREMENTAL` default to `1` so reuse is enabled by default in normal review loops.
+- docs(review): Update `/review-cycle` and `README.md` guidance to use incremental-by-default with explicit full-run (`REVIEW_CYCLE_INCREMENTAL=0`) before `/final-review`.
+- fix(lint-sot): Update evidence URL section parsing to treat `仮説:` / `反証:` / `採否理由:` as candidate section boundaries.
+- test(lint-sot): Add regression coverage to ensure URLs outside `根拠リンク:` are not accepted as evidence.
+- test(review-cycle): Update default-mode expectation from `incremental-disabled` to `no-previous-run`.
+
+## [0.3.07] - 2026-02-21
+
+- fix(lint-sot): Enforce `仮説:` / `反証:` / `採否理由:` as required candidate fields in `lint_research_contract` to align lint behavior with the `/research` contract.
+- test(lint-sot): Add regression coverage that fails when candidate blocks omit `仮説` / `反証` / `採否理由`.
+- docs(research): Backfill existing estimation research artifacts under `docs/research/estimation/issue-*` with `仮説` / `反証` / `採否理由` so repository docs remain lint-clean under the updated contract.
+
+## [0.3.06] - 2026-02-21
+
+- fix(lint-sot): Parse external-service comparison table headers by column cells instead of raw substring matching, so malformed single-cell headers no longer pass required-column checks.
+- fix(lint-sot): Count comparison data rows only when column counts match the parsed header shape.
+- test(lint-sot): Add regression coverage for malformed single-cell comparison table headers.
+
+## [0.3.05] - 2026-02-20
+
+- fix(lint-sot): Count `適用可否:` lines with empty values when enforcing the single-entry rule, preventing bypass with empty+valid duplicate lines in one candidate block.
+- test(lint-sot): Add regression coverage for the empty+valid duplicate `適用可否:` bypass pattern.
+
+## [0.3.04] - 2026-02-20
+
+- fix(lint-sot): Reject candidate blocks that contain multiple `適用可否:` lines, preventing enum-check bypass via mixed valid/invalid duplicated entries.
+- fix(lint-sot): Keep Markdown table separator parsing tolerant of rows without a trailing `|` in external-service comparison tables.
+- test(lint-sot): Add regression coverage for duplicate `適用可否:` lines in a single candidate block.
+
+## [0.3.03] - 2026-02-20
+
+- docs(research): Refine `/research` guidance with explicit exploration-quality prompts (`仮説` / `反証` / `採否理由`) and required exploration-log expectations.
+- docs(flow): Add required research quality spot-check phases to `/create-prd`, `/create-epic`, and `/estimation` so downstream generation stops when research artifacts are structurally incomplete.
+- docs(template): Update `docs/research/*/_template.md` candidate format with hypothesis/falsification/decision-rationale fields and add mandatory exploration-log sections.
+- fix(lint-sot): Validate research candidate `適用可否` values against `Yes / Partial / No` for non-template artifacts.
+- test(lint-sot): Add regression coverage for invalid `適用可否` enum values in `scripts/tests/test-lint-sot.sh`.
+
+## [0.3.02] - 2026-02-20
+
+- feat: Add Epic research external-service comparison gate to `scripts/lint-sot.py` with required structure (`Required` or `Skip(reason)`), concrete service entries, alternative-family coverage, weighted criteria, quantitative table columns, and decision rationale checks.
+- test: Extend `scripts/tests/test-lint-sot.sh` with positive/negative cases for Epic comparison gate behavior (valid required block, missing section, skip-with-reason, required+skip conflict, empty decision rationale).
+- docs: Update Epic research command/template requirements in `.agent/commands/research.md`, `.agent/commands/create-epic.md`, and `docs/research/epic/_template.md` to codify comparison depth expectations.
+- docs: Clarify review loop policy in `.agent/commands/review-cycle.md`, `.agent/commands/final-review.md`, and `README.md` (first full baseline, same `scope-id` incremental reruns, fresh full context before `/final-review`, rerun `/review-cycle` when `/final-review` reports `P2+`).
+
 ## [0.3.01] - 2026-02-20
 
 - fix: Make `/review-cycle` parse `SOT_FILES` without `readarray` so it works on macOS default Bash 3.2 (`/bin/bash`).
