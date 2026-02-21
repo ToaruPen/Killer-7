@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 from .artifacts import (
-    atomic_write_text_secure,
     atomic_write_json_secure,
+    atomic_write_text_secure,
+    write_allowlist_paths_json,
     write_aspect_evidence_json,
     write_aspect_policy_json,
-    write_allowlist_paths_json,
     write_aspects_evidence_index_json,
     write_aspects_policy_index_json,
     write_content_warnings_json,
@@ -33,30 +33,30 @@ from .artifacts import (
     write_tool_trace_jsonl,
     write_warnings_txt,
 )
+from .aspect_id import normalize_aspect
+from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
+from .bundle.context_bundle import build_context_bundle
+from .bundle.diff_parse import parse_diff_patch
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.gh import GhClient
 from .github.post_inline import post_inline_comments, raise_if_inline_blocked
-from .github.pr_input import fetch_pr_input
 from .github.post_summary import post_summary_comment
-from .bundle.context_bundle import build_context_bundle
-from .bundle.diff_parse import parse_diff_patch
-from .sot.allowlist import default_sot_allowlist
-from .sot.collect import build_sot_markdown
-from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
-from .aspect_id import normalize_aspect
+from .github.pr_input import fetch_pr_input
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
 from .llm.opencode_runner import opencode_artifacts_dir
+from .report.format_md import format_review_summary_md
+from .report.merge import merge_review_summary
+from .sot.allowlist import default_sot_allowlist
+from .sot.collect import build_sot_markdown
 from .validate.evidence import (
-    apply_evidence_policy_to_findings,
     EVIDENCE_POLICY_V1,
+    apply_evidence_policy_to_findings,
     parse_context_bundle_index,
     recompute_review_status,
 )
 from .validate.review_json import validate_review_summary_json
-from .report.merge import merge_review_summary
-from .report.format_md import format_review_summary_md
 
 
 def _strip_machine_fields_from_findings(
@@ -396,22 +396,13 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = ensure_artifacts_dir(os.getcwd())
 
     state_payload = _load_state_json(out_dir)
-    prev_repo = state_payload.get("repo") if isinstance(state_payload, dict) else None
-    prev_pr = state_payload.get("pr") if isinstance(state_payload, dict) else None
-    has_prev_incremental_base = (
-        isinstance(state_payload, dict)
-        and "incremental_base_head_sha" in state_payload
-    )
-    prev_head = state_payload.get("head_sha") if isinstance(state_payload, dict) else None
-    prev_incremental_base_head = (
-        state_payload.get("incremental_base_head_sha")
-        if isinstance(state_payload, dict)
-        else None
-    )
-    prev_selected_aspects = state_payload.get("selected_aspects") if isinstance(state_payload, dict) else None
-    prev_no_sot_aspects = (
-        state_payload.get("no_sot_aspects") if isinstance(state_payload, dict) else None
-    )
+    prev_repo = state_payload.get("repo")
+    prev_pr = state_payload.get("pr")
+    has_prev_incremental_base = "incremental_base_head_sha" in state_payload
+    prev_head = state_payload.get("head_sha")
+    prev_incremental_base_head = state_payload.get("incremental_base_head_sha")
+    prev_selected_aspects = state_payload.get("selected_aspects")
+    prev_no_sot_aspects = state_payload.get("no_sot_aspects")
     prev_no_sot_aspects_list: list[object] | None
     if prev_no_sot_aspects is None:
         prev_no_sot_aspects_list = []
@@ -1488,24 +1479,23 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 clear_stale_review_summary(out_dir)
             raise
 
+    next_incremental_base = pr_input.head_sha
+    if deferred_exc is not None:
+        if (
+            isinstance(prev_head_for_incremental, str)
+            and prev_repo == args.repo
+            and prev_pr == args.pr
+        ):
+            next_incremental_base = prev_head_for_incremental.strip()
+        else:
+            next_incremental_base = ""
+
     state_json_path = _write_state_json(
         out_dir,
         repo=args.repo,
         pr=args.pr,
         head_sha=pr_input.head_sha,
-        incremental_base_head_sha=(
-            pr_input.head_sha
-            if deferred_exc is None
-            else (
-                prev_head_for_incremental.strip()
-                if (
-                    isinstance(prev_head_for_incremental, str)
-                    and prev_repo == args.repo
-                    and prev_pr == args.pr
-                )
-                else ""
-            )
-        ),
+        incremental_base_head_sha=next_incremental_base,
         selected_aspects=selected_aspects,
         no_sot_aspects=tuple(sorted(no_sot_aspects)),
     )

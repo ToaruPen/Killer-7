@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -189,15 +189,12 @@ class TestPrInputArtifacts(unittest.TestCase):
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
 
-            os.environ["KILLER7_GH_BIN"] = str(fake_gh)
-            try:
+            with patch.dict(os.environ, {"KILLER7_GH_BIN": str(fake_gh)}):
                 pr_input = fetch_pr_input(
                     repo="owner/name",
                     pr=123,
                     base_head_sha="aaaaaaaaaaaaaaaa",
                 )
-            finally:
-                os.environ.pop("KILLER7_GH_BIN", None)
 
             self.assertEqual(pr_input.diff_mode, "incremental")
             self.assertEqual(pr_input.base_head_sha, "aaaaaaaaaaaaaaaa")
@@ -210,15 +207,12 @@ class TestPrInputArtifacts(unittest.TestCase):
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
 
-            os.environ["KILLER7_GH_BIN"] = str(fake_gh)
-            try:
+            with patch.dict(os.environ, {"KILLER7_GH_BIN": str(fake_gh)}):
                 pr_input = fetch_pr_input(
                     repo="owner/name",
                     pr=123,
                     base_head_sha="0123456789abcdef",
                 )
-            finally:
-                os.environ.pop("KILLER7_GH_BIN", None)
 
             self.assertEqual(pr_input.diff_mode, "full")
             self.assertEqual(pr_input.base_head_sha, "")

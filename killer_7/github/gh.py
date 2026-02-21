@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from ..errors import BlockedError, ExecFailureError
 
