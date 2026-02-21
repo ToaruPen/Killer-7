@@ -4,7 +4,6 @@ import re
 
 from .errors import ExecFailureError
 
-
 _ASPECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 

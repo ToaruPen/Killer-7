@@ -9,7 +9,6 @@ from .diff_map import build_right_line_to_position_map
 from .gh import GhClient
 from .inline_select import InlineCandidate, select_inline_candidates
 
-
 INLINE_MARKER_PREFIX = "<!-- killer-7:inline:v1 fp="
 INLINE_MARKER_SUFFIX = " -->"
 INLINE_LIMIT = 150

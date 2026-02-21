@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-
 _GITHUB_COMMENT_MAX_CHARS = 65536
 _COMMENT_SIZE_MARGIN_CHARS = 1024
 _PR_SUMMARY_COMMENT_MAX_CHARS = _GITHUB_COMMENT_MAX_CHARS - _COMMENT_SIZE_MARGIN_CHARS

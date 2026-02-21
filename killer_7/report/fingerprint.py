@@ -6,7 +6,6 @@ import re
 from collections.abc import Mapping
 from typing import cast
 
-
 _SPACE_RE = re.compile(r"\s+")
 
 

@@ -387,7 +387,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             seen.add(a)
         selected_aspects = tuple(raw_aspects)
 
-    requested_no_sot = tuple(args.no_sot_aspect or []) if hasattr(args, "no_sot_aspect") else ()
+    requested_no_sot = (
+        tuple(args.no_sot_aspect or []) if hasattr(args, "no_sot_aspect") else ()
+    )
     no_sot_aspects = set(DEFAULT_NO_SOT_ASPECTS)
     no_sot_aspects.update(requested_no_sot)
     no_sot_aspects.intersection_update(set(selected_aspects))
@@ -417,7 +419,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     incremental_base_head_sha = ""
 
     prev_head_for_incremental: str | None
-    if isinstance(prev_incremental_base_head, str) and prev_incremental_base_head.strip():
+    if (
+        isinstance(prev_incremental_base_head, str)
+        and prev_incremental_base_head.strip()
+    ):
         prev_head_for_incremental = prev_incremental_base_head
     elif has_prev_incremental_base:
         prev_head_for_incremental = None
@@ -428,7 +433,10 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     if not incremental_requested:
         incremental_reason = "forced_full"
-    elif not isinstance(prev_head_for_incremental, str) or not prev_head_for_incremental.strip():
+    elif (
+        not isinstance(prev_head_for_incremental, str)
+        or not prev_head_for_incremental.strip()
+    ):
         incremental_reason = "missing_previous_head"
     elif prev_repo != args.repo or prev_pr != args.pr:
         incremental_reason = "previous_scope_mismatch"
@@ -913,9 +921,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             max_llm_calls=8,
             max_workers=8,
             runner_env_for_aspect=runner_env_for_aspect,
-            sot_for_aspect=(
-                lambda aspect: "" if aspect in no_sot_aspects else sot_md
-            ),
+            sot_for_aspect=(lambda aspect: "" if aspect in no_sot_aspects else sot_md),
         )
     except (BlockedError, ExecFailureError) as exc:
         # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.

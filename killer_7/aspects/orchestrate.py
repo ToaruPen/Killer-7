@@ -10,10 +10,9 @@ from ..artifacts import (
     ensure_artifacts_dir,
     write_validation_error_json,
 )
-from ..errors import BlockedError, ExecFailureError
 from ..aspect_id import normalize_aspect
+from ..errors import BlockedError, ExecFailureError
 from .run_one import ViewpointRunner, run_one_aspect
-
 
 ASPECTS_V1: tuple[str, ...] = (
     "correctness",

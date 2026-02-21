@@ -49,7 +49,7 @@ class GhClient:
 
     def _run(self, args: list[str]) -> str:
         try:
-            p = subprocess.run(
+            p = subprocess.run(  # noqa: S603
                 [self.bin_path, *args],
                 text=True,
                 stdout=subprocess.PIPE,
@@ -78,7 +78,9 @@ class GhClient:
         return self._run(["pr", "diff", str(pr), "--repo", repo, "--patch"])
 
     def pr_compare_diff_patch(self, *, repo: str, base: str, head: str) -> str:
-        endpoint = f"repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}"
+        endpoint = (
+            f"repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}"
+        )
         return self._run(
             [
                 "api",

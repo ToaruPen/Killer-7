@@ -4,9 +4,8 @@ from collections.abc import Mapping
 from typing import cast
 
 from ..errors import ExecFailureError
-from .gh import GhClient
 from ..report.format_md import format_pr_summary_comment_md
-
+from .gh import GhClient
 
 SUMMARY_MARKER = "<!-- killer-7:summary:v1 -->"
 

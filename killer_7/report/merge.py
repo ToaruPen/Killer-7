@@ -4,7 +4,6 @@ from collections.abc import Mapping
 
 from ..validate.evidence import recompute_review_status
 
-
 _PRIORITY_ORDER = {
     "P0": 0,
     "P1": 1,

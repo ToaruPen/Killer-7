@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -276,10 +277,14 @@ def _write_redacted_opencode_jsonl(
 
 
 def _git_tracked_files(repo_root: str) -> set[str] | None:
+    git_bin = shutil.which("git")
+    if not git_bin:
+        return None
+
     try:
-        p = subprocess.run(
+        p = subprocess.run(  # noqa: S603
             [
-                "git",
+                git_bin,
                 "-C",
                 repo_root,
                 "ls-files",
@@ -301,10 +306,7 @@ def _git_tracked_files(repo_root: str) -> set[str] | None:
     for raw in out.split(b"\x00"):
         if not raw:
             continue
-        try:
-            s = raw.decode("utf-8", errors="replace")
-        except Exception:
-            continue
+        s = raw.decode("utf-8", errors="replace")
         rel = s.replace("\\", "/").strip("/")
         if rel:
             paths.add(rel)
@@ -1148,7 +1150,7 @@ class OpenCodeRunner:
                 open(stdout_path, "w", encoding="utf-8") as out_text,
                 open(stderr_path, "w", encoding="utf-8") as err_text,
             ):
-                p = subprocess.run(
+                p = subprocess.run(  # noqa: S603
                     cmd,
                     input=message,
                     text=True,

@@ -5,7 +5,6 @@ import shlex
 
 from ..errors import BlockedError
 
-
 _FORBIDDEN_SHELL_CHARS = {
     "\n",
     "$",

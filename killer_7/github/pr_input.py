@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .gh import GhClient
 from ..errors import ExecFailureError
+from .gh import GhClient
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,9 @@ def fetch_pr_input(
     diff_mode = "full"
     if requested_base_sha and requested_base_sha != head_sha:
         base_sha = requested_base_sha
-        diff_patch = client.pr_compare_diff_patch(repo=repo, base=base_sha, head=head_sha)
+        diff_patch = client.pr_compare_diff_patch(
+            repo=repo, base=base_sha, head=head_sha
+        )
         diff_mode = "incremental"
     else:
         diff_patch = client.pr_diff_patch(repo=repo, pr=pr)

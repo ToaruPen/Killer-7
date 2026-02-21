@@ -5,14 +5,14 @@ All artifacts are written under `./.ai-review/`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import os
 import tempfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
-from .github.pr_input import ChangedFile, PrInput
 from .aspect_id import normalize_aspect
+from .github.pr_input import ChangedFile, PrInput
 
 
 def now_utc_z() -> str:
