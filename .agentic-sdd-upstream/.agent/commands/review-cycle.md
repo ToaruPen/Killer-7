@@ -28,6 +28,15 @@ Underlying script:
 
 ## Flow
 
+### Phase 0: Scope lock (required)
+
+Before collecting diffs, verify the scope matches the current branch context.
+
+- Confirm current branch: `git branch --show-current`
+- If `scope-id` is `issue-<number>`, list linked branches: `gh issue develop --list <number>`
+- If linked branches exist and current branch is not one of them, stop and switch to the linked branch
+- If multiple linked branches exist, stop and resolve the intended branch before running `/review-cycle`
+
 1. Collect the diff (default: `DIFF_MODE=range`, `BASE_REF=origin/main`)
 2. Run tests (optional) and record results
 3. Generate `review.json` via selected engine (`codex exec` or `claude -p`)
@@ -74,6 +83,7 @@ Underlying script:
 - Exception: `TESTS="not run: <reason>"` is allowed only when you truly cannot run tests
   - `TESTS`: an explicit reasoned summary (e.g. `not run: CI only`).
   - If `TEST_COMMAND` is not set and `TESTS` is not `not run: ...`, `/review-cycle` fails fast (because it is not valid evidence).
+- 動的リスク（race/並行実行/環境依存）を含む変更では、`/review-cycle` に加えて `/test-review` 実行時に `TEST_REVIEW_DYNAMIC_COMMAND` を opt-in で設定して検証する。
 
 ## Optional inputs (env vars)
 
@@ -87,14 +97,18 @@ Underlying script:
   - If both staged and worktree diffs exist in `auto`, fail-fast and ask you to choose.
 - `BASE_REF`: base ref for `range` mode (default: `origin/main`; fallback to `main`)
 - `CONSTRAINTS`: additional constraints (default: `none`)
-- `REVIEW_CYCLE_INCREMENTAL`: `1` enables conditional reuse of the latest approved `review.json` when strict fingerprints match; default `1`
+- `REVIEW_CYCLE_INCREMENTAL`: `1` enables conditional reuse of the latest `review.json` when strict fingerprints match; default `1`
+- `REVIEW_CYCLE_CACHE_POLICY`: `strict` | `balanced` | `off` (default: `balanced`)
+  - `strict`: reuse only when latest status is `Approved` or `Approved with nits` (backward compatible)
+  - `balanced`: reuse any latest status (`Approved`/`Approved with nits`/`Blocked`/`Question`) when strict fingerprints match
+  - `off`: disable reuse and force full execution even when fingerprints match
   - Reuse is fail-closed. Any missing/mismatched metadata field forces full execution.
-  - Reuse is allowed only when the latest review status is `Approved` or `Approved with nits`.
   - Internal compatibility token `script_semantics_version` is included in reuse metadata checks.
     Bump it when prompt composition or reuse eligibility semantics change.
   - Recommended operation:
-    - Keep `REVIEW_CYCLE_INCREMENTAL=1` during normal issue loops.
-    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` when base/HEAD context changed materially (for example rebase/base update) and right before `/final-review`.
+    - Keep `REVIEW_CYCLE_INCREMENTAL=1` + `REVIEW_CYCLE_CACHE_POLICY=balanced` as the default baseline.
+    - Use `REVIEW_CYCLE_CACHE_POLICY=strict` when you want to avoid reusing non-Approved results.
+    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` (or `REVIEW_CYCLE_CACHE_POLICY=off`) when base/HEAD context changed materially (for example rebase/base update) and right before `/final-review`.
 
 ### Timeout (review engine execution)
 

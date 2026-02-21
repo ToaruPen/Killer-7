@@ -63,6 +63,7 @@ Guardrails:
 
 - Each Issue must declare `### 変更対象ファイル（推定）` (used as the conflict-check input)
 - Only mark Issues as `parallel-ok` when declared file sets are disjoint
+- Before high-impact actions (`/review-cycle`, `/create-pr`, `/pr-bots-review`, manual conflict resolution), run a Scope Lock check and stop on mismatch (`git branch --show-current` + `gh issue develop --list <issue>` + `gh pr view <pr> --json headRefName`).
 
 Helper script:
 
@@ -98,7 +99,8 @@ Optional (opt-in): install a GitHub Actions CI template (tests + lint + typechec
 /agentic-sdd --ci github-actions opencode minimal
 ```
 
-After install, edit `.github/workflows/agentic-sdd-ci.yml` and set the 3 env vars to your project's commands.
+After install, edit `.github/workflows/agentic-sdd-ci.yml` and set the 3 required env vars to your project's commands.
+You can optionally set `AGENTIC_SDD_CI_DOCS_CMD` if you want docs checks in CI.
 To enforce in GitHub, require the check `agentic-sdd-ci / ci` via branch protection rules.
 
 If you do not have `/agentic-sdd` yet, set it up once by cloning this repo and running:
@@ -119,19 +121,19 @@ use `git subtree` with a fixed prefix (for example `.agentic-sdd-upstream`).
 One-time setup in each target repository:
 
 ```bash
-git subtree add --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.00 --squash
+git subtree add --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.10 --squash
 ```
 
 Then update by tag/branch:
 
 ```bash
-git subtree pull --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.00 --squash
+git subtree pull --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.10 --squash
 ```
 
 This repository also includes a helper script for the pull step:
 
 ```bash
-./.agentic-sdd-upstream/scripts/update-agentic-sdd.sh --ref v0.3.00
+./.agentic-sdd-upstream/scripts/update-agentic-sdd.sh --ref v0.3.10
 ```
 
 Notes:
@@ -290,8 +292,9 @@ In this default (`DIFF_MODE=range`), the working tree must be clean; for pre-com
 
 Recommended incremental operation:
 
-- Keep `REVIEW_CYCLE_INCREMENTAL=1` during normal issue loops (default behavior).
-- When a fresh full baseline is needed, set `REVIEW_CYCLE_INCREMENTAL=0` explicitly.
+- Keep `REVIEW_CYCLE_INCREMENTAL=1` + `REVIEW_CYCLE_CACHE_POLICY=balanced` during normal issue loops (default behavior).
+- If you want to avoid reusing non-Approved results (`Blocked`/`Question`) on exact no-change loops, set `REVIEW_CYCLE_CACHE_POLICY=strict`.
+- When a fresh full baseline is needed, set `REVIEW_CYCLE_INCREMENTAL=0` (or `REVIEW_CYCLE_CACHE_POLICY=off`) explicitly.
 - Before `/final-review`, run one fresh full local review context (do not rely only on reused incremental artifacts).
 - If `/final-review` reports any `P2` or higher finding (`P0/P1/P2`), fix it and run `/review-cycle` again, then re-run `/final-review`.
 
@@ -325,16 +328,29 @@ It also validates `/test-review` metadata for the current branch state
 
 If you enable CI (optional), wait for CI checks and fix failures before merging.
 
-Optional: watch Codex bot feedback and trigger a local hook on new comments/reviews.
+Recommended: use event-driven monitoring via `.github/workflows/codex-review-events.yml`.
+It triggers on `issue_comment` / `pull_request_review` / `pull_request_review_comment`,
+filters to configured bot accounts (`CODEX_BOT_LOGINS`, required), and logs PR number/URL/type/snippet
+in a consistent format.
+
+Fallback: watch review-bot feedback locally and trigger a local hook on new comments/reviews.
+
+For CI-based autofix loops, use `templates/ci/github-actions/.github/workflows/agentic-sdd-pr-autofix.yml`.
+It handles `issue_comment` / `pull_request_review` / `pull_request_review_comment`, passes
+comment body + PR number + normalized event type (`issue_comment`/`review`/`inline`) to
+`AGENTIC_SDD_AUTOFIX_CMD`, executes autofix only on the target PR's HEAD branch,
+and re-requests the configured review mention (`AGENTIC_SDD_PR_REVIEW_MENTION`) after successful push.
 
 ```bash
+CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
 scripts/watch-codex-review.sh --pr 96
 ```
 
 To integrate with your own notifier, pass `--notify-cmd` (or `CODEX_REVIEW_HOOK`):
 
 ```bash
-CODEX_REVIEW_HOOK='osascript -e "display notification \"$CODEX_EVENT_TYPE\" with title \"Codex PR\""' \
+CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
+CODEX_REVIEW_HOOK='osascript -e "display notification \"$CODEX_EVENT_TYPE\" with title \"PR Review Bot\""' \
 scripts/watch-codex-review.sh --pr 96
 ```
 
@@ -345,12 +361,18 @@ CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
 scripts/watch-codex-review.sh --pr 96
 ```
 
-### 6.5) Codex PR review loop (optional)
+For autofix re-review requests, set the mention string explicitly:
 
-To request and iterate Codex bot review on a PR:
+```bash
+AGENTIC_SDD_PR_REVIEW_MENTION='@pr-bots review'
+```
+
+### 6.5) PR review-bot loop (optional)
+
+To request and iterate review-bot checks on a PR:
 
 ```text
-/codex-pr-review <PR_NUMBER_OR_URL>
+/pr-bots-review <PR_NUMBER_OR_URL>
 ```
 
 ### 7) Cleanup after merge
@@ -375,7 +397,7 @@ Batch cleanup for merged Issue branches:
 .agent/
 ├── commands/           # command definitions
 │   ├── cleanup.md
-│   ├── codex-pr-review.md
+│   ├── pr-bots-review.md
 │   ├── create-prd.md
 │   ├── create-epic.md
 │   ├── generate-project-config.md
@@ -417,6 +439,8 @@ docs/
 │   └── _template.md    # PRD template (Japanese output)
 ├── epics/
 │   └── _template.md    # Epic template (Japanese output)
+├── memo/
+├── releasing.md        # release/tag operation notes
 ├── research/            # reusable research artifacts
 │   ├── prd/
 │   ├── epic/
@@ -459,6 +483,7 @@ scripts/
 ├── check-commit-gate.py
 ├── check-impl-gate.py
 ├── cleanup.sh
+├── codex-review-event.sh
 ├── create-approval.py
 ├── create-pr.sh
 ├── extract-epic-config.py
@@ -483,6 +508,7 @@ scripts/
 └── tests/                   # test scripts
     ├── test-agentic-sdd-latest.sh
     ├── test-approval-gate.sh
+    ├── test-codex-review-event.sh
     ├── test-create-pr.sh
     ├── test-install-agentic-sdd.sh
     ├── test-lint-sot.sh
@@ -496,9 +522,12 @@ scripts/
     ├── test-sync-docs-inputs.sh
     ├── test-update-agentic-sdd.sh
     ├── test-ui-iterate.sh
+    ├── test-watch-codex-review.sh
     └── test-worktree.sh
 
 templates/
+├── ci/                 # optional CI templates
+│   └── github-actions/
 └── project-config/     # templates for /generate-project-config
     ├── config.json.j2
     ├── rules/
@@ -551,7 +580,8 @@ AGENTS.md               # AI agent rules
 
 ## Design Spec
 
-See `DESIGN.md` for the full design.
+See `DESIGN.md` for design rationale and historical context.
+For the current operational structure/commands, use this README and `.agent/` as source of truth.
 
 ---
 

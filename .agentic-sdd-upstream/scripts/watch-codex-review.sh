@@ -10,6 +10,9 @@ Usage: scripts/watch-codex-review.sh --pr <number> [options]
 
 Poll Codex bot feedback on a PR and trigger a notification hook on new messages.
 
+Note: Event-driven monitoring via `.github/workflows/codex-review-events.yml` is recommended.
+This script remains as a local fallback.
+
 Options:
   --pr <number>         Pull request number (required)
   --repo <owner/repo>   Repository (default: detected via gh repo view)
@@ -21,8 +24,7 @@ Options:
 
 Environment:
   CODEX_REVIEW_HOOK     Default hook command if --notify-cmd is not provided
-  CODEX_BOT_LOGINS      Comma-separated bot logins to watch
-                        (default: chatgpt-codex-connector[bot])
+  CODEX_BOT_LOGINS      Comma-separated bot logins to watch (required)
 
 Hook environment variables:
   CODEX_EVENT_ID
@@ -38,7 +40,7 @@ repo=""
 interval_sec=30
 state_file=""
 notify_cmd="${CODEX_REVIEW_HOOK:-}"
-codex_bot_logins_raw="${CODEX_BOT_LOGINS:-chatgpt-codex-connector[bot]}"
+codex_bot_logins_raw="${CODEX_BOT_LOGINS:-}"
 run_once=0
 
 while [[ $# -gt 0 ]]; do
@@ -106,7 +108,7 @@ if [[ -z "$repo" ]]; then
 fi
 
 if [[ -z "$codex_bot_logins_raw" ]]; then
-  eprint "CODEX_BOT_LOGINS must not be empty"
+  eprint "CODEX_BOT_LOGINS is required"
   exit 2
 fi
 
