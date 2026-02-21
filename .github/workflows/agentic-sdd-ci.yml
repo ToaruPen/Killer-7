@@ -26,10 +26,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements-dev.txt
           python3 -m pip install -r requirements-agentic-sdd.txt
-
-      - name: Make CI runner script executable
-        shell: bash
-        run: chmod +x ./scripts/agentic-sdd-ci.sh
+          python3 -m pip install -r requirements-killer7.txt
 
       - name: Run CI commands (tests + lint + typecheck)
         shell: bash
@@ -40,4 +37,4 @@ jobs:
           AGENTIC_SDD_CI_DOCS_CMD: "python3 scripts/lint-sot.py docs"
         run: |
           set -euo pipefail
-          bash ./scripts/agentic-sdd-ci.sh
+          bash ./templates/ci/github-actions/scripts/agentic-sdd-ci.sh
