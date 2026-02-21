@@ -11,9 +11,9 @@ from ..artifacts import (
     ensure_artifacts_dir,
     write_validation_error_json,
 )
+from ..aspect_id import normalize_aspect
 from ..errors import ExecFailureError
 from ..llm.opencode_runner import OpenCodeRunner
-from ..aspect_id import normalize_aspect
 from ..validate.review_json import validate_aspect_review_json
 
 

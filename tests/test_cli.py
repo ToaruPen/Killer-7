@@ -130,6 +130,15 @@ if args[:1] == ["api"]:
         sys.stderr.write("fake gh: missing endpoint\\n")
         raise SystemExit(2)
 
+    if "/compare/" in endpoint:
+        sys.stdout.write("diff --git a/inc.txt b/inc.txt\\n")
+        sys.stdout.write("index 0000000..1111111 100644\\n")
+        sys.stdout.write("--- a/inc.txt\\n")
+        sys.stdout.write("+++ b/inc.txt\\n")
+        sys.stdout.write("@@ -0,0 +1 @@\\n")
+        sys.stdout.write("+incremental-line\\n")
+        raise SystemExit(0)
+
     if endpoint.endswith("/issues/123/comments"):
         if "-X" in args and arg_value("-X") == "POST":
             state = read_state()
@@ -771,6 +780,49 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_incremental_inc_finding(path: Path) -> None:
+    path.write_text(
+        r"""#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\s*(.+)\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Blocked",
+  "findings": [
+    {
+      "title": "Incremental-only location",
+      "body": "Mapped only when compare diff is used.",
+      "priority": "P0",
+      "sources": ["inc.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "inc.txt", "line_range": {"start": 1, "end": 1}},
+    }
+  ],
+  "questions": [],
+  "overall_explanation": "Incremental-only blocking finding.",
+}
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_exec_failure(path: Path) -> None:
     """Fake opencode that always fails."""
 
@@ -924,6 +976,475 @@ class TestCli(unittest.TestCase):
                 payload.get("result", {}).get("selected_aspects"),
                 ["correctness", "security"],
             )
+
+    def test_second_run_uses_incremental_diff_and_records_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "head_ref_oid_sequence": [
+                            "aaaaaaaaaaaaaaaa",
+                            "aaaaaaaaaaaaaaaa",
+                            "bbbbbbbbbbbbbbbb",
+                            "bbbbbbbbbbbbbbbb",
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p1 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            diff_patch = (Path(td) / ".ai-review" / "diff.patch").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("incremental-line", diff_patch)
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertEqual(inc.get("diff_mode"), "incremental")
+            self.assertTrue(bool(inc.get("applied")))
+
+            state_payload = json.loads(
+                (Path(td) / ".ai-review" / "state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state_payload.get("head_sha"), "bbbbbbbbbbbbbbbb")
+            self.assertEqual(
+                state_payload.get("incremental_base_head_sha"), "bbbbbbbbbbbbbbbb"
+            )
+
+    def test_full_flag_disables_incremental_even_with_previous_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--full"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertFalse(bool(inc.get("applied")))
+            self.assertEqual(inc.get("reason"), "forced_full")
+            self.assertEqual(inc.get("diff_mode"), "full")
+
+    def test_aspect_set_change_disables_incremental_and_uses_full_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "0123456789abcdef",
+                        "selected_aspects": ["correctness"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--aspect",
+                    "security",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertFalse(bool(inc.get("applied")))
+            self.assertEqual(inc.get("reason"), "previous_aspects_mismatch")
+            self.assertEqual(inc.get("diff_mode"), "full")
+
+            diff_patch = (out_dir / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("hello.txt", diff_patch)
+            self.assertNotIn("incremental-line", diff_patch)
+
+    def test_no_sot_policy_change_disables_incremental_and_uses_full_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "0123456789abcdef",
+                        "selected_aspects": ["correctness", "security"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--aspect",
+                    "security",
+                    "--no-sot-aspect",
+                    "security",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertFalse(bool(inc.get("applied")))
+            self.assertEqual(inc.get("reason"), "previous_no_sot_aspects_mismatch")
+            self.assertEqual(inc.get("diff_mode"), "full")
+
+            diff_patch = (out_dir / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("hello.txt", diff_patch)
+            self.assertNotIn("incremental-line", diff_patch)
+
+    def test_no_sot_aspect_is_recorded_in_run_json(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--aspect",
+                    "performance",
+                    "--no-sot-aspect",
+                    "performance",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            policy = run_payload.get("result", {}).get("aspect_input_policy", {})
+            self.assertEqual(policy.get("no_sot_aspects"), ["performance"])
+
+    def test_legacy_state_without_no_sot_aspects_allows_incremental(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "selected_aspects": ["correctness"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertTrue(bool(inc.get("applied")))
+            self.assertEqual(inc.get("diff_mode"), "incremental")
+
+            diff_patch = (out_dir / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("incremental-line", diff_patch)
+
+    def test_same_head_incremental_request_records_full_diff_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "0123456789abcdef",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertFalse(bool(inc.get("applied")))
+            self.assertEqual(inc.get("diff_mode"), "full")
+            self.assertEqual(inc.get("reason"), "same_head_full_diff")
+
+            diff_patch = (out_dir / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("hello.txt", diff_patch)
+            self.assertNotIn("incremental-line", diff_patch)
+
+    def test_blocked_run_keeps_previous_incremental_base_head(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_incremental_inc_finding(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "incremental_base_head_sha": "aaaaaaaaaaaaaaaa",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
+            self.assertEqual(
+                state_payload.get("incremental_base_head_sha"), "aaaaaaaaaaaaaaaa"
+            )
+
+    def test_scope_mismatch_blocked_clears_incremental_base_head(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "other/name",
+                        "pr": 999,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "incremental_base_head_sha": "aaaaaaaaaaaaaaaa",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state_payload.get("repo"), "owner/name")
+            self.assertEqual(state_payload.get("pr"), 123)
+            self.assertEqual(state_payload.get("incremental_base_head_sha"), "")
+
+    def test_empty_incremental_base_does_not_fallback_to_head(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "incremental_base_head_sha": "",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            inc = run_payload.get("result", {}).get("incremental", {})
+            self.assertFalse(bool(inc.get("applied")))
+            self.assertEqual(inc.get("reason"), "missing_previous_head")
+            self.assertEqual(inc.get("diff_mode"), "full")
 
     def test_duplicate_aspect_is_invalid_args_and_does_not_delete_existing_summaries(
         self,
@@ -1610,6 +2131,14 @@ class TestCli(unittest.TestCase):
 
             payload = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
+
+            state_json = out_dir / "state.json"
+            self.assertTrue(state_json.is_file())
+            state_payload = json.loads(state_json.read_text(encoding="utf-8"))
+            self.assertEqual(state_payload.get("repo"), "owner/name")
+            self.assertEqual(state_payload.get("pr"), 123)
+            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
+            self.assertTrue("correctness" in state_payload.get("selected_aspects", []))
 
     def test_blocked_with_question_exits_1(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2438,6 +2967,56 @@ class TestCli(unittest.TestCase):
             body = review_comments[0].get("body", "")
             self.assertIn("<!-- killer-7:inline:v1 fp=", body)
             self.assertEqual(review_comments[0].get("path"), "hello.txt")
+
+    def test_inline_uses_full_pr_diff_when_incremental_is_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_incremental_inc_finding(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--inline",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("unmappable code locations", p.stderr)
+
+            diff_patch = (out_dir / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("incremental-line", diff_patch)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            review_comments = state.get("review_comments", [])
+            self.assertEqual(len(review_comments), 0)
 
     def test_inline_does_not_block_when_unmappable_finding_downgraded_to_p3(
         self,

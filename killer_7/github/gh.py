@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from ..errors import BlockedError, ExecFailureError
 
@@ -49,7 +49,7 @@ class GhClient:
 
     def _run(self, args: list[str]) -> str:
         try:
-            p = subprocess.run(
+            p = subprocess.run(  # noqa: S603
                 [self.bin_path, *args],
                 text=True,
                 stdout=subprocess.PIPE,
@@ -76,6 +76,19 @@ class GhClient:
 
     def pr_diff_patch(self, *, repo: str, pr: int) -> str:
         return self._run(["pr", "diff", str(pr), "--repo", repo, "--patch"])
+
+    def pr_compare_diff_patch(self, *, repo: str, base: str, head: str) -> str:
+        endpoint = (
+            f"repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}"
+        )
+        return self._run(
+            [
+                "api",
+                "-H",
+                "Accept: application/vnd.github.v3.diff",
+                endpoint,
+            ]
+        )
 
     def pr_head_ref_oid(self, *, repo: str, pr: int) -> str:
         raw = self._run(["pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"])

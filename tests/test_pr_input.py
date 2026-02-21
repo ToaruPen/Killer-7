@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +60,15 @@ if args[:2] == ["pr", "view"]:
 
 if args[:1] == ["api"]:
     endpoint = args[-1]
+    if "/compare/" in endpoint:
+        sys.stdout.write("diff --git a/inc.txt b/inc.txt\\n")
+        sys.stdout.write("index 0000000..1111111 100644\\n")
+        sys.stdout.write("--- a/inc.txt\\n")
+        sys.stdout.write("+++ b/inc.txt\\n")
+        sys.stdout.write("@@ -0,0 +1 @@\\n")
+        sys.stdout.write("+incremental-line\\n")
+        raise SystemExit(0)
+
     if endpoint.endswith("/pulls/123/files"):
         files = [
             {"filename": "hello.txt", "status": "added", "additions": 1, "deletions": 0},
@@ -173,6 +182,42 @@ def run_cli(
 
 
 class TestPrInputArtifacts(unittest.TestCase):
+    def test_fetch_pr_input_uses_compare_diff_when_base_head_is_given(self) -> None:
+        from killer_7.github.pr_input import fetch_pr_input
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            with patch.dict(os.environ, {"KILLER7_GH_BIN": str(fake_gh)}):
+                pr_input = fetch_pr_input(
+                    repo="owner/name",
+                    pr=123,
+                    base_head_sha="aaaaaaaaaaaaaaaa",
+                )
+
+            self.assertEqual(pr_input.diff_mode, "incremental")
+            self.assertEqual(pr_input.base_head_sha, "aaaaaaaaaaaaaaaa")
+            self.assertIn("incremental-line", pr_input.diff_patch)
+
+    def test_fetch_pr_input_falls_back_to_full_when_base_equals_head(self) -> None:
+        from killer_7.github.pr_input import fetch_pr_input
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            with patch.dict(os.environ, {"KILLER7_GH_BIN": str(fake_gh)}):
+                pr_input = fetch_pr_input(
+                    repo="owner/name",
+                    pr=123,
+                    base_head_sha="0123456789abcdef",
+                )
+
+            self.assertEqual(pr_input.diff_mode, "full")
+            self.assertEqual(pr_input.base_head_sha, "")
+            self.assertNotIn("incremental-line", pr_input.diff_patch)
+
     def test_review_writes_pr_input_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"

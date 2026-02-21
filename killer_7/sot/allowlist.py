@@ -5,7 +5,6 @@ This list is intentionally small and repo-relative.
 
 from __future__ import annotations
 
-
 DEFAULT_SOT_ALLOWLIST: list[str] = [
     # Project docs
     "docs/prd/**/*.md",

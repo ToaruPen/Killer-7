@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import cast
-
 
 _SRC_HEADER_RE = re.compile(r"^# SRC: (?P<path>.+?)\s*$")
 _LINE_RE = re.compile(r"^L(?P<line>\d+):\s")

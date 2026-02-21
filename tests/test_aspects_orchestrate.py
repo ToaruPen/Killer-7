@@ -13,6 +13,7 @@ class _FakeRunner:
     def __init__(self, *, payload_by_viewpoint: Mapping[str, object]) -> None:
         self.payload_by_viewpoint = dict(payload_by_viewpoint)
         self.seen_env_by_viewpoint: dict[str, dict[str, str] | None] = {}
+        self.seen_message_by_viewpoint: dict[str, str] = {}
 
     def run_viewpoint(
         self,
@@ -23,8 +24,9 @@ class _FakeRunner:
         timeout_s: int | None = None,
         env: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        _ = (out_dir, message, timeout_s, env)
+        _ = (out_dir, timeout_s, env)
         self.seen_env_by_viewpoint[viewpoint] = env
+        self.seen_message_by_viewpoint[viewpoint] = message
         payload = self.payload_by_viewpoint.get(viewpoint)
         if payload is None:
             payload = {
@@ -201,6 +203,43 @@ class TestOrchestrate(unittest.TestCase):
 
             err = Path(td) / ".ai-review" / "errors" / "aspects.input.error.json"
             self.assertTrue(err.is_file())
+
+    def test_can_disable_sot_for_specific_aspect(self) -> None:
+        from killer_7.aspects.orchestrate import run_all_aspects
+
+        payload: dict[str, object] = {
+            "schema_version": 3,
+            "scope_id": "scope-1",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        runner = _FakeRunner(
+            payload_by_viewpoint={"correctness": payload, "performance": payload}
+        )
+
+        def make_runner() -> _FakeRunner:
+            return runner
+
+        with tempfile.TemporaryDirectory() as td:
+            run_all_aspects(
+                base_dir=td,
+                scope_id="scope-1",
+                context_bundle="CTX",
+                sot="SOT_MARKER_X",
+                aspects=("correctness", "performance"),
+                runner_factory=make_runner,
+                sot_for_aspect=lambda aspect: ""
+                if aspect == "performance"
+                else "SOT_MARKER_X",
+            )
+
+        self.assertIn("SOT_MARKER_X", runner.seen_message_by_viewpoint["correctness"])
+        self.assertNotIn(
+            "SOT_MARKER_X", runner.seen_message_by_viewpoint["performance"]
+        )
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from .diff_map import resolve_diff_position
 from ..report.fingerprint import finding_fingerprint
+from .diff_map import resolve_diff_position
 
 
 @dataclass(frozen=True)

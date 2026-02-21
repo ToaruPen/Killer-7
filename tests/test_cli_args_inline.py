@@ -82,6 +82,28 @@ class TestCliInlineArgs(unittest.TestCase):
 
         self.assertEqual(args.preset, "minimal")
 
+    def test_review_parser_accepts_full_and_no_sot_aspect(self) -> None:
+        from killer_7.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--repo",
+                "owner/name",
+                "--pr",
+                "123",
+                "--full",
+                "--no-sot-aspect",
+                "performance",
+                "--no-sot-aspect",
+                "security",
+            ]
+        )
+
+        self.assertTrue(args.full)
+        self.assertEqual(args.no_sot_aspect, ["performance", "security"])
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

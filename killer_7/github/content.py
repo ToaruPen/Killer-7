@@ -12,7 +12,6 @@ from ..errors import ExecFailureError
 from ..glob import filter_paths_by_globs, normalize_repo_relative_path
 from .gh import GhClient
 
-
 DEFAULT_MAX_BYTES = 100 * 1024
 
 

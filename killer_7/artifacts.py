@@ -5,14 +5,14 @@ All artifacts are written under `./.ai-review/`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import os
 import tempfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
-from .github.pr_input import ChangedFile, PrInput
 from .aspect_id import normalize_aspect
+from .github.pr_input import ChangedFile, PrInput
 
 
 def now_utc_z() -> str:
@@ -165,6 +165,8 @@ def write_meta_json(out_dir: str, pr_input: PrInput) -> str:
         "repo": pr_input.repo,
         "pr": pr_input.pr,
         "head_sha": pr_input.head_sha,
+        "diff_mode": pr_input.diff_mode,
+        "base_head_sha": pr_input.base_head_sha,
         "fetched_at": now_utc_z(),
         "changed_files_count": len(pr_input.changed_files),
     }

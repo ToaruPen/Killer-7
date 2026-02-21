@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 from .artifacts import (
-    atomic_write_text_secure,
     atomic_write_json_secure,
+    atomic_write_text_secure,
+    write_allowlist_paths_json,
     write_aspect_evidence_json,
     write_aspect_policy_json,
-    write_allowlist_paths_json,
     write_aspects_evidence_index_json,
     write_aspects_policy_index_json,
     write_content_warnings_json,
@@ -33,30 +33,30 @@ from .artifacts import (
     write_tool_trace_jsonl,
     write_warnings_txt,
 )
+from .aspect_id import normalize_aspect
+from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
+from .bundle.context_bundle import build_context_bundle
+from .bundle.diff_parse import parse_diff_patch
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.gh import GhClient
 from .github.post_inline import post_inline_comments, raise_if_inline_blocked
-from .github.pr_input import fetch_pr_input
 from .github.post_summary import post_summary_comment
-from .bundle.context_bundle import build_context_bundle
-from .bundle.diff_parse import parse_diff_patch
-from .sot.allowlist import default_sot_allowlist
-from .sot.collect import build_sot_markdown
-from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
-from .aspect_id import normalize_aspect
+from .github.pr_input import fetch_pr_input
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
 from .llm.opencode_runner import opencode_artifacts_dir
+from .report.format_md import format_review_summary_md
+from .report.merge import merge_review_summary
+from .sot.allowlist import default_sot_allowlist
+from .sot.collect import build_sot_markdown
 from .validate.evidence import (
-    apply_evidence_policy_to_findings,
     EVIDENCE_POLICY_V1,
+    apply_evidence_policy_to_findings,
     parse_context_bundle_index,
     recompute_review_status,
 )
 from .validate.review_json import validate_review_summary_json
-from .report.merge import merge_review_summary
-from .report.format_md import format_review_summary_md
 
 
 def _strip_machine_fields_from_findings(
@@ -173,6 +173,8 @@ BUILTIN_PRESETS: dict[str, tuple[str, ...]] = {
     "full": ASPECTS_V1,
 }
 
+DEFAULT_NO_SOT_ASPECTS: tuple[str, ...] = ()
+
 
 def resolve_preset(name: str) -> tuple[str, ...]:
     preset = BUILTIN_PRESETS.get(name)
@@ -236,6 +238,23 @@ Examples:
     )
 
     review.add_argument(
+        "--full",
+        action="store_true",
+        help="Disable incremental diff and force full PR diff review",
+    )
+    review.add_argument(
+        "--no-sot-aspect",
+        action="append",
+        default=[],
+        type=parse_aspect,
+        metavar="NAME",
+        help=(
+            "Disable SoT injection for the specified aspect (repeatable). "
+            f"Valid: {', '.join(ASPECTS_V1)}"
+        ),
+    )
+
+    review.add_argument(
         "--post",
         action="store_true",
         help="Post/update the summary comment on the PR",
@@ -287,6 +306,49 @@ def write_run_json(out_dir: str, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _state_json_path(out_dir: str) -> str:
+    return os.path.join(out_dir, "state.json")
+
+
+def _load_state_json(out_dir: str) -> dict[str, Any]:
+    path = _state_json_path(out_dir)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _write_state_json(
+    out_dir: str,
+    *,
+    repo: str,
+    pr: int,
+    head_sha: str,
+    incremental_base_head_sha: str,
+    selected_aspects: tuple[str, ...],
+    no_sot_aspects: tuple[str, ...],
+) -> str:
+    path = _state_json_path(out_dir)
+    payload = {
+        "schema_version": 1,
+        "updated_at": now_utc_z(),
+        "repo": repo,
+        "pr": pr,
+        "head_sha": head_sha,
+        "incremental_base_head_sha": incremental_base_head_sha,
+        "selected_aspects": list(selected_aspects),
+        "no_sot_aspects": list(no_sot_aspects),
+    }
+    atomic_write_json_secure(path, payload)
+    return path
+
+
 def clear_stale_review_summary(out_dir: str) -> None:
     for name in ("review-summary.json", "review-summary.md"):
         try:
@@ -325,10 +387,101 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             seen.add(a)
         selected_aspects = tuple(raw_aspects)
 
+    requested_no_sot = (
+        tuple(args.no_sot_aspect or []) if hasattr(args, "no_sot_aspect") else ()
+    )
+    no_sot_aspects = set(DEFAULT_NO_SOT_ASPECTS)
+    no_sot_aspects.update(requested_no_sot)
+    no_sot_aspects.intersection_update(set(selected_aspects))
+
     # Fetch PR input (diff + metadata) and write artifacts.
     out_dir = ensure_artifacts_dir(os.getcwd())
+
+    state_payload = _load_state_json(out_dir)
+    prev_repo = state_payload.get("repo")
+    prev_pr = state_payload.get("pr")
+    has_prev_incremental_base = "incremental_base_head_sha" in state_payload
+    prev_head = state_payload.get("head_sha")
+    prev_incremental_base_head = state_payload.get("incremental_base_head_sha")
+    prev_selected_aspects = state_payload.get("selected_aspects")
+    prev_no_sot_aspects = state_payload.get("no_sot_aspects")
+    prev_no_sot_aspects_list: list[object] | None
+    if prev_no_sot_aspects is None:
+        prev_no_sot_aspects_list = []
+    elif isinstance(prev_no_sot_aspects, list):
+        prev_no_sot_aspects_list = prev_no_sot_aspects
+    else:
+        prev_no_sot_aspects_list = None
+
+    incremental_requested = not bool(getattr(args, "full", False))
+    incremental_applied = False
+    incremental_reason = ""
+    incremental_base_head_sha = ""
+
+    prev_head_for_incremental: str | None
+    if (
+        isinstance(prev_incremental_base_head, str)
+        and prev_incremental_base_head.strip()
+    ):
+        prev_head_for_incremental = prev_incremental_base_head
+    elif has_prev_incremental_base:
+        prev_head_for_incremental = None
+    elif isinstance(prev_head, str) and prev_head.strip():
+        prev_head_for_incremental = prev_head
+    else:
+        prev_head_for_incremental = None
+
+    if not incremental_requested:
+        incremental_reason = "forced_full"
+    elif (
+        not isinstance(prev_head_for_incremental, str)
+        or not prev_head_for_incremental.strip()
+    ):
+        incremental_reason = "missing_previous_head"
+    elif prev_repo != args.repo or prev_pr != args.pr:
+        incremental_reason = "previous_scope_mismatch"
+    elif not isinstance(prev_selected_aspects, list) or not prev_selected_aspects:
+        incremental_reason = "missing_previous_selected_aspects"
+    elif any(not isinstance(a, str) or not a.strip() for a in prev_selected_aspects):
+        incremental_reason = "invalid_previous_selected_aspects"
+    elif set(prev_selected_aspects) != set(selected_aspects):
+        incremental_reason = "previous_aspects_mismatch"
+    elif prev_no_sot_aspects_list is None:
+        incremental_reason = "invalid_previous_no_sot_aspects"
+    elif any(not isinstance(a, str) or not a.strip() for a in prev_no_sot_aspects_list):
+        incremental_reason = "invalid_previous_no_sot_aspects"
+    elif set(prev_no_sot_aspects_list) != set(no_sot_aspects):
+        incremental_reason = "previous_no_sot_aspects_mismatch"
+    else:
+        base_head = prev_head_for_incremental.strip()
+        incremental_base_head_sha = base_head
+        incremental_applied = True
+        incremental_reason = "head_based_incremental"
+
     try:
-        pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+        if incremental_applied:
+            try:
+                pr_input = fetch_pr_input(
+                    repo=args.repo,
+                    pr=args.pr,
+                    base_head_sha=incremental_base_head_sha,
+                )
+            except ExecFailureError as exc:
+                if "PR head changed during input fetch" in str(exc):
+                    clear_stale_review_summary(out_dir)
+                    raise
+                incremental_applied = False
+                incremental_reason = f"incremental_fallback_full: {exc}"
+                pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+        else:
+            pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+
+        if pr_input.diff_mode != "incremental":
+            incremental_applied = False
+            if incremental_reason == "head_based_incremental":
+                incremental_reason = "same_head_full_diff"
+            elif not incremental_reason:
+                incremental_reason = "full_diff"
     except ExecFailureError:
         clear_stale_review_summary(out_dir)
         raise
@@ -768,6 +921,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             max_llm_calls=8,
             max_workers=8,
             runner_env_for_aspect=runner_env_for_aspect,
+            sot_for_aspect=(lambda aspect: "" if aspect in no_sot_aspects else sot_md),
         )
     except (BlockedError, ExecFailureError) as exc:
         # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
@@ -1309,13 +1463,18 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 if args.inline and (
                     deferred_exc is None or isinstance(deferred_exc, BlockedError)
                 ):
+                    inline_diff_patch = pr_input.diff_patch
+                    if pr_input.diff_mode == "incremental":
+                        inline_diff_patch = gh_client.pr_diff_patch(
+                            repo=args.repo, pr=args.pr
+                        )
                     inline_result = post_inline_comments(
                         repo=args.repo,
                         pr=args.pr,
                         head_sha=pr_input.head_sha,
                         expected_head_sha=pr_input.head_sha,
                         review_summary=summary_payload,
-                        diff_patch=pr_input.diff_patch,
+                        diff_patch=inline_diff_patch,
                     )
                     try:
                         raise_if_inline_blocked(inline_result)
@@ -1325,6 +1484,27 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             if _should_clear_stale_summary_on_post_failure(exc):
                 clear_stale_review_summary(out_dir)
             raise
+
+    next_incremental_base = pr_input.head_sha
+    if deferred_exc is not None:
+        if (
+            isinstance(prev_head_for_incremental, str)
+            and prev_repo == args.repo
+            and prev_pr == args.pr
+        ):
+            next_incremental_base = prev_head_for_incremental.strip()
+        else:
+            next_incremental_base = ""
+
+    state_json_path = _write_state_json(
+        out_dir,
+        repo=args.repo,
+        pr=args.pr,
+        head_sha=pr_input.head_sha,
+        incremental_base_head_sha=next_incremental_base,
+        selected_aspects=selected_aspects,
+        no_sot_aspects=tuple(sorted(no_sot_aspects)),
+    )
 
     if deferred_exc is not None:
         raise deferred_exc
@@ -1336,6 +1516,16 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         "head_sha": pr_input.head_sha,
         "scope_id": scope_id,
         "selected_aspects": list(selected_aspects),
+        "incremental": {
+            "requested": incremental_requested,
+            "applied": incremental_applied,
+            "reason": incremental_reason,
+            "base_head_sha": pr_input.base_head_sha,
+            "diff_mode": pr_input.diff_mode,
+        },
+        "aspect_input_policy": {
+            "no_sot_aspects": sorted(no_sot_aspects),
+        },
         "aspects": {
             "index_path": os.path.relpath(
                 str(aspects_result["index_path"]), os.getcwd()
@@ -1375,6 +1565,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "re_run_plan_json": os.path.relpath(rerun_plan_path, os.getcwd())
             if rerun_plan_path
             else "",
+            "state_json": os.path.relpath(state_json_path, os.getcwd()),
         },
     }
 
