@@ -118,6 +118,8 @@ def run_all_aspects(
     runner_factory: Callable[[], ViewpointRunner] | None = None,
     prompts_dir: str | None = None,
     runner_env_for_aspect: Callable[[str], dict[str, str] | None] | None = None,
+    context_bundle_for_aspect: Callable[[str], str] | None = None,
+    sot_for_aspect: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
     """Run all aspects in parallel and write artifacts under `.ai-review/aspects/`.
 
@@ -205,12 +207,18 @@ def run_all_aspects(
     def run_one(a: str) -> dict[str, object]:
         r = make_runner()
         env = runner_env_for_aspect(a) if runner_env_for_aspect else None
+        aspect_context = (
+            context_bundle_for_aspect(a)
+            if context_bundle_for_aspect is not None
+            else context_bundle
+        )
+        aspect_sot = sot_for_aspect(a) if sot_for_aspect is not None else sot
         return run_one_aspect(
             base_dir=base_dir,
             aspect=a,
             scope_id=scope_id,
-            context_bundle=context_bundle,
-            sot=sot,
+            context_bundle=aspect_context,
+            sot=aspect_sot,
             runner=r,
             timeout_s=timeout_s,
             prompts_dir=prompts_dir,

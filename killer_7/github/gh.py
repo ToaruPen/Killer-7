@@ -77,6 +77,17 @@ class GhClient:
     def pr_diff_patch(self, *, repo: str, pr: int) -> str:
         return self._run(["pr", "diff", str(pr), "--repo", repo, "--patch"])
 
+    def pr_compare_diff_patch(self, *, repo: str, base: str, head: str) -> str:
+        endpoint = f"repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}"
+        return self._run(
+            [
+                "api",
+                "-H",
+                "Accept: application/vnd.github.v3.diff",
+                endpoint,
+            ]
+        )
+
     def pr_head_ref_oid(self, *, repo: str, pr: int) -> str:
         raw = self._run(["pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"])
         try:

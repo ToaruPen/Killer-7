@@ -28,6 +28,8 @@ class PrInput:
     head_sha: str
     diff_patch: str
     changed_files: list[ChangedFile]
+    diff_mode: str = "full"
+    base_head_sha: str = ""
 
 
 def _to_int(value: Any, *, field: str) -> int:
@@ -37,11 +39,25 @@ def _to_int(value: Any, *, field: str) -> int:
         raise ExecFailureError(f"Invalid integer for {field}") from exc
 
 
-def fetch_pr_input(*, repo: str, pr: int, gh: GhClient | None = None) -> PrInput:
+def fetch_pr_input(
+    *,
+    repo: str,
+    pr: int,
+    gh: GhClient | None = None,
+    base_head_sha: str = "",
+) -> PrInput:
     client = gh or GhClient.from_env()
 
     head_sha = client.pr_head_ref_oid(repo=repo, pr=pr)
-    diff_patch = client.pr_diff_patch(repo=repo, pr=pr)
+    requested_base_sha = (base_head_sha or "").strip()
+    base_sha = ""
+    diff_mode = "full"
+    if requested_base_sha and requested_base_sha != head_sha:
+        base_sha = requested_base_sha
+        diff_patch = client.pr_compare_diff_patch(repo=repo, base=base_sha, head=head_sha)
+        diff_mode = "incremental"
+    else:
+        diff_patch = client.pr_diff_patch(repo=repo, pr=pr)
     raw_files = client.pr_files(repo=repo, pr=pr)
     latest_head_sha = client.pr_head_ref_oid(repo=repo, pr=pr)
 
@@ -79,4 +95,6 @@ def fetch_pr_input(*, repo: str, pr: int, gh: GhClient | None = None) -> PrInput
         head_sha=head_sha,
         diff_patch=diff_patch,
         changed_files=changed_files,
+        diff_mode=diff_mode,
+        base_head_sha=base_sha,
     )
