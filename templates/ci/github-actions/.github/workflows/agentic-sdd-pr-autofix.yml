@@ -3,12 +3,17 @@ name: agentic-sdd-pr-autofix
 on:
   issue_comment:
     types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
 
 # Opt-in PR autofix template (deny-by-default).
 #
 # Required repository variables (Settings -> Secrets and variables -> Actions -> Variables):
 # - AGENTIC_SDD_AUTOFIX_CMD: repo-local executable path only (example: ./scripts/autofix.sh)
 # - AGENTIC_SDD_AUTOFIX_BOT_LOGINS: comma-separated allowlist (example: coderabbitai,chatgpt-codex-connector[bot])
+# - AGENTIC_SDD_PR_REVIEW_MENTION: re-review mention text (example: @pr-bots review)
 #
 # Optional variables:
 # - AGENTIC_SDD_AUTOFIX_TEST_CMD: verification command (example: npm test)
@@ -25,12 +30,12 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: agentic-sdd-pr-autofix-${{ github.event.issue.number }}
+  group: agentic-sdd-pr-autofix-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
   autofix:
-    if: ${{ github.event.issue.pull_request != null && !contains(github.event.comment.body, '<!-- agentic-sdd:autofix v1 -->') }}
+    if: ${{ (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && !contains(github.event.comment.body, '<!-- agentic-sdd:autofix v1 -->')) || (github.event_name == 'pull_request_review' && !contains(github.event.review.body, '<!-- agentic-sdd:autofix v1 -->')) || (github.event_name == 'pull_request_review_comment' && !contains(github.event.comment.body, '<!-- agentic-sdd:autofix v1 -->')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,6 +50,7 @@ jobs:
           AGENTIC_SDD_AUTOFIX_CMD: ${{ vars.AGENTIC_SDD_AUTOFIX_CMD }}
           AGENTIC_SDD_AUTOFIX_TEST_CMD: ${{ vars.AGENTIC_SDD_AUTOFIX_TEST_CMD }}
           AGENTIC_SDD_AUTOFIX_BOT_LOGINS: ${{ vars.AGENTIC_SDD_AUTOFIX_BOT_LOGINS }}
+          AGENTIC_SDD_PR_REVIEW_MENTION: ${{ vars.AGENTIC_SDD_PR_REVIEW_MENTION }}
           AGENTIC_SDD_AUTOFIX_OPTIN_LABEL: ${{ vars.AGENTIC_SDD_AUTOFIX_OPTIN_LABEL }}
           AGENTIC_SDD_AUTOFIX_MAX_ITERS: ${{ vars.AGENTIC_SDD_AUTOFIX_MAX_ITERS }}
         run: |
@@ -55,6 +61,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agentic-sdd-autofix-${{ github.event.issue.number }}
+          name: agentic-sdd-autofix-${{ github.event.pull_request.number || github.event.issue.number }}
           path: .agentic-sdd-autofix.patch
           if-no-files-found: ignore
