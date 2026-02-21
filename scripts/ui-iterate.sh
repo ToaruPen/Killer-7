@@ -437,10 +437,10 @@ if [[ "$run_checks" -eq 1 ]]; then
     log_file="$checks_dir/check-$(printf '%02d' "$idx").log"
 
     if run_check "$cmd" "$log_file"; then
-      printf 'ok\t%s\t%s\n' "$cmd" "${log_file#$repo_root/}" >> "$check_manifest"
+      printf 'ok\t%s\t%s\n' "$cmd" "${log_file#"$repo_root"/}" >> "$check_manifest"
     else
-      printf 'fail\t%s\t%s\n' "$cmd" "${log_file#$repo_root/}" >> "$check_manifest"
-      eprint "Check failed (see log): ${log_file#$repo_root/}"
+      printf 'fail\t%s\t%s\n' "$cmd" "${log_file#"$repo_root"/}" >> "$check_manifest"
+      eprint "Check failed (see log): ${log_file#"$repo_root"/}"
       exit 1
     fi
   done
@@ -475,11 +475,11 @@ if [[ "$run_capture" -eq 1 ]]; then
 fi
 
 printf '%s\n' "UI iteration round generated:"
-printf '%s\n' "- meta: ${meta_file#$repo_root/}"
+printf '%s\n' "- meta: ${meta_file#"$repo_root"/}"
 if [[ "$run_capture" -eq 1 ]]; then
-  printf '%s\n' "- screenshot(desktop): ${desktop_file#$repo_root/}"
-  printf '%s\n' "- screenshot(mobile): ${mobile_file#$repo_root/}"
+  printf '%s\n' "- screenshot(desktop): ${desktop_file#"$repo_root"/}"
+  printf '%s\n' "- screenshot(mobile): ${mobile_file#"$repo_root"/}"
 fi
 if [[ "$run_checks" -eq 1 ]]; then
-  printf '%s\n' "- checks: ${checks_dir#$repo_root/}"
+  printf '%s\n' "- checks: ${checks_dir#"$repo_root"/}"
 fi
