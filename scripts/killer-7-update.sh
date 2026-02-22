@@ -119,7 +119,7 @@ run_healthcheck() {
   local tag="$2"
   local cmd="$3"
   log_info "healthcheck: ${image}:${tag} cmd='$cmd'"
-  if ! docker run --rm "${image}:${tag}" sh -lc "$cmd"; then
+  if ! docker run --rm --entrypoint sh "${image}:${tag}" -lc "$cmd"; then
     return 1
   fi
   return 0

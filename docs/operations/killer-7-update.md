@@ -54,7 +54,7 @@ chmod +x /usr/local/bin/killer-7-update
 2. GitHub Releases API から対象チャネルの最新タグを取得
 3. 現在の `:current` タグと比較し、同一なら no-op で終了（exit 0）
 4. 新バージョンを `docker pull` → `:current` にタグ付け
-5. ヘルスチェック実行（`docker run --rm <image>:<tag> sh -lc "<cmd>"`）
+5. ヘルスチェック実行（`docker run --rm --entrypoint sh <image>:<tag> -lc "<cmd>"`）
 6. 成功: 正常終了（exit 0）
 7. 失敗: 直前バージョンへロールバックし、エラーログを出力して exit 1
 
@@ -72,7 +72,7 @@ chmod +x /usr/local/bin/killer-7-update
 
 ```bash
 docker tag ghcr.io/toarupen/killer-7:<前バージョンタグ> ghcr.io/toarupen/killer-7:current
-docker run --rm ghcr.io/toarupen/killer-7:current killer-7 review --help
+docker run --rm ghcr.io/toarupen/killer-7:current review --help
 ```
 
 ## 障害時の復旧

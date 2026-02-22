@@ -213,7 +213,7 @@ hc_args="$(bash -c "
   run_healthcheck ghcr.io/test/killer-7 v1.2.3 'killer-7 review --help'
 ")"
 
-if [[ "$hc_args" == *"4|sh"* && "$hc_args" == *"5|-lc"* && "$hc_args" == *"6|killer-7 review --help"* ]]; then
+if [[ "$hc_args" == *"3|--entrypoint"* && "$hc_args" == *"4|sh"* && "$hc_args" == *"6|-lc"* && "$hc_args" == *"7|killer-7 review --help"* ]]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
