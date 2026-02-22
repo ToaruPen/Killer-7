@@ -37,10 +37,13 @@ KILLER7_HEALTHCHECK_CMD="killer-7 review --help"
 ### 3. 更新スクリプト配置
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ToaruPen/Killer-7/main/scripts/killer-7-update.sh \
+KILLER7_UPDATE_SCRIPT_REF="v0.2.0"
+curl -fsSL "https://raw.githubusercontent.com/ToaruPen/Killer-7/${KILLER7_UPDATE_SCRIPT_REF}/scripts/killer-7-update.sh" \
   -o /usr/local/bin/killer-7-update
 chmod +x /usr/local/bin/killer-7-update
 ```
+
+`KILLER7_UPDATE_SCRIPT_REF` は、運用で承認済みのリリースタグに固定して管理する。
 
 ### 4. cron 設定（例: 毎日 3:00）
 

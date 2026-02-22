@@ -199,6 +199,8 @@ get_current_version() { echo "v1.0.0"; }
 get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 0; }
+ACTIVATE_CALLED=""
+activate_image() { ACTIVATE_CALLED="yes:$1:$2"; }
 STUB
 
 result="$(bash -c "
@@ -220,6 +222,14 @@ else
   fail=$((fail + 1))
   eprint "FAIL: main: update should log 'update complete'"
 fi
+
+result="$(bash -c "
+  source '$update_sh'
+  source '$tmpdir/stub-update.sh'
+  main >/dev/null 2>&1 || true
+  echo \"\$ACTIVATE_CALLED\"
+")"
+assert_eq "main: update should activate target image after healthcheck" "yes:ghcr.io/toarupen/killer-7:v1.1.0" "$result"
 
 eprint "=== main: healthcheck failure => rollback + exit 1 ==="
 
@@ -295,6 +305,7 @@ get_current_version() { echo "v1.0.0"; }
 get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 0; }
+activate_image() { return 0; }
 STUB
 
 result="$(bash -c "
@@ -357,6 +368,19 @@ rollback() { return 1; }
 STUB
 
 assert_exit "main: rollback failure => exit 2" 2 bash -c "source '$update_sh'; source '$tmpdir/stub-rollback-fail.sh'; main"
+
+eprint "=== main: activate failure => exit 2 ==="
+
+cat > "$tmpdir/stub-activate-fail.sh" <<'STUB'
+resolve_target_tag() { echo "v1.1.0"; }
+get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
+pull_image() { return 0; }
+run_healthcheck() { return 0; }
+activate_image() { return 1; }
+STUB
+
+assert_exit "main: activate failure => exit 2" 2 bash -c "source '$update_sh'; source '$tmpdir/stub-activate-fail.sh'; main"
 
 
 

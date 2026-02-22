@@ -111,9 +111,12 @@ pull_image() {
   local image="$1"
   local tag="$2"
   log_info "pulling ${image}:${tag}"
-  if ! docker pull "${image}:${tag}"; then
-    return 1
-  fi
+  docker pull "${image}:${tag}"
+}
+
+activate_image() {
+  local image="$1"
+  local tag="$2"
   docker tag "${image}:${tag}" "${image}:current"
 }
 
@@ -212,6 +215,11 @@ main() {
       return 2
     fi
     return 1
+  fi
+
+  if ! activate_image "$KILLER7_IMAGE" "$target_tag"; then
+    log_error "Failed to activate image: $KILLER7_IMAGE:$target_tag"
+    return 2
   fi
 
   log_info "update complete: $KILLER7_IMAGE:$target_tag"
