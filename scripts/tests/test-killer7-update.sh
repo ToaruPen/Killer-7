@@ -91,11 +91,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"--limit 100"* && "$args" == *".isPrerelease | not"* && "$args" == *".isDraft | not"* && "$args" == *"test(\"^v?[0-9]+"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".prerelease | not"* && "$args" == *".draft | not"* && "$args" == *".tag_name | test"* ]]; then
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"--limit 100"* && "$args" == *"select(.isPrerelease"* && "$args" == *".isDraft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -109,11 +109,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"--limit 100"* && "$args" == *".isPrerelease | not"* && "$args" == *".isDraft | not"* && "$args" == *"test(\"^v?[0-9]+"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".prerelease | not"* && "$args" == *".draft | not"* && "$args" == *".tag_name | test"* ]]; then
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"--limit 100"* && "$args" == *"select(.isPrerelease"* && "$args" == *".isDraft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -127,11 +127,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"--limit 100"* && "$args" == *"select(.isPrerelease"* && "$args" == *".isDraft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
       echo ""
       return 0
     fi
-    if [[ "$args" == *"--limit 100"* && "$args" == *".isPrerelease | not"* && "$args" == *".isDraft | not"* && "$args" == *"test(\"^v?[0-9]+"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".prerelease | not"* && "$args" == *".draft | not"* && "$args" == *".tag_name | test"* ]]; then
       echo "v1.2.3"
       return 0
     fi

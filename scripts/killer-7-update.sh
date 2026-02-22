@@ -19,7 +19,6 @@ set -euo pipefail
 readonly KILLER7_DEFAULT_IMAGE="ghcr.io/toarupen/killer-7"
 readonly KILLER7_DEFAULT_CHANNEL="stable"
 readonly KILLER7_DEFAULT_HEALTHCHECK_CMD="killer-7 review --help"
-readonly KILLER7_RELEASE_LIST_LIMIT="100"
 
 log_info()  { printf '[INFO]  %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 log_error() { printf '[ERROR] %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
@@ -41,9 +40,12 @@ load_config() {
 }
 
 
-# Resolve the target tag for the given channel.
-# For stable: latest release tag matching v*
-# For canary: latest pre-release tag matching v*-canary* or v*-rc*
+resolve_release_tag() {
+  local repo_owner_name="$1"
+  local jq_filter="$2"
+  gh api --paginate "repos/${repo_owner_name}/releases?per_page=100" --jq "$jq_filter" 2>/dev/null | head -n1 || true
+}
+
 resolve_target_tag() {
   local channel="$1"
   local image="$2"
@@ -53,12 +55,12 @@ resolve_target_tag() {
   local tag=""
   case "$channel" in
     stable)
-      tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not) and (.tagName | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
       ;;
     canary)
-      tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select(.isPrerelease and (.isDraft | not) and (.tagName | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$")))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select(.prerelease and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))) | .tag_name')"
       if [[ -z "$tag" ]]; then
-        tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not) and (.tagName | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+        tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
       fi
       ;;
     *)

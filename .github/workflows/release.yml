@@ -122,7 +122,7 @@ jobs:
           image="ghcr.io/${OWNER_LC}/killer-7"
           tag_ref="${GITHUB_REF_NAME}"
           tags="${image}:${tag_ref}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "$tag_ref" == v* && "$tag_ref" != *-* ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "$tag_ref" != *-* ]]; then
             tags+=$'\n'"${image}:latest"
           fi
           {
