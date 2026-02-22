@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# killer-7-update.sh - Auto-update Killer-7 Docker image from ghcr.io
+#
+# Usage:
+#   scripts/killer-7-update.sh [--config <path>]
+#
+# Configuration (via config file or env):
+#   KILLER7_CHANNEL         stable|canary  (default: stable)
+#   KILLER7_IMAGE           Docker image base (default: ghcr.io/toarupen/killer-7)
+#   KILLER7_HEALTHCHECK_CMD Command to verify after update (default: killer-7 review --help)
+#
+# Exit codes:
+#   0 - Success (updated or no-op)
+#   1 - Healthcheck failed, rolled back
+#   2 - Fatal error (config/network/docker)
+
+set -euo pipefail
+
+readonly KILLER7_DEFAULT_IMAGE="ghcr.io/toarupen/killer-7"
+readonly KILLER7_DEFAULT_CHANNEL="stable"
+readonly KILLER7_DEFAULT_HEALTHCHECK_CMD="killer-7 review --help"
+
+log_info()  { printf '[INFO]  %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+log_error() { printf '[ERROR] %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+
+
+load_config() {
+  local config_file="${1:-}"
+  if [[ -n "$config_file" && -f "$config_file" ]]; then
+    # shellcheck source=/dev/null
+    source "$config_file"
+  fi
+  KILLER7_IMAGE="${KILLER7_IMAGE:-$KILLER7_DEFAULT_IMAGE}"
+  KILLER7_CHANNEL="${KILLER7_CHANNEL:-$KILLER7_DEFAULT_CHANNEL}"
+  KILLER7_HEALTHCHECK_CMD="${KILLER7_HEALTHCHECK_CMD:-$KILLER7_DEFAULT_HEALTHCHECK_CMD}"
+}
+
+
+# Resolve the target tag for the given channel.
+# For stable: latest release tag matching v*
+# For canary: latest pre-release tag matching v*-canary* or v*-rc*
+resolve_target_tag() {
+  local channel="$1"
+  local image="$2"
+  local repo_owner_name
+  repo_owner_name="${image#ghcr.io/}"
+
+  local tag=""
+  case "$channel" in
+    stable)
+      tag="$(gh release view --repo "$repo_owner_name" --json tagName --jq '.tagName' 2>/dev/null || echo "")"
+      ;;
+    canary)
+      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      if [[ -z "$tag" ]]; then
+        tag="$(gh release view --repo "$repo_owner_name" --json tagName --jq '.tagName' 2>/dev/null || echo "")"
+      fi
+      ;;
+    *)
+      log_error "Unknown channel: $channel"
+      echo ""
+      return 1
+      ;;
+  esac
+  echo "$tag"
+}
+
+get_current_version() {
+  local image="$1"
+  local current_tag=""
+  current_tag="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${image}:current" 2>/dev/null || echo "")"
+  if [[ -z "$current_tag" || "$current_tag" == "<no value>" ]]; then
+    current_tag="$(docker inspect --format '{{.RepoTags}}' "${image}:current" 2>/dev/null | grep -oP '[^\[\] ]+' | head -1 | sed "s|^${image}:||" || echo "")"
+  fi
+  echo "$current_tag"
+}
+
+
+# Returns 0 if update is needed, 1 if no-op.
+needs_update() {
+  local current="$1"
+  local target="$2"
+  if [[ -z "$target" ]]; then
+    return 1
+  fi
+  if [[ "$current" == "$target" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+pull_image() {
+  local image="$1"
+  local tag="$2"
+  log_info "pulling ${image}:${tag}"
+  if ! docker pull "${image}:${tag}"; then
+    return 1
+  fi
+  docker tag "${image}:${tag}" "${image}:current"
+}
+
+run_healthcheck() {
+  local image="$1"
+  local tag="$2"
+  local cmd="$3"
+  log_info "healthcheck: ${image}:${tag} cmd='$cmd'"
+  if ! docker run --rm "${image}:${tag}" sh -lc "$cmd"; then
+    return 1
+  fi
+  return 0
+}
+
+rollback() {
+  local image="$1"
+  local previous_tag="$2"
+  if [[ -z "$previous_tag" ]]; then
+    log_error "rollback failed: previous tag is empty"
+    return 1
+  fi
+
+  log_info "rollback: restoring ${image}:${previous_tag} as :current"
+  if ! docker image inspect "${image}:${previous_tag}" >/dev/null 2>&1; then
+    log_error "rollback failed: image not found ${image}:${previous_tag}"
+    return 1
+  fi
+
+  if ! docker tag "${image}:${previous_tag}" "${image}:current"; then
+    log_error "rollback failed: docker tag ${image}:${previous_tag} -> ${image}:current"
+    return 1
+  fi
+
+  return 0
+}
+
+
+main() {
+  local config_file=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config)
+        config_file="${2:-}"
+        if [[ -z "$config_file" ]]; then
+          log_error "--config requires a path argument"
+          return 2
+        fi
+        shift 2
+        ;;
+      *)
+        log_error "Unknown argument: $1"
+        return 2
+        ;;
+    esac
+  done
+
+  load_config "$config_file"
+
+  log_info "channel=$KILLER7_CHANNEL image=$KILLER7_IMAGE"
+
+  local target_tag
+  target_tag="$(resolve_target_tag "$KILLER7_CHANNEL" "$KILLER7_IMAGE")"
+  if [[ -z "$target_tag" ]]; then
+    log_error "Failed to resolve target tag for channel=$KILLER7_CHANNEL"
+    return 2
+  fi
+
+  local current_version
+  current_version="$(get_current_version "$KILLER7_IMAGE")"
+
+  if ! needs_update "$current_version" "$target_tag"; then
+    log_info "no-op: current=$current_version target=$target_tag"
+    return 0
+  fi
+
+  log_info "updating: current=$current_version target=$target_tag"
+
+  if ! pull_image "$KILLER7_IMAGE" "$target_tag"; then
+    log_error "Failed to pull image: $KILLER7_IMAGE:$target_tag"
+    return 2
+  fi
+
+  if ! run_healthcheck "$KILLER7_IMAGE" "$target_tag" "$KILLER7_HEALTHCHECK_CMD"; then
+    log_error "Healthcheck failed for $KILLER7_IMAGE:$target_tag, rolling back to $current_version"
+    if ! rollback "$KILLER7_IMAGE" "$current_version"; then
+      log_error "Rollback failed after healthcheck failure"
+      return 2
+    fi
+    return 1
+  fi
+
+  log_info "update complete: $KILLER7_IMAGE:$target_tag"
+  return 0
+}
+
+# Allow sourcing for testing without executing main.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
