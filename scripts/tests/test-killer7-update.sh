@@ -365,6 +365,30 @@ CONF
 
 assert_exit "main: non-ghcr image should fail" 2 bash -c "source '$update_sh'; main --config '$tmpdir/bad-image-registry.env'"
 
+eprint "=== main: empty healthcheck command => exit 2 ==="
+
+cat > "$tmpdir/stub-empty-healthcheck.sh" <<'STUB'
+load_config() {
+  KILLER7_IMAGE="ghcr.io/toarupen/killer-7"
+  KILLER7_CHANNEL="stable"
+  KILLER7_HEALTHCHECK_CMD=""
+}
+STUB
+
+assert_exit "main: empty healthcheck command should fail" 2 bash -c "source '$update_sh'; source '$tmpdir/stub-empty-healthcheck.sh'; main"
+
+stderr_out="$(bash -c "
+  source '$update_sh'
+  source '$tmpdir/stub-empty-healthcheck.sh'
+  main
+" 2>&1 >/dev/null || true)"
+if [[ "$stderr_out" == *"KILLER7_HEALTHCHECK_CMD must not be empty"* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  eprint "FAIL: main: empty healthcheck command should log explicit error"
+fi
+
 eprint "=== main: unknown channel => exit 2 ==="
 
 cat > "$tmpdir/bad-channel.env" <<'CONF'

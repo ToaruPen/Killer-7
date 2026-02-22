@@ -216,6 +216,10 @@ main() {
     log_error "KILLER7_IMAGE must be ghcr.io/<owner>/<repo>: $KILLER7_IMAGE"
     return 2
   fi
+  if [[ -z "$KILLER7_HEALTHCHECK_CMD" ]]; then
+    log_error "KILLER7_HEALTHCHECK_CMD must not be empty: '$KILLER7_HEALTHCHECK_CMD'"
+    return 2
+  fi
 
   log_info "channel=$KILLER7_CHANNEL image=$KILLER7_IMAGE"
 
