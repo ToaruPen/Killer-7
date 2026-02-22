@@ -217,15 +217,15 @@ Options:
   --desc <text>           Used to build branch name when --branch is omitted
   --base <ref>            Start point (default: main)
   --dir <path>            Worktree directory (default: computed under --worktrees-root)
-   --worktrees-root <dir>  Root directory for worktrees (default: ../.worktrees/<repo>)
-   --tool <none|opencode|codex|all>
-                           Run sync-agent-config in the new worktree (default: env or opencode)
-   --use-existing-branch   Allow reusing an existing linked/local branch (default: fail)
-   --lock-issue            Create a linked branch on the Issue via `gh issue develop` (default)
-   --no-lock-issue         Skip Issue lock/linking (offline / local-only)
+  --worktrees-root <dir>  Root directory for worktrees (default: ../.worktrees/<repo>)
+  --tool <none|opencode|codex|all>
+                          Run sync-agent-config in the new worktree (default: env or opencode)
+  --use-existing-branch   Allow reusing an existing linked/local branch (default: fail)
+  --lock-issue            Create a linked branch on the Issue via `gh issue develop` (default)
+  --no-lock-issue         Skip Issue lock/linking (offline / local-only)
 
- Notes:
-   - Branch naming rules: .agent/rules/branch.md
+Notes:
+  - Branch naming rules: .agent/rules/branch.md
 EOF
 			exit 0
 			;;
@@ -566,6 +566,7 @@ EOF
 		exit 2
 	fi
 
+	local tmpdir
 	tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t agentic-sdd-worktree)"
 	cleanup() { rm -rf "$tmpdir"; }
 	trap cleanup EXIT
@@ -576,8 +577,8 @@ EOF
 	local idx=0
 	if [[ "${#issues[@]}" -gt 0 ]]; then
 		for n in "${issues[@]}"; do
-			key="issue:$n"
-			out_file="$tmpdir/set.$idx"
+			local key="issue:$n"
+			local out_file="$tmpdir/set.$idx"
 			if ! python3 "$extractor" --repo-root "$root" --issue "$n" --gh-repo "$gh_repo" --mode "$mode" >"$out_file" 2>"$tmpdir/err.$idx"; then
 				eprint "Failed to extract files for $key:"
 				cat "$tmpdir/err.$idx" >&2
@@ -610,6 +611,9 @@ EOF
 		exit 3
 	fi
 
+	trap - EXIT
+	cleanup
+
 	printf '%s\n' "OK: no overlaps"
 }
 
@@ -621,7 +625,7 @@ main() {
 		exit 2
 	fi
 
-	cmd="$1"
+	local cmd="$1"
 	shift
 	case "$cmd" in
 	-h | --help | help)
