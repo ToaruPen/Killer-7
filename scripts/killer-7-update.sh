@@ -52,12 +52,12 @@ resolve_target_tag() {
   local tag=""
   case "$channel" in
     stable)
-      tag="$(gh release view --repo "$repo_owner_name" --json tagName --jq '.tagName' 2>/dev/null || echo "")"
+      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       ;;
     canary)
-      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       if [[ -z "$tag" ]]; then
-        tag="$(gh release view --repo "$repo_owner_name" --json tagName --jq '.tagName' 2>/dev/null || echo "")"
+        tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       fi
       ;;
     *)

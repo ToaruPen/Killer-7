@@ -85,6 +85,62 @@ assert_eq "load_config: default image" "ghcr.io/toarupen/killer-7" "$result"
 
 assert_exit "load_config: missing config file should fail" 1 bash -c "source '$update_sh'; load_config '$tmpdir/not-found.env'"
 
+eprint "=== resolve_target_tag: stable/canary should exclude draft ==="
+
+result="$(bash -c '
+  source "'"$update_sh"'"
+  gh() {
+    local args="$*"
+    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo "v1.2.3"
+      return 0
+    fi
+    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo "v1.3.0-canary.1"
+      return 0
+    fi
+    return 1
+  }
+  resolve_target_tag stable ghcr.io/toarupen/killer-7
+')"
+assert_eq "resolve_target_tag: stable returns non-draft stable tag" "v1.2.3" "$result"
+
+result="$(bash -c '
+  source "'"$update_sh"'"
+  gh() {
+    local args="$*"
+    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo "v1.2.3"
+      return 0
+    fi
+    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo "v1.3.0-canary.1"
+      return 0
+    fi
+    return 1
+  }
+  resolve_target_tag canary ghcr.io/toarupen/killer-7
+')"
+assert_eq "resolve_target_tag: canary returns non-draft prerelease tag" "v1.3.0-canary.1" "$result"
+
+result="$(bash -c '
+  source "'"$update_sh"'"
+  gh() {
+    local args="$*"
+    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo ""
+      return 0
+    fi
+    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+      echo "v1.2.3"
+      return 0
+    fi
+    return 1
+  }
+  resolve_target_tag canary ghcr.io/toarupen/killer-7
+')"
+assert_eq "resolve_target_tag: canary falls back to stable non-draft tag" "v1.2.3" "$result"
+
 eprint "=== get_current_version: fallback should ignore current/latest ==="
 
 result="$(bash -c "
