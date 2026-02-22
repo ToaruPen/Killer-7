@@ -70,7 +70,13 @@ get_current_version() {
   local current_tag=""
   current_tag="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${image}:current" 2>/dev/null || echo "")"
   if [[ -z "$current_tag" || "$current_tag" == "<no value>" ]]; then
-    current_tag="$(docker inspect --format '{{.RepoTags}}' "${image}:current" 2>/dev/null | grep -oP '[^\[\] ]+' | head -1 | sed "s|^${image}:||" || echo "")"
+    current_tag="$(
+      docker inspect --format '{{range .RepoTags}}{{println .}}{{end}}' "${image}:current" 2>/dev/null \
+        | sed "s|^${image}:||" \
+        | grep -Ev '^(current|latest)$' \
+        | head -1 \
+        || echo ""
+    )"
   fi
   echo "$current_tag"
 }

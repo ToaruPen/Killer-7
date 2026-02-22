@@ -83,6 +83,27 @@ assert_eq "load_config: default channel" "stable" "$result"
 result="$(bash -c "source '$update_sh'; load_config ''; echo \"\$KILLER7_IMAGE\"")"
 assert_eq "load_config: default image" "ghcr.io/toarupen/killer-7" "$result"
 
+eprint "=== get_current_version: fallback should ignore current/latest ==="
+
+result="$(bash -c "
+  source '$update_sh'
+  docker() {
+    if [[ \"\$1\" == \"inspect\" && \"\$2\" == \"--format\" ]]; then
+      local fmt=\"\$3\"
+      if [[ \"\$fmt\" == *'index .Config.Labels'* ]]; then
+        return 1
+      fi
+      printf '%s\\n' 'ghcr.io/toarupen/killer-7:current'
+      printf '%s\\n' 'ghcr.io/toarupen/killer-7:v1.2.3'
+      printf '%s\\n' 'ghcr.io/toarupen/killer-7:latest'
+      return 0
+    fi
+    return 1
+  }
+  get_current_version ghcr.io/toarupen/killer-7
+")"
+assert_eq "get_current_version: fallback picks semantic tag" "v1.2.3" "$result"
+
 
 
 eprint "=== main: no-op when same version ==="
