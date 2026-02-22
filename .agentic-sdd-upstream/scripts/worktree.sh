@@ -124,6 +124,10 @@ EOF
 
 	if [[ -z "$dir" ]]; then
 		dir="$(repo_root)"
+		if [[ -z "$dir" ]]; then
+			eprint "Not in a git repository."
+			exit 1
+		fi
 	fi
 
 	if [[ ! -d "$dir" ]]; then
