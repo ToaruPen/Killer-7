@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.
 - Extended PR input metadata (`meta.json`) with `diff_mode` and `base_head_sha`.
 - Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
+- Cleaned variable naming in CLI/OpenCode runner paths and aligned tests/scripts with S603-safe subprocess usage and Python executable resolution.
 
 ## [0.1.1] - 2026-02-11
 

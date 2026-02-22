@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -12,16 +13,29 @@ from killer_7.errors import BlockedError, ExecFailureError
 from killer_7.llm.opencode_runner import OpenCodeRunner
 from killer_7.validate.evidence import parse_context_bundle_index
 
+_GIT_BIN = shutil.which("git")
+if _GIT_BIN is None:
+    raise RuntimeError("git executable not found")
+GIT_BIN: str = _GIT_BIN
 
-def _git_init(td: str) -> None:
-    subprocess.run(
-        ["git", "init", "-q"],
+
+def _run_git(td: str, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        [GIT_BIN, *args],
         cwd=td,
         check=True,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def _git_init(td: str) -> None:
+    _run_git(td, "init", "-q")
+
+
+def _git_add(td: str, pathspec: str) -> None:
+    _run_git(td, "add", pathspec)
 
 
 def _write_fake_opencode_ok(path: Path, *, payload: object) -> None:
@@ -698,14 +712,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             target = Path(td) / "x.txt"
             target.write_text("a\nB\nC\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "x.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "x.txt")
 
             fake = Path(td) / "fake-opencode"
             _write_fake_opencode_ok_with_read(fake, file_path=str(target))
@@ -733,14 +740,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             target = Path(td) / "x.txt"
             target.write_text("a\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "x.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "x.txt")
 
             fake = Path(td) / "fake-opencode"
             _write_fake_opencode_ok_with_read_offset_limit(
@@ -809,14 +809,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             envdir.mkdir(parents=True, exist_ok=True)
             target = envdir / "secrets.txt"
             target.write_text("secret\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", str(target.relative_to(td))],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, str(target.relative_to(td)))
 
             fake = Path(td) / "fake-opencode"
             _write_fake_opencode_ok_with_read(fake, file_path=str(target))
@@ -836,14 +829,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             target = Path(td) / "x.txt"
             target.write_text("a\nB\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "x.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "x.txt")
 
             fake = Path(td) / "fake-opencode"
             _write_fake_opencode_ok_with_two_tool_uses(fake, file_path=str(target))
@@ -893,14 +879,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             tracked = Path(td) / "tracked.py"
             tracked.write_text("print('ok')\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "tracked.py"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "tracked.py")
             untracked = Path(td) / "secret.py"
             untracked.write_text("API_KEY=supersecret\n", encoding="utf-8")
 
@@ -927,14 +906,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             tracked = Path(td) / "a.txt"
             tracked.write_text("hello\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "a.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "a.txt")
             untracked = Path(td) / "secret.txt"
             untracked.write_text("API_KEY=supersecret\n", encoding="utf-8")
 
@@ -963,14 +935,7 @@ class TestOpenCodeRunner(unittest.TestCase):
             _git_init(td)
             target = Path(td) / "x.txt"
             target.write_text("a\nB\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "x.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _git_add(td, "x.txt")
 
             fake = Path(td) / "fake-opencode"
             _write_fake_opencode_ok_with_two_tool_uses(fake, file_path=str(target))

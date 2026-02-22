@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -851,7 +850,7 @@ def run_cli(
         env["KILLER7_GH_BIN"] = gh_bin
     if opencode_bin is not None:
         env["KILLER7_OPENCODE_BIN"] = opencode_bin
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
         env=env,
@@ -1347,7 +1346,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
-            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+            state_payload = json.loads(
+                (out_dir / "state.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
             self.assertEqual(
                 state_payload.get("incremental_base_head_sha"), "aaaaaaaaaaaaaaaa"
@@ -1394,7 +1395,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
-            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+            state_payload = json.loads(
+                (out_dir / "state.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(state_payload.get("repo"), "owner/name")
             self.assertEqual(state_payload.get("pr"), 123)
             self.assertEqual(state_payload.get("incremental_base_head_sha"), "")
@@ -2061,9 +2064,9 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            secret = "TOKEN_ABC123"
+            src_segment = "sample_bundle_id"
             (tool_dir / "bundle.txt").write_text(
-                f"# SRC: ../../secrets/{secret}\nL1: x\n",
+                f"# SRC: ../../secrets/{src_segment}\nL1: x\n",
                 encoding="utf-8",
             )
 
@@ -2081,7 +2084,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("tool_bundle_src_skipped", warn)
             self.assertIn("kind=invalid_src", warn)
             self.assertIn("bundle.txt", warn)
-            self.assertNotIn(secret, warn)
+            self.assertNotIn(src_segment, warn)
 
     def test_creates_review_summary_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:

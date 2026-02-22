@@ -600,11 +600,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:
         tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
         if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
-            extra_warning_lines: list[str] = [
+            initial_warning_lines: list[str] = [
                 "tool_bundle_dir_skipped kind=not_a_directory"
                 f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
             ]
-            return ([], {}, extra_warning_lines)
+            return ([], {}, initial_warning_lines)
         if not os.path.isdir(tool_bundle_dir):
             return ([], {}, [])
 
@@ -1114,11 +1114,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 f"Invalid aspects index JSON: aspects[{i}] must be an object"
             )
 
-        aspect = entry.get("aspect")
+        aspect_name = entry.get("aspect")
         ok = entry.get("ok")
         rel_path = entry.get("result_path")
 
-        if not isinstance(aspect, str) or not aspect:
+        if not isinstance(aspect_name, str) or not aspect_name:
             raise ExecFailureError(
                 f"Invalid aspects index JSON: aspects[{i}].aspect must be a non-empty string"
             )
@@ -1153,11 +1153,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             if result_path:
                 aspect_info["result_path"] = result_path
 
-            per_aspect[aspect] = aspect_info
+            per_aspect[aspect_name] = aspect_info
 
             evidence_index_aspects.append(
                 {
-                    "aspect": aspect,
+                    "aspect": aspect_name,
                     "ok": False,
                     "result_path": result_path,
                     "evidence_path": "",
@@ -1165,7 +1165,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             )
             policy_index_aspects.append(
                 {
-                    "aspect": aspect,
+                    "aspect": aspect_name,
                     "ok": False,
                     "result_path": result_path,
                     "policy_path": "",
@@ -1174,7 +1174,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             continue
         if not isinstance(rel_path, str) or not rel_path:
             raise ExecFailureError(
-                f"Invalid aspects index JSON: ok=true but result_path missing for aspect={aspect!r}"
+                f"Invalid aspects index JSON: ok=true but result_path missing for aspect={aspect_name!r}"
             )
 
         totals["aspects_ok"] += 1
@@ -1241,7 +1241,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "kind": "aspect_evidence",
             "generated_at": now_utc_z(),
             "scope_id": scope_id,
-            "aspect": aspect,
+            "aspect": aspect_name,
             "input_path": raw_rel_path,
             "canonical_path": canonical_rel_path,
             "review": updated_review,
@@ -1249,18 +1249,18 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         }
 
         evidence_path = write_aspect_evidence_json(
-            out_dir, aspect=aspect, payload=aspect_evidence_payload
+            out_dir, aspect=aspect_name, payload=aspect_evidence_payload
         )
 
         policy_path = write_aspect_policy_json(
-            out_dir, aspect=aspect, payload=policy_review
+            out_dir, aspect=aspect_name, payload=policy_review
         )
 
         # Use the evidence/policy-applied review with machine fields preserved for
         # aggregated report generation (review-summary.json).
-        summary_reviews[aspect] = dict(updated_review)
+        summary_reviews[aspect_name] = dict(updated_review)
 
-        per_aspect[aspect] = {
+        per_aspect[aspect_name] = {
             "ok": True,
             "input_path": raw_rel_path,
             "canonical_path": canonical_rel_path,
@@ -1273,7 +1273,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
         evidence_index_aspects.append(
             {
-                "aspect": aspect,
+                "aspect": aspect_name,
                 "ok": True,
                 "result_path": canonical_rel_path,
                 "input_path": raw_rel_path,
@@ -1284,7 +1284,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         )
         policy_index_aspects.append(
             {
-                "aspect": aspect,
+                "aspect": aspect_name,
                 "ok": True,
                 "result_path": rel_path.replace(os.sep, "/"),
                 "policy_path": os.path.relpath(policy_path, out_dir).replace(
@@ -1295,23 +1295,29 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
         if not isinstance(stats, dict):
             raise ExecFailureError(
-                f"Invalid evidence stats: {aspect}.stats must be an object"
+                f"Invalid evidence stats: {aspect_name}.stats must be an object"
             )
 
-        total_in = require_int(stats.get("total_in"), key="total_in", aspect=aspect)
-        total_out = require_int(stats.get("total_out"), key="total_out", aspect=aspect)
+        total_in = require_int(
+            stats.get("total_in"), key="total_in", aspect=aspect_name
+        )
+        total_out = require_int(
+            stats.get("total_out"), key="total_out", aspect=aspect_name
+        )
         excluded_count = require_int(
-            stats.get("excluded_count"), key="excluded_count", aspect=aspect
+            stats.get("excluded_count"), key="excluded_count", aspect=aspect_name
         )
         downgraded_count = require_int(
-            stats.get("downgraded_count"), key="downgraded_count", aspect=aspect
+            stats.get("downgraded_count"), key="downgraded_count", aspect=aspect_name
         )
         verified_true_count = require_int(
-            stats.get("verified_true_count"), key="verified_true_count", aspect=aspect
+            stats.get("verified_true_count"),
+            key="verified_true_count",
+            aspect=aspect_name,
         )
         if verified_true_count > total_in:
             raise ExecFailureError(
-                f"Invalid evidence stats: {aspect}.verified_true_count must be <= total_in"
+                f"Invalid evidence stats: {aspect_name}.verified_true_count must be <= total_in"
             )
 
         totals["total_in"] += total_in
