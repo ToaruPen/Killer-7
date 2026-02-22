@@ -19,6 +19,7 @@ set -euo pipefail
 readonly KILLER7_DEFAULT_IMAGE="ghcr.io/toarupen/killer-7"
 readonly KILLER7_DEFAULT_CHANNEL="stable"
 readonly KILLER7_DEFAULT_HEALTHCHECK_CMD="killer-7 review --help"
+readonly KILLER7_RELEASE_LIST_LIMIT="100"
 
 log_info()  { printf '[INFO]  %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 log_error() { printf '[ERROR] %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
@@ -52,12 +53,12 @@ resolve_target_tag() {
   local tag=""
   case "$channel" in
     stable)
-      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       ;;
     canary)
-      tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+      tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       if [[ -z "$tag" ]]; then
-        tag="$(gh release list --repo "$repo_owner_name" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
+        tag="$(gh release list --repo "$repo_owner_name" --limit "$KILLER7_RELEASE_LIST_LIMIT" --json tagName,isPrerelease,isDraft --jq '[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // ""' 2>/dev/null || echo "")"
       fi
       ;;
     *)

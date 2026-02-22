@@ -91,11 +91,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -109,11 +109,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -127,11 +127,11 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select(.isPrerelease and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo ""
       return 0
     fi
-    if [[ "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
+    if [[ "$args" == *"--limit 100"* && "$args" == *"[.[] | select((.isPrerelease | not) and (.isDraft | not))] | .[0].tagName // \"\""* ]]; then
       echo "v1.2.3"
       return 0
     fi
