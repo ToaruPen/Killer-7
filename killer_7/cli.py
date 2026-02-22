@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import unicodedata
@@ -46,7 +47,7 @@ from .github.post_summary import post_summary_comment
 from .github.pr_input import fetch_pr_input
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
-from .llm.opencode_runner import opencode_artifacts_dir
+from .llm.opencode_runner import OpenCodeRunner, opencode_artifacts_dir
 from .report.format_md import format_review_summary_md
 from .report.merge import merge_review_summary
 from .sot.allowlist import default_sot_allowlist
@@ -374,28 +375,31 @@ def _sha256_hex_json(payload: object) -> str:
     return _sha256_hex_text(canonical)
 
 
+def _resolved_bin_path_for_cache(bin_path: str) -> str:
+    b = (bin_path or "").strip()
+    if not b:
+        return ""
+    if os.path.isabs(b):
+        return b
+    if os.sep in b or (os.altsep and os.altsep in b):
+        return os.path.abspath(b)
+    found = shutil.which(b)
+    return found or ""
+
+
 def _opencode_execution_params_for_cache() -> dict[str, object]:
-    opencode_bin = (os.environ.get("KILLER7_OPENCODE_BIN") or "").strip()
-    agent = (os.environ.get("KILLER7_OPENCODE_AGENT") or "").strip()
-    model = (os.environ.get("KILLER7_OPENCODE_MODEL") or "").strip()
-    timeout_s = (os.environ.get("KILLER7_OPENCODE_TIMEOUT_S") or "").strip()
-    timeout = 300
-    if timeout_s:
-        try:
-            timeout = int(timeout_s)
-        except ValueError as exc:
-            raise ExecFailureError(
-                f"Invalid KILLER7_OPENCODE_TIMEOUT_S: {timeout_s!r} (expected integer seconds)"
-            ) from exc
-        if timeout <= 0:
-            raise ExecFailureError(
-                f"Invalid KILLER7_OPENCODE_TIMEOUT_S: {timeout_s!r} (must be >= 1)"
-            )
+    runner = OpenCodeRunner.from_env()
+    opencode_bin = (runner.bin_path or "").strip()
+    resolved_bin = _resolved_bin_path_for_cache(opencode_bin)
+    resolved_real = os.path.realpath(resolved_bin) if resolved_bin else ""
+
     return {
         "opencode_bin": opencode_bin,
-        "agent": agent,
-        "model": model,
-        "timeout_s": timeout,
+        "resolved_opencode_bin": resolved_bin,
+        "resolved_opencode_realpath": resolved_real,
+        "agent": (runner.agent or "").strip(),
+        "model": (runner.model or "").strip(),
+        "timeout_s": int(runner.timeout_s),
     }
 
 

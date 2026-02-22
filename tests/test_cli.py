@@ -977,6 +977,76 @@ class TestCli(unittest.TestCase):
             self.assertFalse(bool(reuse.get("hit")))
             self.assertEqual(reuse.get("reason"), "miss_cache_key")
 
+    def test_reuse_miss_when_default_opencode_resolution_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+
+            bin_a = Path(td) / "bin-a"
+            bin_b = Path(td) / "bin-b"
+            bin_a.mkdir(parents=True, exist_ok=True)
+            bin_b.mkdir(parents=True, exist_ok=True)
+            _write_fake_opencode(bin_a / "opencode")
+            _write_fake_opencode_exec_failure(bin_b / "opencode")
+
+            prev_path = os.environ.get("PATH")
+            prev_bin = os.environ.get("KILLER7_OPENCODE_BIN")
+            try:
+                os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                base_path = prev_path or ""
+                os.environ["PATH"] = f"{bin_a}{os.pathsep}{base_path}"
+
+                p1 = run_cli(
+                    [
+                        "review",
+                        "--repo",
+                        "owner/name",
+                        "--pr",
+                        "123",
+                        "--aspect",
+                        "correctness",
+                    ],
+                    cwd=td,
+                    gh_bin=str(fake_gh),
+                )
+                self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+                os.environ["PATH"] = f"{bin_b}{os.pathsep}{base_path}"
+
+                p2 = run_cli(
+                    [
+                        "review",
+                        "--repo",
+                        "owner/name",
+                        "--pr",
+                        "123",
+                        "--aspect",
+                        "correctness",
+                        "--reuse",
+                    ],
+                    cwd=td,
+                    gh_bin=str(fake_gh),
+                )
+            finally:
+                if prev_bin is None:
+                    os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                else:
+                    os.environ["KILLER7_OPENCODE_BIN"] = prev_bin
+                if prev_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = prev_path
+
+            self.assertNotEqual(p2.returncode, 0)
+
+            cache_payload = json.loads(
+                (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
+            )
+            reuse = cache_payload.get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertFalse(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "miss_cache_key")
+
     def test_reuse_miss_when_aspect_set_changes_runs_fresh(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
