@@ -83,6 +83,8 @@ assert_eq "load_config: default channel" "stable" "$result"
 result="$(bash -c "source '$update_sh'; load_config ''; echo \"\$KILLER7_IMAGE\"")"
 assert_eq "load_config: default image" "ghcr.io/toarupen/killer-7" "$result"
 
+assert_exit "load_config: missing config file should fail" 1 bash -c "source '$update_sh'; load_config '$tmpdir/not-found.env'"
+
 eprint "=== get_current_version: fallback should ignore current/latest ==="
 
 result="$(bash -c "
@@ -267,6 +269,14 @@ get_current_version() { echo "v1.0.0"; }
 STUB
 
 assert_exit "main: resolve failure => exit 2" 2 bash -c "source '$update_sh'; source '$tmpdir/stub-resolve-fail.sh'; main"
+
+eprint "=== main: unknown channel => exit 2 ==="
+
+cat > "$tmpdir/bad-channel.env" <<'CONF'
+KILLER7_CHANNEL=unknown
+CONF
+
+assert_exit "main: unknown channel => exit 2" 2 bash -c "source '$update_sh'; main --config '$tmpdir/bad-channel.env'"
 
 eprint "=== main: pull failure => exit 2 ==="
 

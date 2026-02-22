@@ -26,7 +26,11 @@ log_error() { printf '[ERROR] %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/nul
 
 load_config() {
   local config_file="${1:-}"
-  if [[ -n "$config_file" && -f "$config_file" ]]; then
+  if [[ -n "$config_file" ]]; then
+    if [[ ! -f "$config_file" ]]; then
+      log_error "Config file not found: $config_file"
+      return 1
+    fi
     # shellcheck source=/dev/null
     source "$config_file"
   fi
@@ -164,12 +168,17 @@ main() {
     esac
   done
 
-  load_config "$config_file"
+  if ! load_config "$config_file"; then
+    return 2
+  fi
 
   log_info "channel=$KILLER7_CHANNEL image=$KILLER7_IMAGE"
 
   local target_tag
-  target_tag="$(resolve_target_tag "$KILLER7_CHANNEL" "$KILLER7_IMAGE")"
+  if ! target_tag="$(resolve_target_tag "$KILLER7_CHANNEL" "$KILLER7_IMAGE")"; then
+    log_error "Failed to resolve target tag for channel=$KILLER7_CHANNEL"
+    return 2
+  fi
   if [[ -z "$target_tag" ]]; then
     log_error "Failed to resolve target tag for channel=$KILLER7_CHANNEL"
     return 2
