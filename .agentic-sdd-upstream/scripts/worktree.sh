@@ -6,7 +6,7 @@ eprint() { printf '%s\n' "$*" >&2; }
 
 usage() {
 	cat <<'EOF'
-Usage: scripts/agentic-sdd/worktree.sh <command> [args]
+Usage: scripts/worktree.sh <command> [args]
 
 Deterministic helper for parallel development with git worktrees.
 
@@ -18,9 +18,9 @@ Commands:
   remove     Remove a worktree
 
 Examples:
-  ./scripts/agentic-sdd/worktree.sh check --issue 123 --issue 124
-  ./scripts/agentic-sdd/worktree.sh new --issue 123 --desc "add user profile" --tool opencode
-  ./scripts/agentic-sdd/worktree.sh remove --dir ../.worktrees/myrepo/issue-123-add-user-profile
+  ./scripts/worktree.sh check --issue 123 --issue 124
+  ./scripts/worktree.sh new --issue 123 --desc "add user profile" --tool opencode
+  ./scripts/worktree.sh remove --dir ../.worktrees/myrepo/issue-123-add-user-profile
 
 EOF
 }
@@ -34,7 +34,7 @@ require_cmd() {
 }
 
 repo_root() {
-	git rev-parse --show-toplevel 2>/dev/null
+	git rev-parse --show-toplevel 2>/dev/null || true
 }
 
 main_repo_root_from_common_dir() {
@@ -104,7 +104,7 @@ cmd_bootstrap() {
 			;;
 		-h | --help)
 			cat <<'EOF'
-Usage: scripts/agentic-sdd/worktree.sh bootstrap [--dir <path>] --tool <opencode|codex|all>
+Usage: scripts/worktree.sh bootstrap [--dir <path>] --tool <opencode|codex|all>
 
 Generate tool configs in a worktree directory.
 EOF
@@ -205,7 +205,7 @@ cmd_new() {
 			;;
 		-h | --help)
 			cat <<'EOF'
- Usage: scripts/agentic-sdd/worktree.sh new --issue <number> [--desc <short description>] [options]
+Usage: scripts/worktree.sh new --issue <number> [--desc <short description>] [options]
 
 Options:
   --branch <name>         Explicit branch name (skips --type/--desc naming)
@@ -470,7 +470,7 @@ cmd_remove() {
 			;;
 		-h | --help)
 			cat <<'EOF'
-Usage: scripts/agentic-sdd/worktree.sh remove --dir <path> [--force]
+Usage: scripts/worktree.sh remove --dir <path> [--force]
 
 Remove a worktree.
 EOF
@@ -518,7 +518,7 @@ cmd_check() {
 			;;
 		-h | --help)
 			cat <<'EOF'
-Usage: scripts/agentic-sdd/worktree.sh check [--gh-repo OWNER/REPO] [--mode section|anywhere] \
+Usage: scripts/worktree.sh check [--gh-repo OWNER/REPO] [--mode section|anywhere] \
   --issue <n>...
 
 Detect overlaps between Issues by declared change-target files.
