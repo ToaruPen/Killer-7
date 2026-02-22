@@ -509,13 +509,25 @@ def _validate_reuse_artifacts(
             "reuse artifact invalid: .ai-review/aspects/index.json missing aspects[]"
         )
 
+    selected_aspect_set = set(selected_aspects)
     entry_by_aspect: dict[str, dict[str, object]] = {}
-    for item in aspects_obj:
+    for i, item in enumerate(aspects_obj):
         if not isinstance(item, dict):
-            continue
+            raise ExecFailureError(
+                f"reuse artifact invalid index entry at aspects[{i}]"
+            )
         aspect = item.get("aspect")
-        if isinstance(aspect, str) and aspect:
-            entry_by_aspect[aspect] = item
+        if not isinstance(aspect, str) or not aspect:
+            raise ExecFailureError(f"reuse artifact invalid aspect at aspects[{i}]")
+        if aspect in entry_by_aspect:
+            raise ExecFailureError(
+                f"reuse artifact duplicate index entry for aspect: {aspect}"
+            )
+        if aspect not in selected_aspect_set:
+            raise ExecFailureError(
+                f"reuse artifact unexpected index entry for aspect: {aspect}"
+            )
+        entry_by_aspect[aspect] = item
 
     out_dir_real = os.path.realpath(out_dir)
     for aspect in selected_aspects:

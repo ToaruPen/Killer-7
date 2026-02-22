@@ -1628,6 +1628,135 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
             self.assertIn("invalid result_path", p2.stderr)
 
+    def test_reuse_rejects_unexpected_aspect_entries_in_index(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
+            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            scope_id = str(index_payload.get("scope_id") or "")
+
+            security_path = Path(td) / ".ai-review" / "aspects" / "security.json"
+            security_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 3,
+                        "scope_id": scope_id,
+                        "status": "Approved",
+                        "findings": [],
+                        "questions": [],
+                        "overall_explanation": "ok",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            aspects = list(index_payload.get("aspects") or [])
+            aspects.append(
+                {
+                    "aspect": "security",
+                    "ok": True,
+                    "result_path": "aspects/security.json",
+                    "error_kind": "",
+                    "error_message": "",
+                }
+            )
+            index_payload["aspects"] = aspects
+            index_path.write_text(
+                json.dumps(index_payload, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("unexpected index entry", p2.stderr)
+
+    def test_reuse_rejects_duplicate_aspect_entries_in_index(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
+            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            aspects = list(index_payload.get("aspects") or [])
+            if aspects:
+                aspects.append(dict(aspects[0]))
+            index_payload["aspects"] = aspects
+            index_path.write_text(
+                json.dumps(index_payload, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("duplicate index entry", p2.stderr)
+
     def test_creates_artifacts_run_json(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
