@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 - Added `scripts/killer-7-update.sh` for tag-based update operations with `stable`/`canary` channels and healthcheck rollback.
 - Added `docs/operations/killer-7-update.md` to document deployment/update/rollback procedures for managed PCs.
 - Added Decision Snapshot `D-2026-02-22-KILLER7_TAG_CHANNEL_AUTO_UPDATE` and synced PRD/Epic entries for update infrastructure.
+- Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
