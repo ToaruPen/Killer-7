@@ -75,6 +75,11 @@ get_current_version() {
   echo "$current_tag"
 }
 
+get_current_image_ref() {
+  local image="$1"
+  docker image inspect --format '{{.Id}}' "${image}:current" 2>/dev/null || echo ""
+}
+
 
 # Returns 0 if update is needed, 1 if no-op.
 needs_update() {
@@ -112,20 +117,20 @@ run_healthcheck() {
 
 rollback() {
   local image="$1"
-  local previous_tag="$2"
-  if [[ -z "$previous_tag" ]]; then
-    log_error "rollback failed: previous tag is empty"
+  local previous_ref="$2"
+  if [[ -z "$previous_ref" ]]; then
+    log_error "rollback failed: previous image reference is empty"
     return 1
   fi
 
-  log_info "rollback: restoring ${image}:${previous_tag} as :current"
-  if ! docker image inspect "${image}:${previous_tag}" >/dev/null 2>&1; then
-    log_error "rollback failed: image not found ${image}:${previous_tag}"
+  log_info "rollback: restoring ${previous_ref} as ${image}:current"
+  if ! docker image inspect "$previous_ref" >/dev/null 2>&1; then
+    log_error "rollback failed: image not found ${previous_ref}"
     return 1
   fi
 
-  if ! docker tag "${image}:${previous_tag}" "${image}:current"; then
-    log_error "rollback failed: docker tag ${image}:${previous_tag} -> ${image}:current"
+  if ! docker tag "$previous_ref" "${image}:current"; then
+    log_error "rollback failed: docker tag ${previous_ref} -> ${image}:current"
     return 1
   fi
 
@@ -174,6 +179,9 @@ main() {
 
   log_info "updating: current=$current_version target=$target_tag"
 
+  local previous_image_ref
+  previous_image_ref="$(get_current_image_ref "$KILLER7_IMAGE")"
+
   if ! pull_image "$KILLER7_IMAGE" "$target_tag"; then
     log_error "Failed to pull image: $KILLER7_IMAGE:$target_tag"
     return 2
@@ -181,7 +189,7 @@ main() {
 
   if ! run_healthcheck "$KILLER7_IMAGE" "$target_tag" "$KILLER7_HEALTHCHECK_CMD"; then
     log_error "Healthcheck failed for $KILLER7_IMAGE:$target_tag, rolling back to $current_version"
-    if ! rollback "$KILLER7_IMAGE" "$current_version"; then
+    if ! rollback "$KILLER7_IMAGE" "$previous_image_ref"; then
       log_error "Rollback failed after healthcheck failure"
       return 2
     fi

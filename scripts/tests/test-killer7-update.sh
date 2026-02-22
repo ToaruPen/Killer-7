@@ -117,6 +117,7 @@ eprint "=== main: update when new version available ==="
 cat > "$tmpdir/stub-update.sh" <<'STUB'
 resolve_target_tag() { echo "v1.1.0"; }
 get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 0; }
 STUB
@@ -146,6 +147,7 @@ eprint "=== main: healthcheck failure => rollback + exit 1 ==="
 cat > "$tmpdir/stub-hc-fail.sh" <<'STUB'
 resolve_target_tag() { echo "v1.1.0"; }
 get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 1; }
 ROLLBACK_CALLED=""
@@ -153,6 +155,14 @@ rollback() { ROLLBACK_CALLED="yes:$1:$2"; }
 STUB
 
 assert_exit "main: healthcheck fail => exit 1" 1 bash -c "source '$update_sh'; source '$tmpdir/stub-hc-fail.sh'; main"
+
+result="$(bash -c "
+  source '$update_sh'
+  source '$tmpdir/stub-hc-fail.sh'
+  main >/dev/null 2>&1 || true
+  echo \"\$ROLLBACK_CALLED\"
+")"
+assert_eq "main: rollback should use previous image ref" "yes:ghcr.io/toarupen/killer-7:sha256:prev" "$result"
 
 stderr_out="$(bash -c "
   source '$update_sh'
@@ -203,6 +213,7 @@ resolve_target_tag() {
   fi
 }
 get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 0; }
 STUB
@@ -241,6 +252,7 @@ eprint "=== main: pull failure => exit 2 ==="
 cat > "$tmpdir/stub-pull-fail.sh" <<'STUB'
 resolve_target_tag() { echo "v1.1.0"; }
 get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 1; }
 STUB
 
@@ -251,6 +263,7 @@ eprint "=== main: rollback failure => exit 2 ==="
 cat > "$tmpdir/stub-rollback-fail.sh" <<'STUB'
 resolve_target_tag() { echo "v1.1.0"; }
 get_current_version() { echo "v1.0.0"; }
+get_current_image_ref() { echo "sha256:prev"; }
 pull_image() { return 0; }
 run_healthcheck() { return 1; }
 rollback() { return 1; }
