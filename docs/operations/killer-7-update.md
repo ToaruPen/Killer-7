@@ -38,12 +38,16 @@ KILLER7_HEALTHCHECK_CMD="killer-7 review --help"
 
 ```bash
 KILLER7_UPDATE_SCRIPT_REF="v0.2.0"
+KILLER7_UPDATE_SCRIPT_SHA256="<approved-sha256>"
+tmp_script="$(mktemp)"
 curl -fsSL "https://raw.githubusercontent.com/ToaruPen/Killer-7/${KILLER7_UPDATE_SCRIPT_REF}/scripts/killer-7-update.sh" \
-  -o /usr/local/bin/killer-7-update
-chmod +x /usr/local/bin/killer-7-update
+  -o "$tmp_script"
+echo "${KILLER7_UPDATE_SCRIPT_SHA256}  ${tmp_script}" | sha256sum -c -
+install -m 0755 "$tmp_script" /usr/local/bin/killer-7-update
+rm -f "$tmp_script"
 ```
 
-`KILLER7_UPDATE_SCRIPT_REF` は、運用で承認済みのリリースタグに固定して管理する。
+`KILLER7_UPDATE_SCRIPT_REF` と `KILLER7_UPDATE_SCRIPT_SHA256` は、運用で承認済みの値に固定して管理する。
 
 ### 4. cron 設定（例: 毎日 3:00）
 
@@ -56,9 +60,9 @@ chmod +x /usr/local/bin/killer-7-update
 1. 設定ファイルを読み込み（チャネル・イメージ名・ヘルスチェックコマンド）
 2. GitHub Releases API から対象チャネルの最新タグを取得
 3. 現在の `:current` タグと比較し、同一なら no-op で終了（exit 0）
-4. 新バージョンを `docker pull` → `:current` にタグ付け
+4. 新バージョンを `docker pull`（まだ `:current` へ切替しない）
 5. ヘルスチェック実行（`docker run --rm --entrypoint sh <image>:<tag> -lc "<cmd>"`）
-6. 成功: 正常終了（exit 0）
+6. 成功: `:current` へ切替して正常終了（exit 0）
 7. 失敗: 直前バージョンへロールバックし、エラーログを出力して exit 1
 
 ## 終了コード

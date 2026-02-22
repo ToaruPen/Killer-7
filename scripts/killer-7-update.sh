@@ -26,13 +26,43 @@ log_error() { printf '[ERROR] %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/nul
 
 load_config() {
   local config_file="${1:-}"
+  local line key value
   if [[ -n "$config_file" ]]; then
     if [[ ! -f "$config_file" ]]; then
       log_error "Config file not found: $config_file"
       return 1
     fi
-    # shellcheck source=/dev/null
-    source "$config_file"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"
+      [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      if [[ ! "$line" =~ ^[[:space:]]*([A-Z0-9_]+)[[:space:]]*=(.*)$ ]]; then
+        log_error "Malformed config line: $line"
+        return 1
+      fi
+
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      value="${value%"${value##*[![:space:]]}"}"
+      if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+
+      case "$key" in
+        KILLER7_IMAGE)
+          KILLER7_IMAGE="$value"
+          ;;
+        KILLER7_CHANNEL)
+          KILLER7_CHANNEL="$value"
+          ;;
+        KILLER7_HEALTHCHECK_CMD)
+          KILLER7_HEALTHCHECK_CMD="$value"
+          ;;
+      esac
+    done < "$config_file"
   fi
   KILLER7_IMAGE="${KILLER7_IMAGE:-$KILLER7_DEFAULT_IMAGE}"
   KILLER7_CHANNEL="${KILLER7_CHANNEL:-$KILLER7_DEFAULT_CHANNEL}"
@@ -58,7 +88,7 @@ resolve_target_tag() {
       tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
       ;;
     canary)
-      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select(.prerelease and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))) | .tag_name')"
+      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))) | .tag_name')"
       if [[ -z "$tag" ]]; then
         tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
       fi
@@ -175,6 +205,15 @@ main() {
   done
 
   if ! load_config "$config_file"; then
+    return 2
+  fi
+
+  if [[ "$KILLER7_IMAGE" == *@* || "$KILLER7_IMAGE" =~ :[^/]+$ ]]; then
+    log_error "KILLER7_IMAGE must be a base image without tag/digest: $KILLER7_IMAGE"
+    return 2
+  fi
+  if [[ "$KILLER7_IMAGE" != ghcr.io/*/* ]]; then
+    log_error "KILLER7_IMAGE must be ghcr.io/<owner>/<repo>: $KILLER7_IMAGE"
     return 2
   fi
 

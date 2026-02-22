@@ -44,15 +44,6 @@ trap cleanup EXIT
 
 eprint "=== needs_update ==="
 
-(
-  # shellcheck disable=SC1090
-  source "$update_sh"
-  if needs_update "v1.0.0" "v1.1.0"; then
-    exit 0
-  else
-    exit 1
-  fi
-)
 assert_exit "needs_update: different versions => update needed" 0 bash -c "source '$update_sh'; needs_update v1.0.0 v1.1.0"
 
 assert_exit "needs_update: same version => no-op" 1 bash -c "source '$update_sh'; needs_update v1.0.0 v1.0.0"
@@ -85,6 +76,29 @@ assert_eq "load_config: default image" "ghcr.io/toarupen/killer-7" "$result"
 
 assert_exit "load_config: missing config file should fail" 1 bash -c "source '$update_sh'; load_config '$tmpdir/not-found.env'"
 
+cat > "$tmpdir/config-malformed.env" <<'CONF'
+THIS_IS_NOT_VALID
+CONF
+
+assert_exit "load_config: malformed line should fail" 1 bash -c "source '$update_sh'; load_config '$tmpdir/config-malformed.env'"
+
+safe_marker="$tmpdir/unsafe-marker"
+cat > "$tmpdir/config-safe.env" <<CONF
+KILLER7_IMAGE=\$(touch "$safe_marker")
+UNKNOWN_KEY=ignored
+CONF
+
+expected_literal="\$(touch \"$safe_marker\")"
+result="$(bash -c "source '$update_sh'; load_config '$tmpdir/config-safe.env'; echo \"\$KILLER7_IMAGE\"")"
+assert_eq "load_config: command substitution remains literal" "$expected_literal" "$result"
+
+if [[ -e "$safe_marker" ]]; then
+  fail=$((fail + 1))
+  eprint "FAIL: load_config should not execute command substitutions"
+else
+  pass=$((pass + 1))
+fi
+
 eprint "=== resolve_target_tag: stable/canary should exclude draft ==="
 
 result="$(bash -c '
@@ -95,7 +109,7 @@ result="$(bash -c '
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* && "$args" == *".tag_name | test"* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -113,7 +127,7 @@ result="$(bash -c '
       echo "v1.2.3"
       return 0
     fi
-    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* && "$args" == *".tag_name | test"* ]]; then
       echo "v1.3.0-canary.1"
       return 0
     fi
@@ -127,7 +141,7 @@ result="$(bash -c '
   source "'"$update_sh"'"
   gh() {
     local args="$*"
-    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *"select(.prerelease"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* ]]; then
+    if [[ "$args" == *"api --paginate repos/toarupen/killer-7/releases?per_page=100"* && "$args" == *".draft | not"* && "$args" == *"-[0-9A-Za-z.-]+$"* && "$args" == *".tag_name | test"* ]]; then
       echo ""
       return 0
     fi
@@ -336,6 +350,20 @@ get_current_version() { echo "v1.0.0"; }
 STUB
 
 assert_exit "main: resolve failure => exit 2" 2 bash -c "source '$update_sh'; source '$tmpdir/stub-resolve-fail.sh'; main"
+
+eprint "=== main: invalid image format => exit 2 ==="
+
+cat > "$tmpdir/bad-image-tag.env" <<'CONF'
+KILLER7_IMAGE=ghcr.io/toarupen/killer-7:latest
+CONF
+
+assert_exit "main: image with tag should fail" 2 bash -c "source '$update_sh'; main --config '$tmpdir/bad-image-tag.env'"
+
+cat > "$tmpdir/bad-image-registry.env" <<'CONF'
+KILLER7_IMAGE=docker.io/library/killer-7
+CONF
+
+assert_exit "main: non-ghcr image should fail" 2 bash -c "source '$update_sh'; main --config '$tmpdir/bad-image-registry.env'"
 
 eprint "=== main: unknown channel => exit 2 ==="
 
