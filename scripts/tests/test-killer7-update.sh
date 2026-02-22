@@ -48,9 +48,21 @@ assert_exit "needs_update: different versions => update needed" 0 bash -c "sourc
 
 assert_exit "needs_update: same version => no-op" 1 bash -c "source '$update_sh'; needs_update v1.0.0 v1.0.0"
 
+assert_exit "needs_update: downgrade target => no-op" 1 bash -c "source '$update_sh'; needs_update v1.2.0 v1.1.0"
+
 assert_exit "needs_update: empty target => no-op" 1 bash -c "source '$update_sh'; needs_update v1.0.0 ''"
 
 assert_exit "needs_update: empty current, non-empty target => update needed" 0 bash -c "source '$update_sh'; needs_update '' v1.0.0"
+
+assert_exit "needs_update: prerelease to stable => update needed" 0 bash -c "source '$update_sh'; needs_update v1.0.0-rc.1 v1.0.0"
+
+assert_exit "needs_update: stable to prerelease => no-op" 1 bash -c "source '$update_sh'; needs_update v1.0.0 v1.0.0-rc.1"
+
+assert_exit "needs_update: prerelease ordering (rc.1 < rc.2)" 0 bash -c "source '$update_sh'; needs_update v1.0.0-rc.1 v1.0.0-rc.2"
+
+assert_exit "needs_update: build metadata ignored when equal" 1 bash -c "source '$update_sh'; needs_update v1.0.0+build.1 v1.0.0+build.2"
+
+assert_exit "needs_update: invalid semver current => no-op" 1 bash -c "source '$update_sh'; needs_update current v1.0.0"
 
 
 
@@ -316,6 +328,12 @@ else
   fail=$((fail + 1))
   eprint "FAIL: run_healthcheck should execute via sh -lc with full command string"
 fi
+
+eprint "=== pull_image / activate_image: should return docker exit code ==="
+
+assert_exit "pull_image: propagates docker failure code" 42 bash -c "source '$update_sh'; docker(){ return 42; }; pull_image ghcr.io/test/killer-7 v1.2.3"
+
+assert_exit "activate_image: propagates docker failure code" 43 bash -c "source '$update_sh'; docker(){ return 43; }; activate_image ghcr.io/test/killer-7 v1.2.3"
 
 eprint "=== main: canary channel from config ==="
 

@@ -135,30 +135,192 @@ get_current_image_ref() {
 }
 
 
+parse_semver() {
+  local version="$1"
+  local normalized="$version"
+  local core=""
+  local prerelease=""
+
+  normalized="${normalized#v}"
+  normalized="${normalized%%+*}"
+
+  core="$normalized"
+  if [[ "$normalized" == *-* ]]; then
+    core="${normalized%%-*}"
+    prerelease="${normalized#*-}"
+  fi
+
+  if [[ ! "$core" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    return 1
+  fi
+
+  printf '%s|%s|%s|%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$prerelease"
+}
+
+
+compare_prerelease() {
+  local left="$1"
+  local right="$2"
+  local left_ids right_ids i max
+  local left_id right_id
+
+  if [[ -z "$left" && -z "$right" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  if [[ -z "$left" ]]; then
+    printf '1\n'
+    return 0
+  fi
+  if [[ -z "$right" ]]; then
+    printf -- '-1\n'
+    return 0
+  fi
+
+  IFS='.' read -r -a left_ids <<<"$left"
+  IFS='.' read -r -a right_ids <<<"$right"
+
+  max="${#left_ids[@]}"
+  if (( ${#right_ids[@]} > max )); then
+    max="${#right_ids[@]}"
+  fi
+
+  for ((i = 0; i < max; i++)); do
+    left_id="${left_ids[i]:-}"
+    right_id="${right_ids[i]:-}"
+
+    if [[ -z "$left_id" && -n "$right_id" ]]; then
+      printf -- '-1\n'
+      return 0
+    fi
+    if [[ -n "$left_id" && -z "$right_id" ]]; then
+      printf '1\n'
+      return 0
+    fi
+    if [[ "$left_id" == "$right_id" ]]; then
+      continue
+    fi
+
+    if [[ "$left_id" =~ ^[0-9]+$ && "$right_id" =~ ^[0-9]+$ ]]; then
+      if (( 10#$left_id > 10#$right_id )); then
+        printf '1\n'
+      else
+        printf -- '-1\n'
+      fi
+      return 0
+    fi
+
+    if [[ "$left_id" =~ ^[0-9]+$ ]]; then
+      printf -- '-1\n'
+      return 0
+    fi
+    if [[ "$right_id" =~ ^[0-9]+$ ]]; then
+      printf '1\n'
+      return 0
+    fi
+
+    if [[ "$left_id" < "$right_id" ]]; then
+      printf -- '-1\n'
+    else
+      printf '1\n'
+    fi
+    return 0
+  done
+
+  printf '0\n'
+}
+
+
+semver_compare() {
+  local left="$1"
+  local right="$2"
+  local left_parsed right_parsed
+  local left_major left_minor left_patch left_prerelease
+  local right_major right_minor right_patch right_prerelease
+  local prerelease_result
+
+  if ! left_parsed="$(parse_semver "$left")"; then
+    return 1
+  fi
+  if ! right_parsed="$(parse_semver "$right")"; then
+    return 1
+  fi
+
+  IFS='|' read -r left_major left_minor left_patch left_prerelease <<<"$left_parsed"
+  IFS='|' read -r right_major right_minor right_patch right_prerelease <<<"$right_parsed"
+
+  if (( 10#$left_major > 10#$right_major )); then
+    printf '1\n'
+    return 0
+  elif (( 10#$left_major < 10#$right_major )); then
+    printf -- '-1\n'
+    return 0
+  fi
+
+  if (( 10#$left_minor > 10#$right_minor )); then
+    printf '1\n'
+    return 0
+  elif (( 10#$left_minor < 10#$right_minor )); then
+    printf -- '-1\n'
+    return 0
+  fi
+
+  if (( 10#$left_patch > 10#$right_patch )); then
+    printf '1\n'
+    return 0
+  elif (( 10#$left_patch < 10#$right_patch )); then
+    printf -- '-1\n'
+    return 0
+  fi
+
+  prerelease_result="$(compare_prerelease "$left_prerelease" "$right_prerelease")"
+  printf '%s\n' "$prerelease_result"
+}
+
+
 # Returns 0 if update is needed, 1 if no-op.
 needs_update() {
   local current="$1"
   local target="$2"
+  local comparison
+
   if [[ -z "$target" ]]; then
     return 1
   fi
-  if [[ "$current" == "$target" ]]; then
+  if [[ -z "$current" ]]; then
+    return 0
+  fi
+
+  if ! comparison="$(semver_compare "$current" "$target")"; then
+    log_error "Invalid semver comparison current='$current' target='$target'"
     return 1
   fi
-  return 0
+
+  if (( comparison < 0 )); then
+    return 0
+  fi
+  return 1
 }
 
 pull_image() {
   local image="$1"
   local tag="$2"
   log_info "pulling ${image}:${tag}"
-  docker pull "${image}:${tag}"
+  docker pull "${image}:${tag}" || {
+    local rc=$?
+    return "$rc"
+  }
+  return 0
 }
 
 activate_image() {
   local image="$1"
   local tag="$2"
-  docker tag "${image}:${tag}" "${image}:current"
+  docker tag "${image}:${tag}" "${image}:current" || {
+    local rc=$?
+    return "$rc"
+  }
+  return 0
 }
 
 run_healthcheck() {
