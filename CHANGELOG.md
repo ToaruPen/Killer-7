@@ -8,11 +8,13 @@ All notable changes to this project are documented in this file.
 - Added `--aspect` and `--preset` to `killer-7 review` to opt into a subset of review aspects.
 - Added persisted review state (`.ai-review/state.json`) and incremental diff mode based on previous `head_sha`.
 - Added `--full` to force full PR diff review and `--no-sot-aspect` to disable SoT injection per aspect.
+- Added `--reuse` / `--no-reuse` to `killer-7 review`, plus `.ai-review/cache.json` metadata for safe artifact reuse decisions.
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.
 - Extended PR input metadata (`meta.json`) with `diff_mode` and `base_head_sha`.
+- Reuse now validates scope, selected aspects, prompt hashes, and execution parameters, and fails fast when cached artifacts are missing/invalid.
 - Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
 - Cleaned variable naming in CLI/OpenCode runner paths and aligned tests/scripts with S603-safe subprocess usage and Python executable resolution.
 

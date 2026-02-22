@@ -35,6 +35,7 @@ LLMのquota消費を抑えつつ、LLM由来のコード劣化とプロジェク
 - 探索モード（`--explore`）: repo探索（read/grep/glob + bash/git）を許可し、tool trace / tool bundle を保存する。bashは読み取り専用gitに制限し（許可外はBlocked）、readはgit管理ファイルに限定する。grep/globは対象を絞る（例: 拡張子を含む `include`/`pattern` を必須にし、`.env` 等を対象にし得る指定は拒否）。tool bundleは (path + line numbers) のみを保存する
 - 探索モードのポリシー適用は tool trace（OpenCodeのJSONLイベント）を事後検証して行う（違反は Blocked）。OpenCode の実行経路を完全にサンドボックス化するものではない
 - `--inline` のfail-fast: P0/P1 findings が diff(right/new side) にマップできない場合は Blocked として扱う
+- 観点成果物の再利用（`--reuse`/`--no-reuse`）: 同一スコープ条件でのみ `.ai-review/aspects/*.json` を再利用し、`cache.json` にキー材料と hit/miss 理由を記録する
 
 **含まない（PRDのスコープ外を継承）:**
 - レビュー結果に基づくコード自動修正（自動コミット/PR自動作成）
@@ -365,6 +366,13 @@ Issue名: ハイブリッド運用（repo ro + path allowlist）+ questions再�
 推定行数: 150-300行
 依存: K7-11
 
+K7-16
+Issue: https://github.com/ToaruPen/Killer-7/issues/39
+Issue名: 観点結果キャッシュ（再実行スキップ）
+概要: `--reuse` 指定時に cache key 一致なら既存成果物を再利用し、miss 時は通常実行へフォールバックする。不正/欠損成果物は fail-fast で失敗させる
+推定行数: 150-300行
+依存: K7-11, K7-15
+
 ### 4.2 依存関係図
 
 依存関係（関係を1行ずつ列挙）:
@@ -388,6 +396,8 @@ Issue名: ハイブリッド運用（repo ro + path allowlist）+ questions再�
 - K7-14 depends_on K7-12
 - K7-14 depends_on K7-13
 - K7-15 depends_on K7-11
+- K7-16 depends_on K7-11
+- K7-16 depends_on K7-15
 
 ---
 
