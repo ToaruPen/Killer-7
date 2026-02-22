@@ -305,7 +305,7 @@ EOF
 		fi
 
 		if [[ -n "$branch" ]]; then
-			found=0
+			local found=0
 			for b in "${linked_branches[@]}"; do
 				if [[ "$b" == "$branch" ]]; then
 					found=1
@@ -345,7 +345,7 @@ EOF
 		mkdir -p "$(dirname "$dir")"
 
 		if ! branch_exists "$branch"; then
-			remote="origin"
+			local remote="origin"
 			if ! git remote get-url "$remote" >/dev/null 2>&1; then
 				eprint "Remote '$remote' not found; cannot fetch linked branch: $branch"
 				eprint "Create the branch locally or re-run with --no-lock-issue."
@@ -420,7 +420,7 @@ EOF
 		fi
 
 		if ! branch_exists "$branch"; then
-			remote="origin"
+			local remote="origin"
 			if ! git remote get-url "$remote" >/dev/null 2>&1; then
 				eprint "Remote '$remote' not found; cannot fetch linked branch: $branch"
 				eprint "Re-run with --no-lock-issue to skip Issue locking."
@@ -573,7 +573,7 @@ EOF
 	declare -a keys=()
 	declare -a filesets=()
 
-	idx=0
+	local idx=0
 	if [[ "${#issues[@]}" -gt 0 ]]; then
 		for n in "${issues[@]}"; do
 			key="issue:$n"
@@ -590,7 +590,8 @@ EOF
 		done
 	fi
 
-	conflicts=0
+	local conflicts=0
+	local overlap=""
 	for ((i = 0; i < ${#keys[@]}; i++)); do
 		for ((j = i + 1; j < ${#keys[@]}; j++)); do
 			overlap="$(comm -12 "${filesets[$i]}" "${filesets[$j]}" || true)"
