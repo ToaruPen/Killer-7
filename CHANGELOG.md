@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - Added persisted review state (`.ai-review/state.json`) and incremental diff mode based on previous `head_sha`.
 - Added `--full` to force full PR diff review and `--no-sot-aspect` to disable SoT injection per aspect.
 - Added `--reuse` / `--no-reuse` to `killer-7 review`, plus `.ai-review/cache.json` metadata for safe artifact reuse decisions.
+- Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
