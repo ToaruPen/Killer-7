@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -56,7 +57,10 @@ from .validate.evidence import (
     parse_context_bundle_index,
     recompute_review_status,
 )
-from .validate.review_json import validate_review_summary_json
+from .validate.review_json import (
+    validate_aspect_review_json,
+    validate_review_summary_json,
+)
 
 
 def _strip_machine_fields_from_findings(
@@ -242,6 +246,17 @@ Examples:
         action="store_true",
         help="Disable incremental diff and force full PR diff review",
     )
+    reuse_sel = review.add_mutually_exclusive_group()
+    reuse_sel.add_argument(
+        "--reuse",
+        action="store_true",
+        help="Reuse existing aspect artifacts when cache key matches",
+    )
+    reuse_sel.add_argument(
+        "--no-reuse",
+        action="store_true",
+        help="Explicitly disable artifact reuse",
+    )
     review.add_argument(
         "--no-sot-aspect",
         action="append",
@@ -310,6 +325,10 @@ def _state_json_path(out_dir: str) -> str:
     return os.path.join(out_dir, "state.json")
 
 
+def _cache_json_path(out_dir: str) -> str:
+    return os.path.join(out_dir, "cache.json")
+
+
 def _load_state_json(out_dir: str) -> dict[str, Any]:
     path = _state_json_path(out_dir)
     try:
@@ -322,6 +341,245 @@ def _load_state_json(out_dir: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     return payload
+
+
+def _load_cache_json(out_dir: str) -> dict[str, Any]:
+    path = _cache_json_path(out_dir)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _write_cache_json(out_dir: str, payload: dict[str, Any]) -> str:
+    path = _cache_json_path(out_dir)
+    atomic_write_json_secure(path, payload)
+    return path
+
+
+def _sha256_hex_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_hex_json(payload: object) -> str:
+    canonical = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    return _sha256_hex_text(canonical)
+
+
+def _opencode_execution_params_for_cache() -> dict[str, object]:
+    opencode_bin = (os.environ.get("KILLER7_OPENCODE_BIN") or "").strip()
+    agent = (os.environ.get("KILLER7_OPENCODE_AGENT") or "").strip()
+    model = (os.environ.get("KILLER7_OPENCODE_MODEL") or "").strip()
+    timeout_s = (os.environ.get("KILLER7_OPENCODE_TIMEOUT_S") or "").strip()
+    timeout = 300
+    if timeout_s:
+        try:
+            timeout = int(timeout_s)
+        except ValueError as exc:
+            raise ExecFailureError(
+                f"Invalid KILLER7_OPENCODE_TIMEOUT_S: {timeout_s!r} (expected integer seconds)"
+            ) from exc
+        if timeout <= 0:
+            raise ExecFailureError(
+                f"Invalid KILLER7_OPENCODE_TIMEOUT_S: {timeout_s!r} (must be >= 1)"
+            )
+    return {
+        "opencode_bin": opencode_bin,
+        "agent": agent,
+        "model": model,
+        "timeout_s": timeout,
+    }
+
+
+def _prompt_hashes_for_aspects(aspects: tuple[str, ...]) -> dict[str, object]:
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prompt_root = os.path.join(repo_root, "prompts")
+    base_path = os.path.join(prompt_root, "base-review.md")
+    try:
+        with open(base_path, "r", encoding="utf-8") as fh:
+            base_text = fh.read()
+    except OSError as exc:
+        raise ExecFailureError(
+            f"Failed to read prompt template: {base_path!r}"
+        ) from exc
+
+    aspects_hash: dict[str, str] = {}
+    for aspect in sorted(set(aspects)):
+        aspect_path = os.path.join(prompt_root, "aspects", f"{aspect}.md")
+        try:
+            with open(aspect_path, "r", encoding="utf-8") as fh:
+                aspect_text = fh.read()
+        except OSError as exc:
+            raise ExecFailureError(
+                f"Failed to read prompt template: {aspect_path!r}"
+            ) from exc
+        aspects_hash[aspect] = _sha256_hex_text(aspect_text)
+
+    return {
+        "base_review_md": _sha256_hex_text(base_text),
+        "aspects": aspects_hash,
+    }
+
+
+def _build_reuse_key_material(
+    *,
+    repo: str,
+    pr: int,
+    head_sha: str,
+    scope_id: str,
+    context_bundle_txt: str,
+    sot_md: str,
+    diff_mode: str,
+    explore_enabled: bool,
+    hybrid_allowed_aspects: frozenset[str],
+    hybrid_allowlist_paths: tuple[str, ...],
+    selected_aspects: tuple[str, ...],
+    no_sot_aspects: set[str],
+) -> dict[str, object]:
+    prompt_hashes = _prompt_hashes_for_aspects(selected_aspects)
+    llm_params = _opencode_execution_params_for_cache()
+    evidence_policy_hash = _sha256_hex_json(EVIDENCE_POLICY_V1)
+    return {
+        "repo": repo,
+        "pr": pr,
+        "head_sha": head_sha,
+        "scope_id": scope_id,
+        "diff_mode": diff_mode,
+        "explore_enabled": explore_enabled,
+        "context_bundle_sha256": _sha256_hex_text(context_bundle_txt),
+        "sot_sha256": _sha256_hex_text(sot_md),
+        "hybrid": {
+            "allowed_aspects": sorted(hybrid_allowed_aspects),
+            "allowlist_paths": sorted(set(hybrid_allowlist_paths)),
+        },
+        "selected_aspects": sorted(set(selected_aspects)),
+        "no_sot_aspects": sorted(set(no_sot_aspects)),
+        "llm": llm_params,
+        "prompts": prompt_hashes,
+        "evidence_policy": {
+            "schema_version": EVIDENCE_POLICY_V1.get("schema_version"),
+            "hash": evidence_policy_hash,
+        },
+        "review_schema_version": 3,
+    }
+
+
+def _validate_reuse_artifacts(
+    *,
+    out_dir: str,
+    scope_id: str,
+    selected_aspects: tuple[str, ...],
+) -> tuple[bool, str, str]:
+    index_path = os.path.join(out_dir, "aspects", "index.json")
+    if not os.path.isfile(index_path):
+        raise ExecFailureError("reuse artifact missing: .ai-review/aspects/index.json")
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            index_payload = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExecFailureError(
+            "reuse artifact invalid JSON: .ai-review/aspects/index.json"
+        ) from exc
+
+    if not isinstance(index_payload, dict):
+        raise ExecFailureError(
+            "reuse artifact invalid: aspects index root must be object"
+        )
+    if index_payload.get("scope_id") != scope_id:
+        raise ExecFailureError(
+            "reuse artifact scope mismatch: .ai-review/aspects/index.json"
+        )
+
+    aspects_obj = index_payload.get("aspects")
+    if not isinstance(aspects_obj, list):
+        raise ExecFailureError(
+            "reuse artifact invalid: .ai-review/aspects/index.json missing aspects[]"
+        )
+
+    entry_by_aspect: dict[str, dict[str, object]] = {}
+    for item in aspects_obj:
+        if not isinstance(item, dict):
+            continue
+        aspect = item.get("aspect")
+        if isinstance(aspect, str) and aspect:
+            entry_by_aspect[aspect] = item
+
+    out_dir_real = os.path.realpath(out_dir)
+    for aspect in selected_aspects:
+        entry = entry_by_aspect.get(aspect)
+        if entry is None:
+            raise ExecFailureError(
+                f"reuse artifact missing index entry for aspect: {aspect}"
+            )
+        if entry.get("ok") is not True:
+            raise ExecFailureError(f"reuse artifact not reusable for aspect: {aspect}")
+
+        rel = entry.get("result_path")
+        if not isinstance(rel, str) or not rel.strip():
+            raise ExecFailureError(
+                f"reuse artifact invalid result_path for aspect: {aspect}"
+            )
+        rel_norm = os.path.normpath(rel).replace("\\", "/")
+        expected_rel = f"aspects/{aspect}.json"
+        if rel_norm != expected_rel:
+            raise ExecFailureError(
+                f"reuse artifact invalid result_path for aspect: {aspect}"
+            )
+
+        abs_path = os.path.realpath(os.path.join(out_dir, rel))
+        if not (abs_path == out_dir_real or abs_path.startswith(out_dir_real + os.sep)):
+            raise ExecFailureError(
+                f"reuse artifact path escapes artifacts dir: {aspect}"
+            )
+        if not os.path.isfile(abs_path):
+            raise ExecFailureError(f"reuse artifact missing file for aspect: {aspect}")
+
+        try:
+            with open(abs_path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ExecFailureError(
+                f"reuse artifact invalid JSON for aspect: {aspect}"
+            ) from exc
+
+        validate_aspect_review_json(payload, expected_scope_id=scope_id)
+
+    return (True, "hit", index_path)
+
+
+def _decide_reuse(
+    *,
+    out_dir: str,
+    requested: bool,
+    cache_key: str,
+    scope_id: str,
+    selected_aspects: tuple[str, ...],
+) -> tuple[bool, str, str]:
+    if not requested:
+        return (False, "disabled", "")
+
+    prev_cache = _load_cache_json(out_dir)
+    if not prev_cache:
+        return (False, "miss_cache_metadata", "")
+    prev_key = prev_cache.get("cache_key")
+    if not isinstance(prev_key, str) or prev_key != cache_key:
+        return (False, "miss_cache_key", "")
+
+    reuse_hit, reason, index_path = _validate_reuse_artifacts(
+        out_dir=out_dir,
+        scope_id=scope_id,
+        selected_aspects=selected_aspects,
+    )
+    return (reuse_hit, reason, index_path)
 
 
 def _write_state_json(
@@ -600,11 +858,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:
         tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
         if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
-            initial_warning_lines: list[str] = [
+            dir_warning_lines: list[str] = [
                 "tool_bundle_dir_skipped kind=not_a_directory"
                 f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
             ]
-            return ([], {}, initial_warning_lines)
+            return ([], {}, dir_warning_lines)
         if not os.path.isdir(tool_bundle_dir):
             return ([], {}, [])
 
@@ -887,6 +1145,36 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         clear_stale_review_summary(out_dir)
         raise
 
+    reuse_requested = bool(getattr(args, "reuse", False)) and not bool(
+        getattr(args, "no_reuse", False)
+    )
+    reuse_key_material = _build_reuse_key_material(
+        repo=args.repo,
+        pr=args.pr,
+        head_sha=pr_input.head_sha,
+        scope_id=scope_id,
+        context_bundle_txt=context_bundle_txt,
+        sot_md=sot_md,
+        diff_mode=pr_input.diff_mode,
+        explore_enabled=bool(getattr(args, "explore", False)),
+        hybrid_allowed_aspects=hybrid_policy.allowed_aspects,
+        hybrid_allowlist_paths=hybrid_policy.allowlist_paths,
+        selected_aspects=selected_aspects,
+        no_sot_aspects=no_sot_aspects,
+    )
+    reuse_cache_key = f"k7c1:{_sha256_hex_json(reuse_key_material)}"
+    try:
+        reuse_hit, reuse_reason, reuse_index_path = _decide_reuse(
+            out_dir=out_dir,
+            requested=reuse_requested,
+            cache_key=reuse_cache_key,
+            scope_id=scope_id,
+            selected_aspects=selected_aspects,
+        )
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
+
     def runner_env_for_aspect(aspect: str) -> dict[str, str]:
         base_env = hybrid_policy.decision_for(aspect=aspect).runner_env()
         if not args.explore:
@@ -895,7 +1183,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         out["KILLER7_EXPLORE"] = "1"
         return out
 
-    if args.explore:
+    if args.explore and not reuse_hit:
         for aspect in selected_aspects:
             aspect_dir = opencode_artifacts_dir(out_dir, aspect)
             for name in ("tool-trace.jsonl", "tool-bundle.txt", "stdout.jsonl"):
@@ -911,31 +1199,39 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     deferred_exc: BlockedError | ExecFailureError | None = None
     aspects_result: dict[str, object]
-    try:
-        aspects_result = run_all_aspects(
-            base_dir=os.getcwd(),
-            scope_id=scope_id,
-            context_bundle=diff_bundle,
-            sot=sot_md,
-            aspects=selected_aspects,
-            max_llm_calls=8,
-            max_workers=8,
-            runner_env_for_aspect=runner_env_for_aspect,
-            sot_for_aspect=(lambda aspect: "" if aspect in no_sot_aspects else sot_md),
-        )
-    except (BlockedError, ExecFailureError) as exc:
-        # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
-        # Continue to generate evidence/policy artifacts to aid debugging, then re-raise.
-        deferred_exc = exc
-
-        if isinstance(exc, ExecFailureError):
-            # Avoid leaving stale `review-summary.*` from a previous successful run.
-            clear_stale_review_summary(out_dir)
-
+    if reuse_hit:
         aspects_result = {
             "scope_id": scope_id,
-            "index_path": os.path.join(out_dir, "aspects", "index.json"),
+            "index_path": reuse_index_path,
         }
+    else:
+        try:
+            aspects_result = run_all_aspects(
+                base_dir=os.getcwd(),
+                scope_id=scope_id,
+                context_bundle=diff_bundle,
+                sot=sot_md,
+                aspects=selected_aspects,
+                max_llm_calls=8,
+                max_workers=8,
+                runner_env_for_aspect=runner_env_for_aspect,
+                sot_for_aspect=(
+                    lambda aspect: "" if aspect in no_sot_aspects else sot_md
+                ),
+            )
+        except (BlockedError, ExecFailureError) as exc:
+            # Even when some aspects fail/block, `.ai-review/aspects/index.json` is written.
+            # Continue to generate evidence/policy artifacts to aid debugging, then re-raise.
+            deferred_exc = exc
+
+            if isinstance(exc, ExecFailureError):
+                # Avoid leaving stale `review-summary.*` from a previous successful run.
+                clear_stale_review_summary(out_dir)
+
+            aspects_result = {
+                "scope_id": scope_id,
+                "index_path": os.path.join(out_dir, "aspects", "index.json"),
+            }
 
     tool_trace_txt = ""
     tool_bundle_txt = ""
@@ -1489,7 +1785,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         except ExecFailureError as exc:
             if _should_clear_stale_summary_on_post_failure(exc):
                 clear_stale_review_summary(out_dir)
-            raise
+            deferred_exc = exc
 
     next_incremental_base = pr_input.head_sha
     if deferred_exc is not None:
@@ -1512,6 +1808,27 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         no_sot_aspects=tuple(sorted(no_sot_aspects)),
     )
 
+    cache_json_path = _write_cache_json(
+        out_dir,
+        {
+            "schema_version": 1,
+            "generated_at": now_utc_z(),
+            "scope_id": scope_id,
+            "cache_key": reuse_cache_key,
+            "key_material": reuse_key_material,
+            "selected_aspects": sorted(set(selected_aspects)),
+            "no_sot_aspects": sorted(set(no_sot_aspects)),
+            "reuse": {
+                "requested": reuse_requested,
+                "hit": reuse_hit,
+                "reason": reuse_reason,
+            },
+            "aspects_index_path": os.path.relpath(
+                str(aspects_result.get("index_path") or ""), os.getcwd()
+            ),
+        },
+    )
+
     if deferred_exc is not None:
         raise deferred_exc
 
@@ -1522,6 +1839,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         "head_sha": pr_input.head_sha,
         "scope_id": scope_id,
         "selected_aspects": list(selected_aspects),
+        "reuse": {
+            "requested": reuse_requested,
+            "hit": reuse_hit,
+            "reason": reuse_reason,
+            "cache_key": reuse_cache_key,
+        },
         "incremental": {
             "requested": incremental_requested,
             "applied": incremental_applied,
@@ -1572,6 +1895,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             if rerun_plan_path
             else "",
             "state_json": os.path.relpath(state_json_path, os.getcwd()),
+            "cache_json": os.path.relpath(cache_json_path, os.getcwd()),
         },
     }
 

@@ -874,8 +874,633 @@ class TestCli(unittest.TestCase):
             out = p.stdout + "\n" + p.stderr
             self.assertIn("--aspect", out)
             self.assertIn("--preset", out)
+            self.assertIn("--reuse", out)
+            self.assertIn("--no-reuse", out)
             self.assertIn("--hybrid-aspect", out)
             self.assertIn("--hybrid-allowlist", out)
+
+    def test_reuse_hit_skips_llm_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            _write_fake_opencode_exec_failure(fake_opencode)
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            reuse = run_payload.get("result", {}).get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertTrue(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "hit")
+
+    def test_reuse_miss_when_opencode_bin_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(Path(td) / "missing-opencode"),
+            )
+            self.assertNotEqual(p2.returncode, 0)
+
+            cache_payload = json.loads(
+                (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
+            )
+            reuse = cache_payload.get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertFalse(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "miss_cache_key")
+
+    def test_reuse_miss_when_aspect_set_changes_runs_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--aspect",
+                    "security",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            reuse = run_payload.get("result", {}).get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertFalse(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "miss_cache_key")
+            self.assertTrue(
+                (Path(td) / ".ai-review" / "aspects" / "security.json").is_file()
+            )
+
+    def test_reuse_miss_when_review_input_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "repo": "owner/name",
+                        "pr": 123,
+                        "head_sha": "aaaaaaaaaaaaaaaa",
+                        "incremental_base_head_sha": "aaaaaaaaaaaaaaaa",
+                        "selected_aspects": ["correctness"],
+                        "no_sot_aspects": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--full",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(Path(td) / "missing-opencode"),
+            )
+            self.assertNotEqual(p2.returncode, 0)
+
+            cache_payload = json.loads(
+                (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
+            )
+            reuse = cache_payload.get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertFalse(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "miss_cache_key")
+
+    def test_reuse_miss_when_hybrid_policy_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                    "--hybrid-aspect",
+                    "correctness",
+                    "--hybrid-allowlist",
+                    "docs/**/*.md",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(Path(td) / "missing-opencode"),
+            )
+            self.assertNotEqual(p2.returncode, 0)
+
+            cache_payload = json.loads(
+                (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
+            )
+            reuse = cache_payload.get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertFalse(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "miss_cache_key")
+
+    def test_reuse_hit_when_hybrid_allowlist_order_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--hybrid-aspect",
+                    "correctness",
+                    "--hybrid-allowlist",
+                    "docs/**/*.md",
+                    "--hybrid-allowlist",
+                    "src/**/*.py",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            _write_fake_opencode_exec_failure(fake_opencode)
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--hybrid-aspect",
+                    "correctness",
+                    "--hybrid-allowlist",
+                    "src/**/*.py",
+                    "--hybrid-allowlist",
+                    "docs/**/*.md",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            reuse = run_payload.get("result", {}).get("reuse", {})
+            self.assertTrue(bool(reuse.get("requested")))
+            self.assertTrue(bool(reuse.get("hit")))
+            self.assertEqual(reuse.get("reason"), "hit")
+
+    def test_reuse_with_explore_keeps_existing_explore_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--explore",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertNotEqual(p1.returncode, 0)
+
+            out_dir = Path(td) / ".ai-review"
+            cache_payload = json.loads(
+                (out_dir / "cache.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(isinstance(cache_payload.get("cache_key"), str))
+
+            scope_id = "owner/name#pr-123@0123456789ab"
+            aspects_dir = out_dir / "aspects"
+            aspects_dir.mkdir(parents=True, exist_ok=True)
+            (aspects_dir / "correctness.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 3,
+                        "scope_id": scope_id,
+                        "status": "Approved",
+                        "findings": [],
+                        "questions": [],
+                        "overall_explanation": "ok",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (aspects_dir / "index.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "scope_id": scope_id,
+                        "max_llm_calls": 8,
+                        "aspects": [
+                            {
+                                "aspect": "correctness",
+                                "ok": True,
+                                "result_path": "aspects/correctness.json",
+                                "error_kind": "",
+                                "error_message": "",
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            aspect_dir = Path(td) / ".ai-review" / "opencode" / "correctness"
+            aspect_dir.mkdir(parents=True, exist_ok=True)
+            (aspect_dir / "tool-bundle.txt").write_text(
+                "# SRC: hello.txt\nL1: hello\n",
+                encoding="utf-8",
+            )
+            (aspect_dir / "tool-trace.jsonl").write_text(
+                '{"type":"tool_use"}\n',
+                encoding="utf-8",
+            )
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                    "--explore",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
+
+            self.assertTrue((aspect_dir / "tool-bundle.txt").is_file())
+            self.assertTrue((aspect_dir / "tool-trace.jsonl").is_file())
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            reuse = run_payload.get("result", {}).get("reuse", {})
+            self.assertTrue(bool(reuse.get("hit")))
+
+    def test_default_mode_does_not_reuse_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(Path(td) / "missing-opencode"),
+            )
+            self.assertNotEqual(p2.returncode, 0)
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertNotEqual(run_payload.get("status"), "ok")
+
+    def test_reuse_with_missing_artifact_fails_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+
+            (Path(td) / ".ai-review" / "aspects" / "correctness.json").unlink()
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("reuse artifact", p2.stderr)
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
+
+    def test_reuse_not_ready_artifacts_fails_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            failing_opencode = Path(td) / "failing-opencode"
+            _write_fake_opencode_exec_failure(failing_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(failing_opencode),
+            )
+            self.assertEqual(p1.returncode, 2, msg=(p1.stdout + "\n" + p1.stderr))
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(failing_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("reuse artifact", p2.stderr)
+
+    def test_reuse_rejects_mismatched_result_path_per_aspect(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
+            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            for item in index_payload.get("aspects", []):
+                if item.get("aspect") == "correctness":
+                    item["result_path"] = "aspects/security.json"
+            index_path.write_text(
+                json.dumps(index_payload, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            p2 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--reuse",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("invalid result_path", p2.stderr)
 
     def test_creates_artifacts_run_json(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2064,9 +2689,9 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            src_segment = "sample_bundle_id"
+            path_fixture = "PUBLIC_ID_ABC123"
             (tool_dir / "bundle.txt").write_text(
-                f"# SRC: ../../secrets/{src_segment}\nL1: x\n",
+                f"# SRC: ../../secrets/{path_fixture}\nL1: x\n",
                 encoding="utf-8",
             )
 
@@ -2084,7 +2709,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("tool_bundle_src_skipped", warn)
             self.assertIn("kind=invalid_src", warn)
             self.assertIn("bundle.txt", warn)
-            self.assertNotIn(src_segment, warn)
+            self.assertNotIn(path_fixture, warn)
 
     def test_creates_review_summary_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2646,6 +3271,47 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             self.assertTrue((out_dir / "review-summary.json").exists())
             self.assertTrue((out_dir / "review-summary.md").exists())
+            self.assertTrue((out_dir / "cache.json").exists())
+            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
+            self.assertEqual(
+                state_payload.get("incremental_base_head_sha"), ""
+            )
+
+    def test_post_failure_does_not_advance_incremental_base_after_review_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            failing_opencode = Path(td) / "failing-opencode"
+            _write_fake_opencode_exec_failure(failing_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "post_comment_error_message": "Internal Server Error",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123", "--post"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(failing_opencode),
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+
+            state_payload = json.loads(
+                (Path(td) / ".ai-review" / "state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
+            self.assertEqual(state_payload.get("incremental_base_head_sha"), "")
 
     def test_post_summary_recovers_when_target_marker_deleted_mid_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:
