@@ -73,7 +73,12 @@ load_config() {
 resolve_release_tag() {
   local repo_owner_name="$1"
   local jq_filter="$2"
-  gh api --paginate "repos/${repo_owner_name}/releases?per_page=100" --jq "$jq_filter" 2>/dev/null | head -n1 || true
+  local gh_output
+  if ! gh_output="$(gh api --paginate "repos/${repo_owner_name}/releases?per_page=100" --jq "$jq_filter" 2>&1)"; then
+    log_error "Failed gh release query for ${repo_owner_name}: ${gh_output}"
+    return 1
+  fi
+  printf '%s\n' "$gh_output" | head -n1
 }
 
 resolve_target_tag() {
@@ -85,12 +90,18 @@ resolve_target_tag() {
   local tag=""
   case "$channel" in
     stable)
-      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
+      if ! tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"; then
+        return 1
+      fi
       ;;
     canary)
-      tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))) | .tag_name')"
+      if ! tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))) | .tag_name')"; then
+        return 1
+      fi
       if [[ -z "$tag" ]]; then
-        tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"
+        if ! tag="$(resolve_release_tag "$repo_owner_name" '.[] | select((.prerelease | not) and (.draft | not) and (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tag_name')"; then
+          return 1
+        fi
       fi
       ;;
     *)

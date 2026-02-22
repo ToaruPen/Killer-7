@@ -155,6 +155,23 @@ result="$(bash -c '
 ')"
 assert_eq "resolve_target_tag: canary falls back to stable non-draft tag" "v1.2.3" "$result"
 
+assert_exit "resolve_target_tag: gh failure should return error" 1 bash -c "source '$update_sh'; gh(){ echo 'auth failed' >&2; return 1; }; resolve_target_tag stable ghcr.io/toarupen/killer-7 >/dev/null"
+
+stderr_out="$(bash -c "
+  source '$update_sh'
+  gh() {
+    echo 'auth failed' >&2
+    return 1
+  }
+  resolve_target_tag stable ghcr.io/toarupen/killer-7 >/dev/null
+" 2>&1 >/dev/null || true)"
+if [[ "$stderr_out" == *"Failed gh release query"* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  eprint "FAIL: resolve_target_tag should log gh query failure details"
+fi
+
 eprint "=== get_current_version: fallback should ignore current/latest ==="
 
 result="$(bash -c "
