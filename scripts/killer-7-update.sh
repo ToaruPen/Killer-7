@@ -327,11 +327,29 @@ run_healthcheck() {
   local image="$1"
   local tag="$2"
   local cmd="$3"
+  local timeout_value="${HEALTHCHECK_TIMEOUT:-30s}"
+  local timeout_cmd="timeout"
+  local rc=0
+
   log_info "healthcheck: ${image}:${tag} cmd='$cmd'"
-  if ! docker run --rm --entrypoint sh "${image}:${tag}" -lc "$cmd"; then
+  if ! command -v "$timeout_cmd" >/dev/null 2>&1; then
+    timeout_cmd="gtimeout"
+  fi
+  if ! command -v "$timeout_cmd" >/dev/null 2>&1; then
+    log_error "healthcheck timeout command not found: ${image}:${tag} timeout=${timeout_value}"
     return 1
   fi
-  return 0
+
+  if "$timeout_cmd" --preserve-status "$timeout_value" docker run --rm --entrypoint sh "${image}:${tag}" -lc "$cmd"; then
+    return 0
+  else
+    rc=$?
+  fi
+
+  if [[ "$rc" -eq 124 || "$rc" -eq 137 || "$rc" -eq 143 ]]; then
+    log_error "healthcheck timed out: ${image}:${tag} timeout=${timeout_value}"
+  fi
+  return 1
 }
 
 rollback() {

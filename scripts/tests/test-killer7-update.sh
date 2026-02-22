@@ -308,25 +308,62 @@ else
   eprint "FAIL: main: healthcheck failure should log 'rolling back'"
 fi
 
-eprint "=== run_healthcheck: command execution via sh -lc ==="
+eprint "=== run_healthcheck: command execution via timeout + sh -lc ==="
 
 hc_args="$(bash -c "
   source '$update_sh'
-  docker() {
+  timeout() {
     local i=1
     for arg in \"\$@\"; do
       printf '%s|%s\\n' \"\$i\" \"\$arg\"
       i=\$((i + 1))
     done
+    return 0
   }
   run_healthcheck ghcr.io/test/killer-7 v1.2.3 'killer-7 review --help'
 ")"
 
-if [[ "$hc_args" == *"3|--entrypoint"* && "$hc_args" == *"4|sh"* && "$hc_args" == *"6|-lc"* && "$hc_args" == *"7|killer-7 review --help"* ]]; then
+if [[ "$hc_args" == *"1|--preserve-status"* && "$hc_args" == *"2|30s"* && "$hc_args" == *"3|docker"* && "$hc_args" == *"7|sh"* && "$hc_args" == *"9|-lc"* && "$hc_args" == *"10|killer-7 review --help"* ]]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
-  eprint "FAIL: run_healthcheck should execute via sh -lc with full command string"
+  eprint "FAIL: run_healthcheck should execute via timeout + sh -lc with full command string"
+fi
+
+hc_args="$(bash -c "
+  source '$update_sh'
+  timeout() {
+    local i=1
+    for arg in \"\$@\"; do
+      printf '%s|%s\\n' \"\$i\" \"\$arg\"
+      i=\$((i + 1))
+    done
+    return 0
+  }
+  HEALTHCHECK_TIMEOUT=45s run_healthcheck ghcr.io/test/killer-7 v1.2.3 'killer-7 review --help'
+")"
+
+if [[ "$hc_args" == *"2|45s"* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  eprint "FAIL: run_healthcheck should use HEALTHCHECK_TIMEOUT when set"
+fi
+
+assert_exit "run_healthcheck: timeout exit codes should fail" 1 bash -c "source '$update_sh'; timeout(){ return 124; }; run_healthcheck ghcr.io/test/killer-7 v1.2.3 'killer-7 review --help'"
+
+stderr_out="$(bash -c "
+  source '$update_sh'
+  timeout() {
+    return 124
+  }
+  run_healthcheck ghcr.io/test/killer-7 v1.2.3 'killer-7 review --help'
+" 2>&1 >/dev/null || true)"
+if [[ "$stderr_out" == *"healthcheck timed out: ghcr.io/test/killer-7:v1.2.3 timeout=30s"* ]]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  eprint "FAIL: run_healthcheck should log timeout details"
 fi
 
 eprint "=== pull_image / activate_image: should return docker exit code ==="
