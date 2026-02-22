@@ -231,9 +231,9 @@ class TestOrchestrate(unittest.TestCase):
                 sot="SOT_MARKER_X",
                 aspects=("correctness", "performance"),
                 runner_factory=make_runner,
-                sot_for_aspect=lambda aspect: ""
-                if aspect == "performance"
-                else "SOT_MARKER_X",
+                sot_for_aspect=lambda aspect: (
+                    "" if aspect == "performance" else "SOT_MARKER_X"
+                ),
             )
 
         self.assertIn("SOT_MARKER_X", runner.seen_message_by_viewpoint["correctness"])

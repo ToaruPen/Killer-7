@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+_GIT_BIN = shutil.which("git")
+if _GIT_BIN is None:
+    raise RuntimeError("git executable not found")
+GIT_BIN: str = _GIT_BIN
+
+
+def _run_git(cwd: str, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        [GIT_BIN, *args],
+        cwd=cwd,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def _write_fake_gh(path: Path) -> None:
@@ -199,7 +214,7 @@ def run_cli(
     env["KILLER7_OPENCODE_BIN"] = opencode_bin
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
         env=env,
@@ -215,22 +230,8 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             Path(td, "x.txt").write_text("hello\\n", encoding="utf-8")
 
-            subprocess.run(
-                ["git", "init", "-q"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            subprocess.run(
-                ["git", "add", "x.txt"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _run_git(td, "init", "-q")
+            _run_git(td, "add", "x.txt")
 
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
@@ -270,14 +271,7 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             Path(td, "x.txt").write_text("hello\n", encoding="utf-8")
 
-            subprocess.run(
-                ["git", "init", "-q"],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _run_git(td, "init", "-q")
 
             shared = ["d" * 80, "e" * 80, "f" * 80, "g" * 80, "h" * 80]
             for i in range(190):
@@ -288,14 +282,7 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("ok\n", encoding="utf-8")
 
-            subprocess.run(
-                ["git", "add", "."],
-                cwd=td,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            _run_git(td, "add", ".")
 
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)

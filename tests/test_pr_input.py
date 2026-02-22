@@ -170,7 +170,7 @@ def run_cli(
         env["KILLER7_OPENCODE_BIN"] = opencode_bin
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
         env=env,

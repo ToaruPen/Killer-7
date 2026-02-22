@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,8 +36,8 @@ class TestValidateReviewJsonScript(unittest.TestCase):
             p = Path(td) / "review.json"
             p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-            proc = subprocess.run(
-                ["python3", str(script), str(p), "--scope-id", "scope-1"],
+            proc = subprocess.run(  # noqa: S603
+                [sys.executable, str(script), str(p), "--scope-id", "scope-1"],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

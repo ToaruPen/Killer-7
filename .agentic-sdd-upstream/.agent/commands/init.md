@@ -26,7 +26,7 @@ User-facing interactions remain in Japanese.
 2. Check whether Agentic-SDD is already installed:
    - `.agent/` exists
    - `docs/prd/_template.md` exists
-   - `scripts/install-agentic-sdd.sh` exists
+   - `scripts/agentic-sdd/install-agentic-sdd.sh` exists
 3. If not installed:
    - Tell the user to run `/agentic-sdd` (recommended) and STOP.
 
@@ -60,6 +60,11 @@ Optional (opt-in): install a GitHub Actions CI template:
 ```
 
 Then edit `.github/workflows/agentic-sdd-ci.yml` and set the 3 required env vars to your project's commands.
+Recommended baseline when filling those commands:
+
+- `AGENTIC_SDD_CI_TEST_CMD`: include coverage measurement (and minimum threshold when possible)
+- `AGENTIC_SDD_CI_TYPECHECK_CMD`: run in strict mode (for example `tsc --noEmit --strict` / `mypy --strict`)
+
 If needed, also set optional `AGENTIC_SDD_CI_DOCS_CMD` for docs checks.
 
 Notes:
@@ -75,7 +80,7 @@ If you installed with `--tool none` or you edited `.agent/` after installation, 
 
 ```bash
 # Sync for all tools
-./scripts/sync-agent-config.sh all
+./scripts/agentic-sdd/sync-agent-config.sh all
 ```
 
 OpenCode note: restart OpenCode after sync.
@@ -90,7 +95,7 @@ Notes:
 - If you are upgrading from an older version, re-run it manually.
 
 ```bash
-./scripts/setup-githooks.sh
+./scripts/agentic-sdd/setup-githooks.sh
 ```
 
 ### Phase 4: Finish
@@ -116,7 +121,7 @@ Common `/agentic-sdd` options:
 
 - `--mode minimal|full`
 - `--tool none|opencode|codex|claude|all`
-- `--ci none|github-actions` (opt-in: install a GitHub Actions CI template)
+- `--ci none|github-actions` (opt-in: install a GitHub Actions CI template for tests+coverage/lint/strict-typecheck)
 - `--dry-run`
 - `--force`
 - `--ref <tag>` (install a specific release tag)

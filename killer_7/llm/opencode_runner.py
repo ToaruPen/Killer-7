@@ -229,12 +229,12 @@ def _write_redacted_opencode_jsonl(
                                         rel = "<outside-repo>"
                                     inp["filePath"] = rel
 
-                                base = inp.get("path")
-                                if isinstance(base, str) and base.strip():
+                                input_path = inp.get("path")
+                                if isinstance(input_path, str) and input_path.strip():
                                     abs_base = (
-                                        base
-                                        if os.path.isabs(base)
-                                        else os.path.join(repo_root, base)
+                                        input_path
+                                        if os.path.isabs(input_path)
+                                        else os.path.join(repo_root, input_path)
                                     )
                                     real_base = os.path.realpath(abs_base)
                                     if real_base == repo_root or real_base.startswith(
@@ -861,11 +861,11 @@ def _explore_tool_bundle_text(
                 line_by_n = {}
 
         for n in wanted:
-            raw = line_by_n.get(n)
-            if not isinstance(raw, str):
+            line_text = line_by_n.get(n)
+            if not isinstance(line_text, str):
                 continue
 
-            text = raw
+            text = line_text
             text = _redact_secrets(text)
             text = _sanitize_bundle_text(text)
             row = f"L{n}: {text}\n"
