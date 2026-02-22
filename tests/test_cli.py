@@ -1097,6 +1097,62 @@ class TestCli(unittest.TestCase):
             self.assertFalse(bool(reuse.get("hit")))
             self.assertEqual(reuse.get("reason"), "miss_cache_key")
 
+    def test_reuse_key_generation_failure_clears_stale_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            p1 = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertTrue((out_dir / "review-summary.json").exists())
+            self.assertTrue((out_dir / "review-summary.md").exists())
+
+            prev_timeout = os.environ.get("KILLER7_OPENCODE_TIMEOUT_S")
+            try:
+                os.environ["KILLER7_OPENCODE_TIMEOUT_S"] = "invalid"
+                p2 = run_cli(
+                    [
+                        "review",
+                        "--repo",
+                        "owner/name",
+                        "--pr",
+                        "123",
+                        "--aspect",
+                        "correctness",
+                        "--reuse",
+                    ],
+                    cwd=td,
+                    gh_bin=str(fake_gh),
+                    opencode_bin=str(fake_opencode),
+                )
+            finally:
+                if prev_timeout is None:
+                    os.environ.pop("KILLER7_OPENCODE_TIMEOUT_S", None)
+                else:
+                    os.environ["KILLER7_OPENCODE_TIMEOUT_S"] = prev_timeout
+
+            self.assertEqual(p2.returncode, 2, msg=(p2.stdout + "\n" + p2.stderr))
+            self.assertIn("Invalid KILLER7_OPENCODE_TIMEOUT_S", p2.stderr)
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
+
     def test_reuse_miss_when_hybrid_policy_changes(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"

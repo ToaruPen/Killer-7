@@ -1148,21 +1148,25 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     reuse_requested = bool(getattr(args, "reuse", False)) and not bool(
         getattr(args, "no_reuse", False)
     )
-    reuse_key_material = _build_reuse_key_material(
-        repo=args.repo,
-        pr=args.pr,
-        head_sha=pr_input.head_sha,
-        scope_id=scope_id,
-        context_bundle_txt=context_bundle_txt,
-        sot_md=sot_md,
-        diff_mode=pr_input.diff_mode,
-        explore_enabled=bool(getattr(args, "explore", False)),
-        hybrid_allowed_aspects=hybrid_policy.allowed_aspects,
-        hybrid_allowlist_paths=hybrid_policy.allowlist_paths,
-        selected_aspects=selected_aspects,
-        no_sot_aspects=no_sot_aspects,
-    )
-    reuse_cache_key = f"k7c1:{_sha256_hex_json(reuse_key_material)}"
+    try:
+        reuse_key_material = _build_reuse_key_material(
+            repo=args.repo,
+            pr=args.pr,
+            head_sha=pr_input.head_sha,
+            scope_id=scope_id,
+            context_bundle_txt=context_bundle_txt,
+            sot_md=sot_md,
+            diff_mode=pr_input.diff_mode,
+            explore_enabled=bool(getattr(args, "explore", False)),
+            hybrid_allowed_aspects=hybrid_policy.allowed_aspects,
+            hybrid_allowlist_paths=hybrid_policy.allowlist_paths,
+            selected_aspects=selected_aspects,
+            no_sot_aspects=no_sot_aspects,
+        )
+        reuse_cache_key = f"k7c1:{_sha256_hex_json(reuse_key_material)}"
+    except ExecFailureError:
+        clear_stale_review_summary(out_dir)
+        raise
     try:
         reuse_hit, reuse_reason, reuse_index_path = _decide_reuse(
             out_dir=out_dir,
