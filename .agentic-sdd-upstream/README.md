@@ -95,7 +95,7 @@ If Agentic-SDD is not installed in your repository yet, install it first:
 
 Optional (opt-in): install a GitHub Actions CI template (tests with coverage + lint + strict typecheck):
 
-```
+```bash
 /agentic-sdd --ci github-actions opencode minimal
 ```
 

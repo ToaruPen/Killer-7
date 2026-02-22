@@ -19,7 +19,10 @@ ignore = [
 testpaths = ["tests/python"]
 
 [tool.coverage.run]
-source = ["scripts"]
+source = [
+  "scripts/lint-sot.py",
+  "scripts/validate-worktree.py",
+]
 branch = true
 
 [tool.coverage.report]
@@ -28,4 +31,6 @@ include = [
   "scripts/validate-worktree.py",
 ]
 show_missing = true
-fail_under = 15
+# Raise baseline to project target; increase further once more scripts are tested.
+fail_under = 70
+# TODO: increase to 80/90 once tests stabilized.

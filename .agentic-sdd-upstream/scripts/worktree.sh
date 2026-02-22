@@ -496,6 +496,8 @@ EOF
 }
 
 cmd_check() {
+	require_cmd python3
+
 	local gh_repo=""
 	local mode="section"
 	declare -a issues=()
@@ -608,7 +610,6 @@ EOF
 
 main() {
 	require_cmd git
-	require_cmd python3
 
 	if [[ $# -lt 1 ]]; then
 		usage

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,30 +10,7 @@ from killer_7.artifacts import ensure_artifacts_dir
 from killer_7.errors import BlockedError, ExecFailureError
 from killer_7.llm.opencode_runner import OpenCodeRunner
 from killer_7.validate.evidence import parse_context_bundle_index
-
-_GIT_BIN = shutil.which("git")
-if _GIT_BIN is None:
-    raise RuntimeError("git executable not found")
-GIT_BIN: str = _GIT_BIN
-
-
-def _run_git(td: str, *args: str) -> None:
-    subprocess.run(  # noqa: S603
-        [GIT_BIN, *args],
-        cwd=td,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def _git_init(td: str) -> None:
-    _run_git(td, "init", "-q")
-
-
-def _git_add(td: str, pathspec: str) -> None:
-    _run_git(td, "add", pathspec)
+from tests._git_helpers import _git_add, _git_init
 
 
 def _write_fake_opencode_ok(path: Path, *, payload: object) -> None:
