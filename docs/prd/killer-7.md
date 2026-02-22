@@ -212,6 +212,11 @@ FR-7
 説明: `--post` で要約コメントを冪等更新し、`--inline` でP0/P1のみをinlineコメントとして冪等投稿する
 優先度: Should
 
+FR-8
+機能名: 観点成果物の安全な再利用（`--reuse`）
+説明: 同一スコープ（repo/pr/head/aspects/実行条件/プロンプト）時のみ `.ai-review/aspects/*.json` を再利用し、`cache.json` に hit/miss 理由を記録する
+優先度: Should
+
 ---
 
 ## 5. 受け入れ条件（AC）
@@ -229,6 +234,9 @@ FR-7
 - [ ] AC-7: `--explore` 指定時、tool trace と tool bundle が `.ai-review/` に保存される（例: `tool-trace.jsonl`, `tool-bundle.txt`, `opencode/*/stdout.jsonl`。stdoutはtool_useイベントのみで、output等を除去したredacted JSONL）
 - [ ] AC-8: `--explore` 指定時、bashの許可リスト外コマンドが実行された場合、レビューは Blocked（1）で失敗する
 - [ ] AC-9: `--explore` 指定時、探索に基づく findings の sources が evidence検証に通り、P0/P1 が不当に downgrade されない
+- [ ] AC-10: `--reuse` 指定時、条件一致なら LLM を再実行せず既存 `.ai-review/aspects/*.json` を再利用して後続（集約/投稿）を実行できる
+- [ ] AC-11: `--reuse` 指定時、条件不一致なら通常実行へフォールバックし、`cache.json` に miss 理由が記録される
+- [ ] AC-12: 不正/欠損な再利用成果物（index欠損・result_path不一致・JSON不正等）の場合、fail-fast で失敗し、エラーが判別可能である
 
 ### 異常系（必須: 最低1つ）
 
