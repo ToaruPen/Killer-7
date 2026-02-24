@@ -911,6 +911,19 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_reviewdog_fail(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import sys
+
+sys.stderr.write("reviewdog failed intentionally\\n")
+raise SystemExit(2)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def run_cli(
     args: list[str],
     cwd: str,
@@ -4476,7 +4489,108 @@ class TestCli(unittest.TestCase):
             )
 
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
-            self.assertIn("Failed to remove stale SARIF artifact", p.stderr)
+            self.assertIn(
+                "Failed to remove stale review-summary.sarif.json artifact", p.stderr
+            )
+            self.assertTrue(stale_dir.exists())
+
+    def test_stale_summary_cleanup_fails_when_summary_json_artifact_is_unremovable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stale_dir = out_dir / "review-summary.json"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--post",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn(
+                "Failed to remove stale review-summary.json artifact", p.stderr
+            )
+            self.assertTrue(stale_dir.exists())
+
+    def test_stale_summary_cleanup_fails_when_summary_md_artifact_is_unremovable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "review-summary.json").write_text("{}", encoding="utf-8")
+            stale_dir = out_dir / "review-summary.md"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--post",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("Failed to remove stale review-summary.md artifact", p.stderr)
             self.assertTrue(stale_dir.exists())
 
     def test_reviewdog_flag_executes_reviewdog_with_sarif_input(self) -> None:
@@ -4551,6 +4665,41 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
             self.assertTrue(capture.exists())
+
+    def test_reviewdog_failure_clears_stale_summary_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog_fail(fake_reviewdog)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--reviewdog",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                },
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("reviewdog failed (exit=2)", p.stderr)
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.json").exists())
+            self.assertFalse((out_dir / "review-summary.md").exists())
+            self.assertFalse((out_dir / "review-summary.sarif.json").exists())
 
     def test_reviewdog_stale_head_is_blocked_before_reviewdog_run(self) -> None:
         with tempfile.TemporaryDirectory() as td:

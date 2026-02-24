@@ -801,10 +801,15 @@ def clear_stale_review_summary(out_dir: str) -> None:
         except FileNotFoundError:
             pass
         except OSError as exc:
-            if name == "review-summary.sarif.json":
+            if name in (
+                "review-summary.sarif.json",
+                "review-summary.json",
+                "review-summary.md",
+            ):
                 raise ExecFailureError(
-                    f"Failed to remove stale SARIF artifact: {stale_path}: {type(exc).__name__}: {exc}"
+                    f"Failed to remove stale {name} artifact: {stale_path}: {type(exc).__name__}: {exc}"
                 ) from exc
+            raise
 
 
 def _clear_stale_review_summary_and_reset_paths(out_dir: str) -> tuple[str, str, str]:
@@ -2072,10 +2077,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                         "PR head changed during reviewdog posting; rerun review on latest head"
                     )
         except ExecFailureError as exc:
-            if _should_clear_stale_summary_on_post_failure(exc):
-                summary_json_path, summary_md_path, sarif_json_path = (
-                    _clear_stale_review_summary_and_reset_paths(out_dir)
-                )
+            summary_json_path, summary_md_path, sarif_json_path = (
+                _clear_stale_review_summary_and_reset_paths(out_dir)
+            )
             deferred_exc = exc
 
     next_incremental_base = pr_input.head_sha
