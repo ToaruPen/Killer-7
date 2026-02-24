@@ -133,6 +133,7 @@ A workflow template to help non-engineers run AI-driven development while preven
 - `docs/epics/_template.md`: Epic template (Japanese output)
 - `docs/glossary.md`: glossary
 - `templates/project-config/`: templates for `/generate-project-config`
+- MCP (OpenCode): `cocoindex-code` (semantic code search via `search(...)`)
 
 ---
 
