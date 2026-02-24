@@ -199,7 +199,7 @@ def _dedupe_preserve_order(items: list[str]) -> tuple[str, ...]:
     seen: set[str] = set()
     for item in items:
         if item in seen:
-            continue
+            raise ValueError(f"duplicate item: {item!r}")
         seen.add(item)
         out.append(item)
     return tuple(out)
@@ -279,7 +279,12 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
                 )
             normalized_aspects.append(aspect)
 
-        deduped = _dedupe_preserve_order(normalized_aspects)
+        try:
+            deduped = _dedupe_preserve_order(normalized_aspects)
+        except ValueError as exc:
+            raise ExecFailureError(
+                f"Duplicate aspect in preset {raw_name!r} ({path!r}): {exc}"
+            ) from exc
         if not deduped:
             raise ExecFailureError(
                 f"Preset {raw_name!r} in {path!r} resolves to zero aspects"
