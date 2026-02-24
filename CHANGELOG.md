@@ -13,6 +13,8 @@ All notable changes to this project are documented in this file.
 - Added `docs/operations/killer-7-update.md` to document deployment/update/rollback procedures for managed PCs.
 - Added Decision Snapshot `D-2026-02-22-KILLER7_TAG_CHANNEL_AUTO_UPDATE` and synced PRD/Epic entries for update infrastructure.
 - Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
+- Added SARIF/reviewdog integration for `killer-7 review`: `--sarif`, `--reviewdog`, and `--reviewdog-reporter`.
+- Added `docs/operations/sarif-reviewdog.md` with reproducible GitHub Actions linkage examples (`upload-sarif` and reviewdog annotation flow).
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
@@ -22,6 +24,7 @@ All notable changes to this project are documented in this file.
 - Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
 - Cleaned variable naming in CLI/OpenCode runner paths and aligned tests/scripts with S603-safe subprocess usage and Python executable resolution.
 - Updated `.github/workflows/release.yml` to publish Killer-7 Docker images to GHCR with version tags and `latest` on tag releases.
+- Added timeout control and explicit timeout failure handling to reviewdog execution (`KILLER7_REVIEWDOG_TIMEOUT_S`) to avoid indefinite hangs.
 
 ## [0.1.1] - 2026-02-11
 

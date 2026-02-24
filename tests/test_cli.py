@@ -674,6 +674,57 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_too_many_inline(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "correctness":
+  payload["status"] = "Blocked"
+  findings = []
+  for i in range(151):
+    findings.append({
+      "title": f"Blocking issue #{i}",
+      "body": "Evidence-backed blocking issue.",
+      "priority": "P0",
+      "sources": ["hello.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
+    })
+  payload["findings"] = findings
+  payload["overall_explanation"] = "Too many blocking findings."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_blocked_with_question(path: Path) -> None:
     """Fake opencode that returns a P0 finding and a question."""
 
@@ -837,12 +888,35 @@ raise SystemExit(2)
     path.chmod(0o755)
 
 
+def _write_fake_reviewdog(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+capture_path = os.environ.get("REVIEWDOG_CAPTURE_PATH", "")
+payload = {
+  "argv": sys.argv[1:],
+  "stdin": sys.stdin.read(),
+}
+if capture_path:
+  with open(capture_path, "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(payload, ensure_ascii=False))
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def run_cli(
     args: list[str],
     cwd: str,
     *,
     gh_bin: str | None = None,
     opencode_bin: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
@@ -850,6 +924,8 @@ def run_cli(
         env["KILLER7_GH_BIN"] = gh_bin
     if opencode_bin is not None:
         env["KILLER7_OPENCODE_BIN"] = opencode_bin
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "killer_7.cli", *args],
         cwd=cwd,
@@ -3527,11 +3603,11 @@ class TestCli(unittest.TestCase):
             self.assertTrue((out_dir / "review-summary.json").exists())
             self.assertTrue((out_dir / "review-summary.md").exists())
             self.assertTrue((out_dir / "cache.json").exists())
-            state_payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
-            self.assertEqual(
-                state_payload.get("incremental_base_head_sha"), ""
+            state_payload = json.loads(
+                (out_dir / "state.json").read_text(encoding="utf-8")
             )
+            self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
+            self.assertEqual(state_payload.get("incremental_base_head_sha"), "")
 
     def test_post_failure_does_not_advance_incremental_base_after_review_failure(
         self,
@@ -4032,3 +4108,275 @@ class TestCli(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 0)
+
+    def test_sarif_flag_writes_sarif_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--sarif",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+
+            out_dir = Path(td) / ".ai-review"
+            sarif_path = out_dir / "review-summary.sarif.json"
+            self.assertTrue(sarif_path.is_file())
+
+            sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
+            self.assertEqual(sarif.get("version"), "2.1.0")
+            runs = sarif.get("runs")
+            self.assertTrue(isinstance(runs, list) and len(runs) == 1)
+            results = runs[0].get("results", []) if isinstance(runs[0], dict) else []
+            self.assertTrue(isinstance(results, list) and len(results) >= 1)
+
+    def test_without_sarif_flags_clears_stale_sarif_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stale = out_dir / "review-summary.sarif.json"
+            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            self.assertTrue(stale.exists())
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+            self.assertFalse(stale.exists())
+
+    def test_reviewdog_flag_executes_reviewdog_with_sarif_input(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog(fake_reviewdog)
+            capture = Path(td) / "reviewdog-capture.json"
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--reviewdog",
+                    "--reviewdog-reporter",
+                    "github-pr-annotations",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                    "REVIEWDOG_CAPTURE_PATH": str(capture),
+                },
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            self.assertTrue(capture.is_file())
+            cap_payload = json.loads(capture.read_text(encoding="utf-8"))
+            argv = cap_payload.get("argv", [])
+            self.assertIn("-f=sarif", argv)
+            self.assertIn("-reporter=github-pr-annotations", argv)
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertTrue((out_dir / "review-summary.sarif.json").is_file())
+
+    def test_reviewdog_runs_even_when_summary_status_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_blocked(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog(fake_reviewdog)
+            capture = Path(td) / "reviewdog-capture.json"
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--reviewdog",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                    "REVIEWDOG_CAPTURE_PATH": str(capture),
+                },
+            )
+
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+            self.assertTrue(capture.exists())
+
+    def test_reviewdog_stale_head_is_blocked_before_reviewdog_run(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog(fake_reviewdog)
+            capture = Path(td) / "reviewdog-capture.json"
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--reviewdog",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                    "REVIEWDOG_CAPTURE_PATH": str(capture),
+                },
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("PR head changed before reviewdog posting", p.stderr)
+            self.assertFalse(capture.exists())
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.sarif.json").exists())
+
+    def test_reviewdog_stale_head_is_detected_after_reviewdog_run(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog(fake_reviewdog)
+            capture = Path(td) / "reviewdog-capture.json"
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--reviewdog",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                    "REVIEWDOG_CAPTURE_PATH": str(capture),
+                },
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("PR head changed during reviewdog posting", p.stderr)
+            self.assertTrue(capture.exists())
+
+            out_dir = Path(td) / ".ai-review"
+            self.assertFalse((out_dir / "review-summary.sarif.json").exists())
+
+    def test_reviewdog_does_not_run_after_inline_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_too_many_inline(fake_opencode)
+            fake_reviewdog = Path(td) / "fake-reviewdog"
+            _write_fake_reviewdog(fake_reviewdog)
+            capture = Path(td) / "reviewdog-capture.json"
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--inline",
+                    "--sarif",
+                    "--reviewdog",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={
+                    "KILLER7_REVIEWDOG_BIN": str(fake_reviewdog),
+                    "REVIEWDOG_CAPTURE_PATH": str(capture),
+                },
+            )
+
+            self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
+            self.assertFalse(capture.exists())

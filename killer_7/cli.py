@@ -30,6 +30,7 @@ from .artifacts import (
     write_pr_input_artifacts,
     write_review_summary_json,
     write_review_summary_md,
+    write_review_summary_sarif_json,
     write_sot_md,
     write_tool_bundle_txt,
     write_tool_trace_jsonl,
@@ -45,11 +46,13 @@ from .github.gh import GhClient
 from .github.post_inline import post_inline_comments, raise_if_inline_blocked
 from .github.post_summary import post_summary_comment
 from .github.pr_input import fetch_pr_input
+from .github.reviewdog import run_reviewdog_from_sarif
 from .hybrid.policy import build_hybrid_policy
 from .hybrid.re_run import write_questions_rerun_artifacts
 from .llm.opencode_runner import OpenCodeRunner, opencode_artifacts_dir
 from .report.format_md import format_review_summary_md
 from .report.merge import merge_review_summary
+from .report.sarif_export import review_summary_to_sarif
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 from .validate.evidence import (
@@ -279,6 +282,21 @@ Examples:
         "--inline",
         action="store_true",
         help="Post/update inline review comments for P0/P1 findings",
+    )
+    review.add_argument(
+        "--sarif",
+        action="store_true",
+        help="Export review-summary as SARIF 2.1.0 JSON artifact",
+    )
+    review.add_argument(
+        "--reviewdog",
+        action="store_true",
+        help="Run reviewdog on generated SARIF artifact (optional)",
+    )
+    review.add_argument(
+        "--reviewdog-reporter",
+        default="github-pr-review",
+        help="reviewdog reporter (for example: github-pr-review, github-pr-annotations)",
     )
     review.add_argument(
         "--hybrid-aspect",
@@ -624,13 +642,22 @@ def _write_state_json(
 
 
 def clear_stale_review_summary(out_dir: str) -> None:
-    for name in ("review-summary.json", "review-summary.md"):
+    for name in (
+        "review-summary.json",
+        "review-summary.md",
+        "review-summary.sarif.json",
+    ):
         try:
             os.remove(os.path.join(out_dir, name))
         except FileNotFoundError:
             pass
         except OSError:
             pass
+
+
+def _clear_stale_review_summary_and_reset_paths(out_dir: str) -> tuple[str, str, str]:
+    clear_stale_review_summary(out_dir)
+    return "", "", ""
 
 
 def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
@@ -1678,10 +1705,13 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     summary_json_path = ""
     summary_md_path = ""
+    sarif_json_path = ""
     summary_payload: dict[str, object] | None = None
     rerun_plan_path = ""
     post_result: dict[str, object] = {}
     inline_result: dict[str, object] = {}
+    reviewdog_result: dict[str, object] = {}
+    inline_blocked = False
     if deferred_exc is None or isinstance(deferred_exc, BlockedError):
         summary_payload = merge_review_summary(
             scope_id=scope_id, aspect_reviews=summary_reviews
@@ -1715,6 +1745,22 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         summary_md_path = write_review_summary_md(
             out_dir, format_review_summary_md(summary_payload)
         )
+
+        should_emit_sarif = bool(getattr(args, "sarif", False)) or bool(
+            getattr(args, "reviewdog", False)
+        )
+        if should_emit_sarif:
+            sarif_payload = review_summary_to_sarif(summary_payload)
+            sarif_json_path = write_review_summary_sarif_json(out_dir, sarif_payload)
+        else:
+            stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
+            try:
+                os.remove(stale_sarif_path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
         summary_status = summary_payload.get("status")
 
         question_aspects: list[str] = []
@@ -1751,9 +1797,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         try:
             current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
             if current_head_sha != pr_input.head_sha:
-                clear_stale_review_summary(out_dir)
-                summary_json_path = ""
-                summary_md_path = ""
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
                 post_result = {
                     "mode": "skipped_stale_head",
                     "expected_head_sha": pr_input.head_sha,
@@ -1772,7 +1818,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
                 if latest_head_sha != pr_input.head_sha:
-                    clear_stale_review_summary(out_dir)
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_review_summary_and_reset_paths(out_dir)
+                    )
                     post_result = {
                         "mode": "stale_head_after_post",
                         "expected_head_sha": pr_input.head_sha,
@@ -1801,10 +1849,55 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     try:
                         raise_if_inline_blocked(inline_result)
                     except BlockedError as exc:
+                        inline_blocked = True
                         deferred_exc = exc
         except ExecFailureError as exc:
             if _should_clear_stale_summary_on_post_failure(exc):
-                clear_stale_review_summary(out_dir)
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
+            deferred_exc = exc
+
+    should_run_reviewdog = bool(getattr(args, "reviewdog", False))
+    if (
+        should_run_reviewdog
+        and summary_payload is not None
+        and sarif_json_path
+        and (
+            deferred_exc is None
+            or (isinstance(deferred_exc, BlockedError) and not inline_blocked)
+        )
+    ):
+        gh_client = GhClient.from_env()
+        try:
+            current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+            if current_head_sha != pr_input.head_sha:
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
+                deferred_exc = ExecFailureError(
+                    "PR head changed before reviewdog posting; rerun review on latest head"
+                )
+            else:
+                reviewdog_result = run_reviewdog_from_sarif(
+                    sarif_path=sarif_json_path,
+                    reporter=str(
+                        getattr(args, "reviewdog_reporter", "github-pr-review")
+                    ),
+                )
+                latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                if latest_head_sha != pr_input.head_sha:
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_review_summary_and_reset_paths(out_dir)
+                    )
+                    deferred_exc = ExecFailureError(
+                        "PR head changed during reviewdog posting; rerun review on latest head"
+                    )
+        except ExecFailureError as exc:
+            if _should_clear_stale_summary_on_post_failure(exc):
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
             deferred_exc = exc
 
     next_incremental_base = pr_input.head_sha
@@ -1903,8 +1996,12 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             "review_summary_md": os.path.relpath(summary_md_path, os.getcwd())
             if summary_md_path
             else "",
+            "review_summary_sarif_json": os.path.relpath(sarif_json_path, os.getcwd())
+            if sarif_json_path
+            else "",
             "summary_comment": post_result,
             "inline_comment": inline_result,
+            "reviewdog": reviewdog_result,
             "aspects_evidence_index_json": os.path.relpath(
                 evidence_index_path, os.getcwd()
             ),

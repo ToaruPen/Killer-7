@@ -380,6 +380,13 @@ Issue名: 配布更新基盤（stable/canary・ヘルスチェック・ロール
 推定行数: 150-300行
 依存: K7-01
 
+K7-18
+Issue: https://github.com/ToaruPen/Killer-7/issues/52
+Issue名: SARIF/reviewdog連携の段階導入（deterministic行位置の信頼性向上）
+概要: `review-summary.json` から SARIF 2.1.0 変換を追加し、reviewdog 連携をオプションで提供する
+推定行数: 150-300行
+依存: K7-11
+
 ### 4.2 依存関係図
 
 依存関係（関係を1行ずつ列挙）:
@@ -406,6 +413,7 @@ Issue名: 配布更新基盤（stable/canary・ヘルスチェック・ロール
 - K7-16 depends_on K7-11
 - K7-16 depends_on K7-15
 - K7-17 depends_on K7-01
+- K7-18 depends_on K7-11
 
 ---
 
