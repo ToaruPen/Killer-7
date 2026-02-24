@@ -5,13 +5,21 @@ import subprocess
 
 from ..errors import ExecFailureError
 
+DEFAULT_REVIEWDOG_TIMEOUT_S = 60
+MIN_REVIEWDOG_TIMEOUT_S = 1
+TAIL_MAX_CHARS = 1200
+TAIL_TRUNC_PREFIX = "... [truncated]"
+
 
 def _reviewdog_bin() -> str:
     return os.environ.get("KILLER7_REVIEWDOG_BIN", "reviewdog")
 
 
 def _reviewdog_timeout_s() -> int:
-    raw = (os.environ.get("KILLER7_REVIEWDOG_TIMEOUT_S", "60") or "").strip()
+    raw = (
+        os.environ.get("KILLER7_REVIEWDOG_TIMEOUT_S", str(DEFAULT_REVIEWDOG_TIMEOUT_S))
+        or ""
+    ).strip()
     try:
         timeout_s = int(raw)
     except ValueError as exc:
@@ -19,14 +27,19 @@ def _reviewdog_timeout_s() -> int:
             "KILLER7_REVIEWDOG_TIMEOUT_S must be a positive integer"
         ) from exc
     if timeout_s <= 0:
-        raise ExecFailureError("KILLER7_REVIEWDOG_TIMEOUT_S must be >= 1")
+        raise ExecFailureError(
+            f"KILLER7_REVIEWDOG_TIMEOUT_S must be >= {MIN_REVIEWDOG_TIMEOUT_S}"
+        )
     return timeout_s
 
 
-def _tail(text: str, *, max_chars: int = 1200) -> str:
+def _tail(text: str, *, max_chars: int = TAIL_MAX_CHARS) -> str:
     if len(text) <= max_chars:
         return text
-    return "... [truncated]" + text[-(max_chars - 15) :]
+    prefix_len = len(TAIL_TRUNC_PREFIX)
+    if max_chars <= prefix_len:
+        return TAIL_TRUNC_PREFIX[:max_chars]
+    return TAIL_TRUNC_PREFIX + text[-(max_chars - prefix_len) :]
 
 
 def run_reviewdog_from_sarif(
