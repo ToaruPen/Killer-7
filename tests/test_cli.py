@@ -2442,7 +2442,7 @@ class TestCli(unittest.TestCase):
                 "Duplicate aspect", payload.get("error", {}).get("message", "")
             )
 
-    def test_unknown_preset_is_invalid_args_and_does_not_delete_existing_summaries(
+    def test_unknown_preset_is_exec_failure_and_does_not_delete_existing_summaries(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2472,7 +2472,189 @@ class TestCli(unittest.TestCase):
             run_json = out_dir / "run.json"
             self.assertTrue(run_json.is_file())
             payload = json.loads(run_json.read_text(encoding="utf-8"))
-            self.assertEqual(payload["status"], "invalid_args")
+            self.assertEqual(payload["status"], "exec_failure")
+
+    def test_config_preset_can_be_used_from_cli_preset_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            config_home = Path(td) / "xdg-config"
+            cfg_dir = config_home / "killer-7"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "presets": {
+                            "focus": ["correctness", "testing", "security"],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--preset",
+                    "focus",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={"XDG_CONFIG_HOME": str(config_home)},
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                payload.get("result", {}).get("selected_aspects"),
+                ["correctness", "testing", "security"],
+            )
+
+    def test_default_preset_applies_when_no_aspect_or_preset_is_passed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            config_home = Path(td) / "xdg-config"
+            cfg_dir = config_home / "killer-7"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "default_preset": "minimal",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={"XDG_CONFIG_HOME": str(config_home)},
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                payload.get("result", {}).get("selected_aspects"),
+                ["correctness", "security"],
+            )
+
+    def test_aspect_cli_selection_has_priority_over_config_default_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            config_home = Path(td) / "xdg-config"
+            cfg_dir = config_home / "killer-7"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "default_preset": "minimal",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "readability",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+                extra_env={"XDG_CONFIG_HOME": str(config_home)},
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                payload.get("result", {}).get("selected_aspects"),
+                ["readability"],
+            )
+
+    def test_invalid_config_json_causes_exec_failure_and_records_run_json_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config_home = Path(td) / "xdg-config"
+            cfg_dir = config_home / "killer-7"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "config.json").write_text("{ broken", encoding="utf-8")
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                extra_env={"XDG_CONFIG_HOME": str(config_home)},
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("config", p.stderr.lower())
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(run_payload.get("status"), "exec_failure")
+            self.assertIn(
+                "config",
+                str(run_payload.get("error", {}).get("message", "")).lower(),
+            )
+
+    def test_config_presets_null_causes_exec_failure(self) -> None:
+        """presets: null is schema-invalid and must fail-fast (not silently accepted)."""
+        with tempfile.TemporaryDirectory() as td:
+            config_home = Path(td) / "xdg-config"
+            cfg_dir = config_home / "killer-7"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "config.json").write_text(
+                json.dumps({"schema_version": 1, "presets": None}),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                ["review", "--repo", "owner/name", "--pr", "123"],
+                cwd=td,
+                extra_env={"XDG_CONFIG_HOME": str(config_home)},
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("presets", p.stderr.lower())
+
+            run_payload = json.loads(
+                (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(run_payload.get("status"), "exec_failure")
 
     def test_creates_sot_bundle_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2581,9 +2763,9 @@ class TestCli(unittest.TestCase):
                 "performance",
                 "refactoring",
             ]:
-                p = aspects_dir / f"{a}.evidence.json"
-                self.assertTrue(p.is_file())
-                payload = json.loads(p.read_text(encoding="utf-8"))
+                evidence_path = aspects_dir / f"{a}.evidence.json"
+                self.assertTrue(evidence_path.is_file())
+                payload = json.loads(evidence_path.read_text(encoding="utf-8"))
                 self.assertEqual(payload.get("schema_version"), 1)
                 self.assertEqual(payload.get("kind"), "aspect_evidence")
                 self.assertIn("review", payload)

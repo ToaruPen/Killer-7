@@ -76,11 +76,11 @@ class TestCliInlineArgs(unittest.TestCase):
                 "--pr",
                 "123",
                 "--preset",
-                "minimal",
+                "Team-Standard",
             ]
         )
 
-        self.assertEqual(args.preset, "minimal")
+        self.assertEqual(args.preset, "team-standard")
 
     def test_review_parser_accepts_full_and_no_sot_aspect(self) -> None:
         from killer_7.cli import build_parser

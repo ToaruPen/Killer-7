@@ -229,6 +229,11 @@ FR-10
 説明: 更新後にヘルスチェックを実行し、失敗時は直前バージョンへロールバックして失敗終了する。ロールバック失敗は致命エラーとして明示する
 優先度: Should
 
+FR-11
+機能名: ユーザー定義プリセット（グローバル設定）
+説明: `${XDG_CONFIG_HOME:-$HOME/.config}/killer-7/config.json` の `presets` と `default_preset` を解釈し、CLI指定の優先順位（`--aspect` > `--preset` > `default_preset` > builtin full）で観点を決定する
+優先度: Should
+
 ---
 
 ## 5. 受け入れ条件（AC）
@@ -253,6 +258,10 @@ FR-10
 - [ ] AC-14: stable チャネルで `:current` が対象タグと同一の場合、no-op（exit 0）で終了する
 - [ ] AC-15: 更新後ヘルスチェック失敗時、直前タグへロールバックして exit 1 を返す。ロールバック自体に失敗した場合は exit 2 で明示的に失敗する
 - [ ] AC-16: 配布更新の運用手順（導入/cron/障害時復旧/手動ロールバック）が文書化されている
+- [ ] AC-17: configで定義したプリセット名を `--preset <name>` で指定すると、対応する観点のみが実行される
+- [ ] AC-18: `default_preset` が設定されている場合、`--aspect/--preset` 未指定時は `default_preset` が適用される
+- [ ] AC-19: CLI指定（`--aspect` / `--preset`）は常にconfigより優先される
+- [ ] AC-20: config JSONが不正な場合、分かりやすく失敗し `.ai-review/run.json` にエラーが記録される
 
 ### 異常系（必須: 最低1つ）
 
