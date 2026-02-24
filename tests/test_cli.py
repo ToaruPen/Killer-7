@@ -3746,9 +3746,13 @@ class TestCli(unittest.TestCase):
             run_json = Path(td) / ".ai-review" / "run.json"
             payload = json.loads(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
-            self.assertIn(
-                "PR head changed; skip stale summary mutation",
-                payload.get("error", {}).get("message", ""),
+            message = payload.get("error", {}).get("message", "")
+            self.assertTrue(
+                (
+                    "PR head changed; skip stale summary mutation" in message
+                    or "PR head changed during summary posting" in message
+                ),
+                msg=f"unexpected error message: {message}",
             )
 
             out_dir = Path(td) / ".ai-review"
@@ -4417,6 +4421,54 @@ class TestCli(unittest.TestCase):
                     "owner/name",
                     "--pr",
                     "123",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("Failed to remove stale SARIF artifact", p.stderr)
+            self.assertTrue(stale_dir.exists())
+
+    def test_stale_summary_cleanup_fails_when_sarif_artifact_is_unremovable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stale_dir = out_dir / "review-summary.sarif.json"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                    "--post",
                 ],
                 cwd=td,
                 gh_bin=str(fake_gh),

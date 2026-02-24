@@ -795,12 +795,16 @@ def clear_stale_review_summary(out_dir: str) -> None:
         "review-summary.md",
         "review-summary.sarif.json",
     ):
+        stale_path = os.path.join(out_dir, name)
         try:
-            os.remove(os.path.join(out_dir, name))
+            os.remove(stale_path)
         except FileNotFoundError:
             pass
-        except OSError:
-            pass
+        except OSError as exc:
+            if name == "review-summary.sarif.json":
+                raise ExecFailureError(
+                    f"Failed to remove stale SARIF artifact: {stale_path}: {type(exc).__name__}: {exc}"
+                ) from exc
 
 
 def _clear_stale_review_summary_and_reset_paths(out_dir: str) -> tuple[str, str, str]:
