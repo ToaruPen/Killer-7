@@ -164,11 +164,6 @@ def parse_preset_name(value: str) -> str:
         key = normalize_aspect(value)
     except ExecFailureError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
-    if key not in BUILTIN_PRESETS:
-        choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
-        raise argparse.ArgumentTypeError(
-            f"Unknown preset: {value!r}. Available presets: {choices}"
-        )
     return key
 
 
@@ -186,6 +181,149 @@ def resolve_preset(name: str) -> tuple[str, ...]:
     if preset is None:
         choices = ", ".join(sorted(BUILTIN_PRESETS.keys()))
         raise ExecFailureError(f"Unknown preset: {name!r} (available: {choices})")
+    return preset
+
+
+def _user_config_path() -> str | None:
+    xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg:
+        return os.path.join(xdg, "killer-7", "config.json")
+    home = (os.environ.get("HOME") or "").strip()
+    if not home:
+        return None
+    return os.path.join(home, ".config", "killer-7", "config.json")
+
+
+def _dedupe_preserve_order(items: list[str]) -> tuple[str, ...]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return tuple(out)
+
+
+def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]:
+    path = _user_config_path()
+    if path is None:
+        return (None, {})
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        return (None, {})
+    except OSError as exc:
+        raise ExecFailureError(
+            f"Failed to read config file: {path!r}: {type(exc).__name__}: {exc}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ExecFailureError(f"Invalid config JSON: {path!r}: {exc.msg}") from exc
+
+    if not isinstance(raw, dict):
+        raise ExecFailureError(f"Invalid config schema: {path!r} root must be object")
+
+    schema_version = raw.get("schema_version")
+    if schema_version != 1:
+        raise ExecFailureError(f"Invalid config schema_version in {path!r}: expected 1")
+
+    raw_presets = raw.get("presets", {})
+    if raw_presets is None:
+        raise ExecFailureError(
+            f"Invalid config presets in {path!r}: must be object (got null)"
+        )
+    if not isinstance(raw_presets, dict):
+        raise ExecFailureError(f"Invalid config presets in {path!r}: must be object")
+
+    config_presets: dict[str, tuple[str, ...]] = {}
+    for raw_name, raw_aspects in raw_presets.items():
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ExecFailureError(
+                f"Invalid preset name in {path!r}: must be non-empty string"
+            )
+        try:
+            name = normalize_aspect(raw_name)
+        except ExecFailureError as exc:
+            raise ExecFailureError(
+                f"Invalid preset name in {path!r}: {raw_name!r}: {exc}"
+            ) from exc
+
+        if not isinstance(raw_aspects, list):
+            raise ExecFailureError(
+                f"Invalid preset definition in {path!r}: {raw_name!r} must be array"
+            )
+
+        normalized_aspects: list[str] = []
+        for raw_aspect in raw_aspects:
+            if not isinstance(raw_aspect, str):
+                raise ExecFailureError(
+                    f"Invalid aspect in preset {raw_name!r} ({path!r}): must be string"
+                )
+            try:
+                aspect = normalize_aspect(raw_aspect)
+            except ExecFailureError as exc:
+                raise ExecFailureError(
+                    f"Invalid aspect in preset {raw_name!r} ({path!r}): {raw_aspect!r}: {exc}"
+                ) from exc
+            if aspect not in ASPECTS_V1:
+                valid = ", ".join(ASPECTS_V1)
+                raise ExecFailureError(
+                    f"Unknown aspect in preset {raw_name!r} ({path!r}): {raw_aspect!r}. Valid aspects: {valid}"
+                )
+            normalized_aspects.append(aspect)
+
+        deduped = _dedupe_preserve_order(normalized_aspects)
+        if not deduped:
+            raise ExecFailureError(
+                f"Preset {raw_name!r} in {path!r} resolves to zero aspects"
+            )
+        config_presets[name] = deduped
+
+    default_preset_obj = raw.get("default_preset")
+    default_preset: str | None
+    if default_preset_obj is None:
+        default_preset = None
+    elif not isinstance(default_preset_obj, str):
+        raise ExecFailureError(f"Invalid default_preset in {path!r}: must be string")
+    else:
+        try:
+            default_preset = normalize_aspect(default_preset_obj)
+        except ExecFailureError as exc:
+            raise ExecFailureError(
+                f"Invalid default_preset in {path!r}: {default_preset_obj!r}: {exc}"
+            ) from exc
+
+    merged = dict(BUILTIN_PRESETS)
+    merged.update(config_presets)
+    if default_preset is not None and default_preset not in merged:
+        choices = ", ".join(sorted(merged.keys()))
+        raise ExecFailureError(
+            f"Unknown default_preset in {path!r}: {default_preset!r} (available: {choices})"
+        )
+
+    return (default_preset, config_presets)
+
+
+def _merge_presets(
+    config_presets: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    merged = dict(BUILTIN_PRESETS)
+    merged.update(config_presets)
+    return merged
+
+
+def resolve_preset_with(
+    name: str,
+    *,
+    presets: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    preset = presets.get(name)
+    if preset is None:
+        choices = ", ".join(sorted(presets.keys()))
+        raise ExecFailureError(f"Unknown preset: {name!r} (available: {choices})")
+    if not preset:
+        raise ExecFailureError(f"Preset {name!r} resolves to zero aspects")
     return preset
 
 
@@ -237,7 +375,7 @@ Examples:
         type=parse_preset_name,
         metavar="NAME",
         help=(
-            "Run a builtin preset (expands to multiple aspects). "
+            "Run a preset (builtin + user config). "
             f"Builtins: {', '.join(sorted(BUILTIN_PRESETS.keys()))}"
         ),
     )
@@ -649,17 +787,21 @@ def _raise_invalid_review_args(message: str) -> None:
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     selected_aspects: tuple[str, ...] = ASPECTS_V1
+    default_preset, config_presets = _load_user_presets_config()
+    merged_presets = _merge_presets(config_presets)
     preset = (args.preset or "").strip() if hasattr(args, "preset") else ""
     raw_aspects = list(args.aspect or []) if hasattr(args, "aspect") else []
-    if preset:
-        selected_aspects = resolve_preset(preset)
-    elif raw_aspects:
+    if raw_aspects:
         seen: set[str] = set()
         for a in raw_aspects:
             if a in seen:
                 _raise_invalid_review_args(f"Duplicate aspect: {a!r}")
             seen.add(a)
         selected_aspects = tuple(raw_aspects)
+    elif preset:
+        selected_aspects = resolve_preset_with(preset, presets=merged_presets)
+    elif default_preset:
+        selected_aspects = resolve_preset_with(default_preset, presets=merged_presets)
 
     requested_no_sot = (
         tuple(args.no_sot_aspect or []) if hasattr(args, "no_sot_aspect") else ()

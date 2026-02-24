@@ -380,6 +380,13 @@ Issue名: 配布更新基盤（stable/canary・ヘルスチェック・ロール
 推定行数: 150-300行
 依存: K7-01
 
+K7-18
+Issue: https://github.com/ToaruPen/Killer-7/issues/38
+Issue名: CLIユーザー定義プリセット（グローバル設定）+ default_preset
+概要: `${XDG_CONFIG_HOME:-$HOME/.config}/killer-7/config.json` で `presets` / `default_preset` を読み込み、`--aspect` > `--preset` > `default_preset` > builtin full の優先順位で観点を解決する。不正configは fail-fast（exit 2）で `.ai-review/run.json` にエラーを記録する
+推定行数: 150-300行
+依存: K7-11
+
 ### 4.2 依存関係図
 
 依存関係（関係を1行ずつ列挙）:
@@ -406,6 +413,7 @@ Issue名: 配布更新基盤（stable/canary・ヘルスチェック・ロール
 - K7-16 depends_on K7-11
 - K7-16 depends_on K7-15
 - K7-17 depends_on K7-01
+- K7-18 depends_on K7-11
 
 ---
 

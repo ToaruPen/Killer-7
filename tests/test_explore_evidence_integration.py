@@ -278,9 +278,9 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
                 rel = Path("reads", *shared, f"leaf-{i:03d}") / (
                     f"file-{i:03d}-" + ("x" * 120) + ".txt"
                 )
-                p = Path(td) / rel
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text("ok\n", encoding="utf-8")
+                file_path = Path(td) / rel
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text("ok\n", encoding="utf-8")
 
             _run_git(td, "add", ".")
 
@@ -290,7 +290,7 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
             fake_opencode = Path(td) / "fake-opencode"
             _write_fake_opencode_explore_read_many(fake_opencode)
 
-            p = run_cli(
+            result = run_cli(
                 [
                     "review",
                     "--repo",
@@ -311,7 +311,11 @@ class TestExploreEvidenceIntegration(unittest.TestCase):
                     "KILLER7_EXPLORE_MAX_BUNDLE_BYTES": "300000",
                 },
             )
-            self.assertIn(p.returncode, (0, 1), msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn(
+                result.returncode,
+                (0, 1),
+                msg=(result.stdout + "\n" + result.stderr),
+            )
 
             out_dir = Path(td) / ".ai-review"
             explore_txt = out_dir / "tool-bundle" / "explore.txt"
