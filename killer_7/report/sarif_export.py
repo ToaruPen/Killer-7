@@ -50,7 +50,9 @@ def _as_sources(value: object) -> list[str]:
 
 
 def _rule_for_priority(priority: str) -> dict[str, object]:
-    level = _PRIORITY_TO_LEVEL.get(priority, "warning")
+    if priority not in _PRIORITY_TO_LEVEL:
+        raise ValueError(f"Unsupported priority for SARIF rule: {priority!r}")
+    level = _PRIORITY_TO_LEVEL[priority]
     return {
         "id": f"K7.{priority}",
         "name": f"Killer-7 {priority}",
@@ -58,6 +60,16 @@ def _rule_for_priority(priority: str) -> dict[str, object]:
         "defaultConfiguration": {"level": level},
         "helpUri": _SARIF_HELP_URI,
     }
+
+
+def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
+    finding_id = _as_non_empty_str(finding.get("id"))
+    finding_name = _as_non_empty_str(finding.get("name"))
+    if finding_id:
+        return f"scope_id={scope_id}, finding.id={finding_id!r}"
+    if finding_name:
+        return f"scope_id={scope_id}, finding.name={finding_name!r}"
+    return f"scope_id={scope_id}, finding={finding!r}"
 
 
 def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
@@ -70,9 +82,15 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
 
     for item in findings:
         finding = _coerce_str_object_dict(item)
-        priority = _as_non_empty_str(finding.get("priority"), fallback="P3")
+        priority = _as_non_empty_str(finding.get("priority"))
+        if not priority:
+            raise ValueError(
+                f"Invalid finding priority: missing required priority ({_finding_context(scope_id, finding)})"
+            )
         if priority not in _PRIORITY_TO_LEVEL:
-            priority = "P3"
+            raise ValueError(
+                f"Invalid finding priority: unsupported value {priority!r} ({_finding_context(scope_id, finding)})"
+            )
         priorities.add(priority)
 
         code_location = _coerce_str_object_dict(finding.get("code_location"))

@@ -166,6 +166,57 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
             review_summary_to_sarif(summary)
 
+    def test_missing_priority_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "owner/name#pr-123@abcdef",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": 1, "end": 1},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "missing required priority"):
+            review_summary_to_sarif(summary)
+
+    def test_unknown_priority_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "owner/name#pr-123@abcdef",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P9",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": 1, "end": 1},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "unsupported value 'P9'"):
+            review_summary_to_sarif(summary)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
