@@ -294,8 +294,7 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
                 f"Invalid default_preset in {path!r}: {default_preset_obj!r}: {exc}"
             ) from exc
 
-    merged = dict(BUILTIN_PRESETS)
-    merged.update(config_presets)
+    merged = _merge_presets(config_presets)
     if default_preset is not None and default_preset not in merged:
         choices = ", ".join(sorted(merged.keys()))
         raise ExecFailureError(
