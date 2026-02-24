@@ -208,12 +208,12 @@ def _dedupe_preserve_order(items: list[str]) -> tuple[str, ...]:
 def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]:
     path = _user_config_path()
     if path is None:
-        return (None, {})
+        return (None, dict(BUILTIN_PRESETS))
     try:
         with open(path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
-        return (None, {})
+        return (None, dict(BUILTIN_PRESETS))
     except OSError as exc:
         raise ExecFailureError(
             f"Failed to read config file: {path!r}: {type(exc).__name__}: {exc}"
@@ -312,7 +312,7 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
             f"Unknown default_preset in {path!r}: {default_preset!r} (available: {choices})"
         )
 
-    return (default_preset, config_presets)
+    return (default_preset, merged)
 
 
 def _merge_presets(
@@ -797,8 +797,7 @@ def _raise_invalid_review_args(message: str) -> None:
 
 def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     selected_aspects: tuple[str, ...] = ASPECTS_V1
-    default_preset, config_presets = _load_user_presets_config()
-    merged_presets = _merge_presets(config_presets)
+    default_preset, merged_presets = _load_user_presets_config()
     preset = (args.preset or "").strip() if hasattr(args, "preset") else ""
     raw_aspects = list(args.aspect or []) if hasattr(args, "aspect") else []
     if raw_aspects:
