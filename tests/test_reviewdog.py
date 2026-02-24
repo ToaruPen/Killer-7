@@ -63,6 +63,14 @@ class TestReviewdog(unittest.TestCase):
                         sarif_path=str(sarif_path), reporter="github-pr-review"
                     )
 
+    def test_run_reviewdog_missing_sarif_file_is_exec_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            sarif_path = Path(td) / "missing.sarif.json"
+            with self.assertRaisesRegex(ExecFailureError, "Failed to read SARIF file"):
+                run_reviewdog_from_sarif(
+                    sarif_path=str(sarif_path), reporter="github-pr-review"
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

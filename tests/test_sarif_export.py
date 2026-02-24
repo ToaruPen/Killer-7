@@ -118,6 +118,54 @@ class TestSarifExport(unittest.TestCase):
         self.assertIn("k7/finding", pfp)
         self.assertTrue(str(pfp["k7/finding"]).startswith("k7f1:"))
 
+    def test_missing_code_location_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "missing code_location"):
+            review_summary_to_sarif(summary)
+
+    def test_invalid_line_range_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": 0, "end": 1},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
+            review_summary_to_sarif(summary)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

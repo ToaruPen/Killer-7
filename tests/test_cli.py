@@ -705,7 +705,8 @@ payload = {
 if aspect == "correctness":
   payload["status"] = "Blocked"
   findings = []
-  for i in range(151):
+  INLINE_FINDINGS_LIMIT = 150
+  for i in range(INLINE_FINDINGS_LIMIT + 1):
     findings.append({
       "title": f"Blocking issue #{i}",
       "body": "Evidence-backed blocking issue.",
@@ -4326,6 +4327,49 @@ class TestCli(unittest.TestCase):
             results = runs[0].get("results", []) if isinstance(runs[0], dict) else []
             self.assertTrue(isinstance(results, list) and len(results) >= 1)
 
+    def test_sarif_only_flow_fails_on_stale_head_before_export(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            state_path = Path(td) / "fake-gh-state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "comments": [],
+                        "next_id": 1,
+                        "head_ref_oid_sequence": [
+                            "0123456789abcdef",
+                            "0123456789abcdef",
+                            "fedcba9876543210",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--sarif",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("PR head changed before SARIF export", p.stderr)
+            self.assertFalse(
+                (Path(td) / ".ai-review" / "review-summary.sarif.json").exists()
+            )
+
     def test_without_sarif_flags_clears_stale_sarif_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
@@ -4353,6 +4397,35 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
             self.assertFalse(stale.exists())
+
+    def test_without_sarif_flags_fails_when_stale_sarif_removal_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stale_dir = out_dir / "review-summary.sarif.json"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("Failed to remove stale SARIF artifact", p.stderr)
+            self.assertTrue(stale_dir.exists())
 
     def test_reviewdog_flag_executes_reviewdog_with_sarif_input(self) -> None:
         with tempfile.TemporaryDirectory() as td:

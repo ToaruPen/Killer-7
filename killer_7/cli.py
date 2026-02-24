@@ -1901,16 +1901,39 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             getattr(args, "reviewdog", False)
         )
         if should_emit_sarif:
-            sarif_payload = review_summary_to_sarif(summary_payload)
-            sarif_json_path = write_review_summary_sarif_json(out_dir, sarif_payload)
+            should_validate_head_for_sarif_only = not bool(
+                args.post or args.inline
+            ) and not bool(getattr(args, "reviewdog", False))
+            if should_validate_head_for_sarif_only:
+                gh_client = GhClient.from_env()
+                current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                if current_head_sha != pr_input.head_sha:
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_review_summary_and_reset_paths(out_dir)
+                    )
+                    deferred_exc = ExecFailureError(
+                        "PR head changed before SARIF export; rerun review on latest head"
+                    )
+                else:
+                    sarif_payload = review_summary_to_sarif(summary_payload)
+                    sarif_json_path = write_review_summary_sarif_json(
+                        out_dir, sarif_payload
+                    )
+            else:
+                sarif_payload = review_summary_to_sarif(summary_payload)
+                sarif_json_path = write_review_summary_sarif_json(
+                    out_dir, sarif_payload
+                )
         else:
             stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
             try:
                 os.remove(stale_sarif_path)
             except FileNotFoundError:
                 pass
-            except OSError:
-                pass
+            except OSError as exc:
+                raise ExecFailureError(
+                    f"Failed to remove stale SARIF artifact: {stale_sarif_path}: {type(exc).__name__}: {exc}"
+                ) from exc
 
         summary_status = summary_payload.get("status")
 

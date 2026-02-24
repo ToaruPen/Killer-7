@@ -35,12 +35,6 @@ def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
     return fallback
 
 
-def _as_pos_int(value: object, *, fallback: int = 1) -> int:
-    if isinstance(value, int) and value >= 1:
-        return value
-    return fallback
-
-
 def _as_sources(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -82,14 +76,24 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
         priorities.add(priority)
 
         code_location = _coerce_str_object_dict(finding.get("code_location"))
+        if not code_location:
+            raise ValueError("Invalid finding: missing code_location")
         line_range = _coerce_str_object_dict(code_location.get("line_range"))
-        path = _as_non_empty_str(
-            code_location.get("repo_relative_path"), fallback="unknown"
-        )
-        start = _as_pos_int(line_range.get("start"), fallback=1)
-        end = _as_pos_int(line_range.get("end"), fallback=start)
-        if end < start:
-            end = start
+        if not line_range:
+            raise ValueError("Invalid finding: missing line_range")
+        path = _as_non_empty_str(code_location.get("repo_relative_path"))
+        if not path:
+            raise ValueError("Invalid finding: missing repo_relative_path")
+
+        start_raw = line_range.get("start")
+        if not isinstance(start_raw, int) or start_raw < 1:
+            raise ValueError("Invalid finding: line_range.start must be int >= 1")
+        start = start_raw
+
+        end_raw = line_range.get("end", start)
+        if not isinstance(end_raw, int) or end_raw < start:
+            raise ValueError("Invalid finding: line_range.end must be int >= start")
+        end = end_raw
 
         title = _as_non_empty_str(finding.get("title"), fallback="Finding")
         body = _as_non_empty_str(finding.get("body"))

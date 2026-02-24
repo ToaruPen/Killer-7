@@ -37,8 +37,13 @@ def run_reviewdog_from_sarif(
     name: str = "killer-7-sarif",
     level: str = "warning",
 ) -> dict[str, object]:
-    with open(sarif_path, "r", encoding="utf-8") as fh:
-        sarif_text = fh.read()
+    try:
+        with open(sarif_path, "r", encoding="utf-8") as fh:
+            sarif_text = fh.read()
+    except OSError as exc:
+        raise ExecFailureError(
+            f"Failed to read SARIF file: {sarif_path}: {type(exc).__name__}: {exc}"
+        ) from exc
 
     cmd = [
         _reviewdog_bin(),
