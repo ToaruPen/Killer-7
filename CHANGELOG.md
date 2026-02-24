@@ -15,7 +15,7 @@ All notable changes to this project are documented in this file.
 - Added Decision Snapshot `D-2026-02-22-KILLER7_TAG_CHANNEL_AUTO_UPDATE` and synced PRD/Epic entries for update infrastructure.
 - Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
 - Added SARIF/reviewdog integration for `killer-7 review`: `--sarif`, `--reviewdog`, and `--reviewdog-reporter`.
-- Added `docs/operations/sarif-reviewdog.md` with reproducible GitHub Actions linkage examples (`upload-sarif` and reviewdog annotation flow).
+- Documented `docs/operations/sarif-reviewdog.md` with reproducible GitHub Actions linkage examples (`upload-sarif` and reviewdog annotation flow).
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.
