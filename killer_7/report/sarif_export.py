@@ -73,7 +73,11 @@ def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
 
 
 def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
-    scope_id = _as_non_empty_str(summary.get("scope_id"), fallback="unknown-scope")
+    scope_id = _as_non_empty_str(summary.get("scope_id"))
+    if not scope_id:
+        raise ValueError(
+            f"Invalid review summary: missing required scope_id (summary={summary!r})"
+        )
     raw_findings = summary.get("findings")
     findings = raw_findings if isinstance(raw_findings, list) else []
 
