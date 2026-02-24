@@ -249,6 +249,12 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
                 f"Invalid preset name in {path!r}: {raw_name!r}: {exc}"
             ) from exc
 
+        if name in config_presets:
+            raise ExecFailureError(
+                f"Duplicate preset name in {path!r}: {raw_name!r} normalizes to"
+                f" {name!r} which is already defined"
+            )
+
         if not isinstance(raw_aspects, list):
             raise ExecFailureError(
                 f"Invalid preset definition in {path!r}: {raw_name!r} must be array"
