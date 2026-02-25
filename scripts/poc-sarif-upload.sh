@@ -7,7 +7,13 @@ set -euo pipefail
 SARIF_FILE="${1:?Usage: $0 <sarif-file> [category]}"
 CATEGORY="${2:-poc-issue-56}"
 REPO="ToaruPen/Killer-7"
-REF="refs/heads/feature/issue-56-poc-sarif-display-verification"
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ -z "$CURRENT_BRANCH" ]; then
+  echo "ERROR: Current branch is not available (detached HEAD)." >&2
+  echo "       Check out a branch and retry." >&2
+  exit 1
+fi
+REF="refs/heads/${CURRENT_BRANCH}"
 COMMIT_SHA="$(git rev-parse HEAD)"
 
 if [ ! -f "$SARIF_FILE" ]; then
