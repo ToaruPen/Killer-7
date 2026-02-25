@@ -128,7 +128,11 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
             raise ValueError("Invalid finding: line_range.end must be int >= start")
         end = end_raw
 
-        title = _as_non_empty_str(finding.get("title"), fallback="Finding")
+        title = _as_non_empty_str(finding.get("title"))
+        if not title:
+            raise ValueError(
+                f"Invalid finding: missing title ({_finding_context(scope_id, finding)})"
+            )
         body = _as_non_empty_str(finding.get("body"))
         message = title if not body else f"{title}\n{body}"
 
