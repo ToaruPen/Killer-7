@@ -341,7 +341,7 @@ def resolve_preset_with(
 
 
 def build_parser() -> ThrowingArgumentParser:
-    parser = ThrowingArgumentParser(prog="killer-7")
+    parser = ThrowingArgumentParser(prog="killer-7", allow_abbrev=False)
     sub = parser.add_subparsers(dest="command", required=True)
 
     examples = """
@@ -363,6 +363,7 @@ Examples:
 
     review = sub.add_parser(
         "review",
+        allow_abbrev=False,
         help="Run review for a GitHub PR",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=examples,

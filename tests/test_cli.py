@@ -986,6 +986,23 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
             self.assertIn("--reviewdog-reporter requires --reviewdog", p.stderr)
 
+    def test_reviewdog_reporter_abbreviation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--reviewdog-rep",
+                    "github-pr-annotations",
+                ],
+                cwd=td,
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("unrecognized arguments: --reviewdog-rep", p.stderr)
+
     def test_reuse_hit_skips_llm_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
