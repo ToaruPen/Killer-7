@@ -41,6 +41,11 @@ _CATEGORY_LINE_OFFSET_STEP = 10
 _CATEGORY_PRIORITY_LINE_BLOCK = 100
 _COUNT_LINE_CYCLE = 500
 _COUNT_LINE_OFFSET_BASE = 1
+# Priority distribution weights for count-based fixtures.
+_PRIORITY_P0_WEIGHT = 0.10
+_PRIORITY_P1_WEIGHT = 0.20
+_PRIORITY_P2_WEIGHT = 0.40
+_PRIORITY_P3_WEIGHT = 0.30
 
 _PRIORITY_TO_LEVEL = {
     "P0": "error",
@@ -201,12 +206,11 @@ def generate_count_fixture(count: int) -> dict[str, object]:
     results: list[dict[str, object]] = []
     priorities_used: set[str] = set()
 
-    # Distribution ratio: P0=10%, P1=20%, P2=40%, P3=30%
     priority_weights = [
-        ("P0", 0.10),
-        ("P1", 0.20),
-        ("P2", 0.40),
-        ("P3", 0.30),
+        ("P0", _PRIORITY_P0_WEIGHT),
+        ("P1", _PRIORITY_P1_WEIGHT),
+        ("P2", _PRIORITY_P2_WEIGHT),
+        ("P3", _PRIORITY_P3_WEIGHT),
     ]
 
     # Pre-compute counts per priority
@@ -291,7 +295,9 @@ def _write_and_report(
     if not runs or not isinstance(runs[0], dict):
         raise ValueError("Invalid SARIF shape: missing runs[0]")
     run0 = cast(dict[str, object], runs[0])
-    results = cast(list[object], run0.get("results", []))
+    if "results" not in run0:
+        raise ValueError(f"Invalid SARIF shape: missing runs[0].results ({run0!r})")
+    results = cast(list[object], run0["results"])
     result_count = len(results)
     size_mb = len(raw_bytes) / (1024 * 1024)
     gz_size = len(gzip.compress(raw_bytes, compresslevel=6))
