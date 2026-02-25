@@ -113,12 +113,16 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
             raise ValueError("Invalid finding: missing repo_relative_path")
 
         start_raw = line_range.get("start")
-        if not isinstance(start_raw, int) or start_raw < 1:
+        if (
+            isinstance(start_raw, bool)
+            or not isinstance(start_raw, int)
+            or start_raw < 1
+        ):
             raise ValueError("Invalid finding: line_range.start must be int >= 1")
         start = start_raw
 
         end_raw = line_range.get("end", start)
-        if not isinstance(end_raw, int) or end_raw < start:
+        if isinstance(end_raw, bool) or not isinstance(end_raw, int) or end_raw < start:
             raise ValueError("Invalid finding: line_range.end must be int >= start")
         end = end_raw
 

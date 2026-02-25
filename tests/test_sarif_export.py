@@ -242,6 +242,58 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
             review_summary_to_sarif(summary)
 
+    def test_line_range_start_bool_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": True, "end": 1},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
+            review_summary_to_sarif(summary)
+
+    def test_line_range_end_bool_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": 1, "end": False},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
+            review_summary_to_sarif(summary)
+
     def test_missing_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
