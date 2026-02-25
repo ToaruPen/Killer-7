@@ -59,6 +59,14 @@ class TestPocSarifFixtures(unittest.TestCase):
         }
         self.assertEqual(seen_rule_ids, {"K7.P0", "K7.P1", "K7.P2", "K7.P3"})
 
+    def test_generate_count_fixture_rejects_negative_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "count must be non-negative"):
+            _ = self.mod.generate_count_fixture(-1)
+
+    def test_default_count_targets_are_stable(self) -> None:
+        targets = cast(tuple[int, ...], getattr(self.mod, "_DEFAULT_COUNT_TARGETS"))
+        self.assertEqual(targets, (100, 1000, 5000, 5001, 10000, 25000, 25001))
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

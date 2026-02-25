@@ -30,7 +30,7 @@ if [ ! -f "$SARIF_FILE" ]; then
 fi
 
 FILE_SIZE=$(wc -c < "$SARIF_FILE" | tr -d ' ')
-FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE / 1048576" | bc)
+FILE_SIZE_MB="$(python3 -c 'import sys; print(f"{int(sys.argv[1]) / 1048576:.2f}")' "$FILE_SIZE")"
 echo "File: $SARIF_FILE"
 echo "Size: ${FILE_SIZE_MB} MB (${FILE_SIZE} bytes)"
 echo "Category: $CATEGORY"

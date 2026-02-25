@@ -33,6 +33,7 @@ _SARIF_HELP_URI = (
     "https://github.com/ToaruPen/Killer-7/blob/main/docs/operations/sarif-reviewdog.md"
 )
 _GITHUB_SARIF_SIZE_LIMIT_MB = 10.0
+_DEFAULT_COUNT_TARGETS: tuple[int, ...] = (100, 1000, 5000, 5001, 10000, 25000, 25001)
 
 _PRIORITY_TO_LEVEL = {
     "P0": "error",
@@ -181,6 +182,9 @@ def generate_count_fixture(count: int) -> dict[str, object]:
     Distributes findings across priorities (P0:P1:P2:P3 = 1:2:4:3 ratio)
     and rotates through synthetic file paths.
     """
+    if type(count) is not int or count < 0:
+        raise ValueError("count must be non-negative")
+
     results: list[dict[str, object]] = []
     priorities_used: set[str] = set()
 
@@ -235,7 +239,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    output_dir = Path(str(args.output_dir))
+    output_dir = Path(cast(str, args.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- category-split (pretty only) ---
@@ -243,8 +247,7 @@ def main() -> int:
     _write_and_report(output_dir, "category-split.sarif.json", cat_sarif, indent=2)
 
     # --- count fixtures (pretty + compact) ---
-    count_targets = [100, 1000, 5000, 5001, 10000, 25000, 25001]
-    for count in count_targets:
+    for count in _DEFAULT_COUNT_TARGETS:
         sarif = generate_count_fixture(count)
         _write_and_report(output_dir, f"count-{count}.sarif.json", sarif, indent=2)
         _write_and_report(

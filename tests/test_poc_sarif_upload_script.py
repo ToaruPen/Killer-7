@@ -29,6 +29,14 @@ class TestPocSarifUploadScript(unittest.TestCase):
         )
         self.assertNotIn('REPO="ToaruPen/Killer-7"', content)
 
+    def test_file_size_mb_does_not_use_bc(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script_path = repo_root / "scripts" / "poc-sarif-upload.sh"
+        content = script_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("| bc", content)
+        self.assertIn('FILE_SIZE_MB="$(python3 -c', content)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
