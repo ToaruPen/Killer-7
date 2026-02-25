@@ -34,6 +34,13 @@ _SARIF_HELP_URI = (
 )
 _GITHUB_SARIF_SIZE_LIMIT_MB = 10.0
 _DEFAULT_COUNT_TARGETS: tuple[int, ...] = (100, 1000, 5000, 5001, 10000, 25000, 25001)
+_CATEGORY_REPEAT_COUNT = 5
+_CATEGORY_PATH_STRIDE_MULTIPLIER = 2
+_CATEGORY_LINE_OFFSET_BASE = 1
+_CATEGORY_LINE_OFFSET_STEP = 10
+_CATEGORY_PRIORITY_LINE_BLOCK = 100
+_COUNT_LINE_CYCLE = 500
+_COUNT_LINE_OFFSET_BASE = 1
 
 _PRIORITY_TO_LEVEL = {
     "P0": "error",
@@ -160,13 +167,19 @@ def generate_category_split() -> dict[str, object]:
     priorities = {"P0", "P1", "P2", "P3"}
 
     for priority_idx, priority in enumerate(sorted(priorities)):
-        for i in range(5):
-            path_idx = (priority_idx * 2 + i) % len(_SYNTHETIC_PATHS)
+        for i in range(_CATEGORY_REPEAT_COUNT):
+            path_idx = (priority_idx * _CATEGORY_PATH_STRIDE_MULTIPLIER + i) % len(
+                _SYNTHETIC_PATHS
+            )
             path = _SYNTHETIC_PATHS[path_idx]
-            start_line = (priority_idx * 100) + (i * 10) + 1
+            start_line = (
+                priority_idx * _CATEGORY_PRIORITY_LINE_BLOCK
+                + i * _CATEGORY_LINE_OFFSET_STEP
+                + _CATEGORY_LINE_OFFSET_BASE
+            )
             results.append(
                 _make_result(
-                    index=priority_idx * 5 + i + 1,
+                    index=priority_idx * _CATEGORY_REPEAT_COUNT + i + 1,
                     priority=priority,
                     path=path,
                     start_line=start_line,
@@ -214,7 +227,7 @@ def generate_count_fixture(count: int) -> dict[str, object]:
         priorities_used.add(priority)
         for _ in range(n):
             path = _SYNTHETIC_PATHS[global_idx % len(_SYNTHETIC_PATHS)]
-            start_line = (global_idx % 500) + 1
+            start_line = (global_idx % _COUNT_LINE_CYCLE) + _COUNT_LINE_OFFSET_BASE
             results.append(
                 _make_result(
                     index=global_idx + 1,
