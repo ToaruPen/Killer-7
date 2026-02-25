@@ -52,13 +52,16 @@ jobs:
 
       - name: Determine SARIF file path
         id: sarif
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+          COMPACT: ${{ inputs.compact }}
         run: |
-          if [ "${{ inputs.fixture }}" = "category-split" ]; then
+          if [ "$FIXTURE" = "category-split" ]; then
             echo "file=.ai-review/poc-sarif-fixtures/category-split.sarif.json" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.compact }}" = "true" ]; then
-            echo "file=.ai-review/poc-sarif-fixtures/${{ inputs.fixture }}.compact.sarif.json" >> "$GITHUB_OUTPUT"
+          elif [ "$COMPACT" = "true" ]; then
+            echo "file=.ai-review/poc-sarif-fixtures/${FIXTURE}.compact.sarif.json" >> "$GITHUB_OUTPUT"
           else
-            echo "file=.ai-review/poc-sarif-fixtures/${{ inputs.fixture }}.sarif.json" >> "$GITHUB_OUTPUT"
+            echo "file=.ai-review/poc-sarif-fixtures/${FIXTURE}.sarif.json" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Report file info

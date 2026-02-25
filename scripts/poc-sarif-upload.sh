@@ -6,7 +6,15 @@ set -euo pipefail
 
 SARIF_FILE="${1:?Usage: $0 <sarif-file> [category]}"
 CATEGORY="${2:-poc-issue-56}"
-REPO="ToaruPen/Killer-7"
+REPO="${GITHUB_REPOSITORY:-}"
+if [ -z "$REPO" ]; then
+  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+fi
+if [ -z "$REPO" ]; then
+  echo "ERROR: Repository is not resolved." >&2
+  echo "       Set GITHUB_REPOSITORY or configure gh auth/repo context." >&2
+  exit 1
+fi
 CURRENT_BRANCH="$(git branch --show-current)"
 if [ -z "$CURRENT_BRANCH" ]; then
   echo "ERROR: Current branch is not available (detached HEAD)." >&2

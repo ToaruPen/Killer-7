@@ -32,6 +32,7 @@ _PROJECT_URL = "https://github.com/ToaruPen/Killer-7"
 _SARIF_HELP_URI = (
     "https://github.com/ToaruPen/Killer-7/blob/main/docs/operations/sarif-reviewdog.md"
 )
+_GITHUB_SARIF_SIZE_LIMIT_MB = 10.0
 
 _PRIORITY_TO_LEVEL = {
     "P0": "error",
@@ -204,6 +205,8 @@ def generate_count_fixture(count: int) -> dict[str, object]:
 
     global_idx = 0
     for priority, n in priority_counts:
+        if n <= 0:
+            continue
         priorities_used.add(priority)
         for _ in range(n):
             path = _SYNTHETIC_PATHS[global_idx % len(_SYNTHETIC_PATHS)]
@@ -277,7 +280,7 @@ def _write_and_report(
     size_mb = len(raw_bytes) / (1024 * 1024)
     gz_size = len(gzip.compress(raw_bytes, compresslevel=6))
     gz_mb = gz_size / (1024 * 1024)
-    flag = " *** >10 MB" if size_mb > 10 else ""
+    flag = " *** >10 MB" if gz_mb > _GITHUB_SARIF_SIZE_LIMIT_MB else ""
     print(
         f"  {filename}: {result_count} results, {size_mb:.2f} MB (gzip {gz_mb:.2f} MB){flag}"
     )

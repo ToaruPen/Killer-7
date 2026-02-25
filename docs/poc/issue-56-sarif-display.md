@@ -59,7 +59,7 @@ Code Scanning API (`POST /repos/{owner}/{repo}/code-scanning/sarifs`) に gzip +
   - K7.P0 → error, K7.P1 → error, K7.P2 → warning, K7.P3 → note
 - [x] **同一 ruleId のアラートは個別アラートとして表示**: `partialFingerprints` で一意識別
 
-```
+```text
 Analysis: id=1004011776, results_count=20, rules_count=4, category=killer-7
 ```
 
@@ -90,7 +90,7 @@ Analysis: id=1004011776, results_count=20, rules_count=4, category=killer-7
 - truncation発生: **Yes**
 - 備考: `processing_status: "complete"`, `errors: null` — 切り捨てはエラー扱いにならない
 
-```
+```text
 Analysis: id=1004013287, results_count=5000, rules_count=4
 ```
 
@@ -108,7 +108,7 @@ Analysis: id=1004013287, results_count=5000, rules_count=4
 - エラーメッセージ: なし（`processing_status: "complete"`, `errors: null`）
 - 備考: **未圧縮 11.24 MB だがアップロード成功。gzip 圧縮後 1.40 MB であり、10 MB 制限は圧縮後のサイズに適用されることが判明**
 
-```
+```text
 Analysis: id=1004017614, results_count=5000, rules_count=4
 ```
 
