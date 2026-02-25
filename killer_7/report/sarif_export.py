@@ -69,20 +69,25 @@ def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
         return f"scope_id={scope_id}, finding.id={finding_id!r}"
     if finding_name:
         return f"scope_id={scope_id}, finding.name={finding_name!r}"
-    return f"scope_id={scope_id}, finding={finding!r}"
+    return (
+        f"scope_id={scope_id}, finding_type={type(finding).__name__}, "
+        f"finding_keys={sorted(finding.keys())}"
+    )
 
 
 def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
     scope_id = _as_non_empty_str(summary.get("scope_id"))
     if not scope_id:
+        summary_keys = sorted(str(k) for k in summary.keys())
         raise ValueError(
-            f"Invalid review summary: missing required scope_id (summary={summary!r})"
+            "Invalid review summary: missing required scope_id "
+            f"(summary_type={type(summary).__name__}, summary_keys={summary_keys})"
         )
     raw_findings = summary.get("findings")
     if not isinstance(raw_findings, list):
         raise ValueError(
             "Invalid review summary: raw_findings must be a list to construct findings "
-            f"(raw_findings={raw_findings!r}, raw_findings_type={type(raw_findings).__name__}, summary={summary!r})"
+            f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
         )
     findings = raw_findings
 
