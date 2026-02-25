@@ -2,11 +2,11 @@ name: codex-review-events
 
 on:
   issue_comment:
-    types: [created]
+    types: [created, edited]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, edited, dismissed]
   pull_request_review_comment:
-    types: [created]
+    types: [created, edited]
 
 permissions:
   contents: read
@@ -33,7 +33,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CODEX_BOT_LOGINS: ${{ vars.CODEX_BOT_LOGINS || 'chatgpt-codex-connector[bot]' }}
+          CODEX_BOT_LOGINS: ${{ vars.CODEX_BOT_LOGINS || 'chatgpt-codex-connector[bot],coderabbitai,coderabbitai[bot]' }}
           CODEX_REVIEW_REQUIRE_GH_AUTH: "1"
         run: |
           set -euo pipefail
