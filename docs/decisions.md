@@ -22,3 +22,4 @@
 - D-2026-02-21-PR_BOTS_REVIEW_AND_FAIL_FAST: [`docs/decisions/d-2026-02-21-pr-bots-review-and-fail-fast.md`](./decisions/d-2026-02-21-pr-bots-review-and-fail-fast.md)
 - D-2026-02-21-REVIEW_CYCLE_DEFAULT_BALANCED: [`docs/decisions/d-2026-02-21-review-cycle-default-balanced.md`](./decisions/d-2026-02-21-review-cycle-default-balanced.md)
 - D-2026-02-22-KILLER7_TAG_CHANNEL_AUTO_UPDATE: [`docs/decisions/d-2026-02-22-killer7-tag-channel-auto-update.md`](./decisions/d-2026-02-22-killer7-tag-channel-auto-update.md)
+- D-2026-02-24-KILLER7_SARIF_REVIEWDOG_ADAPTER: [`docs/decisions/d-2026-02-24-killer7-sarif-reviewdog-adapter.md`](./decisions/d-2026-02-24-killer7-sarif-reviewdog-adapter.md)

@@ -42,6 +42,8 @@
 
 - スキーマは原則として厳格（unknown field禁止）とし、フィールド拡張はスキーマ更新を伴う
 - 結果をPRコメント（要約）として投稿でき、P0/P1のみをinlineコメントとして投稿できる（冪等更新、重複排除）
+- `--sarif` 指定で、集約結果から SARIF 2.1.0 形式（`review-summary.sarif.json`）を生成できる
+- `--reviewdog` 指定で、生成SARIFを reviewdog に渡してPR注釈フローへ連携できる（既存の native inline はデフォルト維持）
 - 成果物（レポート/ログ/バンドル）をローカルの `.ai-review/` 配下に保存でき、終了コードでゲートできる（例: Blocked=1、実行失敗=2）
 
 LLM実行方式:
@@ -82,7 +84,7 @@ killer-7 review --repo owner/name --pr 123 --post --inline
 ### Q4: 完成と言える状態は？
 
 - GitHub上の任意のPRに対して、同一のCLI操作でレビューを実行できる
-- 7観点レビューが走り、集約された `review-summary.json` と `review-summary.md` が生成される
+- 7観点レビューが走り、集約された `review-summary.json` と `review-summary.md` が生成される（`--sarif` または `--reviewdog` 指定時は `review-summary.sarif.json` も生成される）
 - `review-summary.json` が固定スキーマに合格し、evidence検証が有効な場合に根拠不明なP0/P1が最終結果に残らない
 - `--post` 指定で要約コメントがPR上で冪等更新され、`--inline` 指定でP0/P1がinline投稿される（重複しない）
 - `--inline` 指定時にP0/P1が150件を超える場合、inline投稿は行わず要約へ退避し、終了コードはBlocked（1）となる（要約コメントは更新される）
@@ -238,8 +240,8 @@ FR-11
 
 ### 正常系
 
-- [ ] AC-1: `killer-7 review --repo <owner/name> --pr <number>` を実行すると、`review-summary.json` と `review-summary.md` が生成される
-- [ ] AC-1a: 成果物はデフォルトで `./.ai-review/` 配下に生成される（例: `./.ai-review/review-summary.json`）
+- [ ] AC-1: `killer-7 review --repo <owner/name> --pr <number>` を実行すると、`review-summary.json` と `review-summary.md` が生成される（`--sarif` または `--reviewdog` 指定時は `review-summary.sarif.json` も生成される）
+- [ ] AC-1a: 成果物はデフォルトで `./.ai-review/` 配下に生成される（例: `./.ai-review/review-summary.json`, `./.ai-review/review-summary.sarif.json`）
 - [ ] AC-2: `review-summary.json` が固定スキーマに合格する
 - [ ] AC-3: evidence検証が有効な場合、根拠不明なP0/P1が最終結果に残らない（格下げ/除外される）
 - [ ] AC-4: `--post` 指定でPRの要約コメントが冪等更新される（同一PRでコメントが増殖しない）

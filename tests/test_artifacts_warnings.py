@@ -68,6 +68,27 @@ class TestArtifactsWarnings(unittest.TestCase):
             self.assertEqual(payload["kind"], "schema_validation_failed")
             self.assertIn("original_filename", payload)
 
+    def test_writes_review_summary_sarif_json(self) -> None:
+        from killer_7.artifacts import (
+            ensure_artifacts_dir,
+            write_review_summary_sarif_json,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = ensure_artifacts_dir(td)
+            payload = {
+                "version": "2.1.0",
+                "runs": [],
+            }
+
+            sarif_path = write_review_summary_sarif_json(out_dir, payload)
+
+            p = Path(sarif_path)
+            self.assertTrue(p.is_file())
+            self.assertEqual(p.name, "review-summary.sarif.json")
+            loaded = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["version"], "2.1.0")
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

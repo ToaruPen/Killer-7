@@ -104,6 +104,28 @@ class TestCliInlineArgs(unittest.TestCase):
         self.assertTrue(args.full)
         self.assertEqual(args.no_sot_aspect, ["performance", "security"])
 
+    def test_review_parser_accepts_sarif_and_reviewdog_flags(self) -> None:
+        from killer_7.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--repo",
+                "owner/name",
+                "--pr",
+                "123",
+                "--sarif",
+                "--reviewdog",
+                "--reviewdog-reporter",
+                "github-pr-annotations",
+            ]
+        )
+
+        self.assertTrue(args.sarif)
+        self.assertTrue(args.reviewdog)
+        self.assertEqual(args.reviewdog_reporter, "github-pr-annotations")
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
