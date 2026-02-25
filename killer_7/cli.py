@@ -812,6 +812,24 @@ def _clear_stale_review_summary_and_reset_paths(out_dir: str) -> tuple[str, str,
     return "", "", ""
 
 
+def _clear_stale_sarif_and_reset_path(
+    out_dir: str,
+    *,
+    summary_json_path: str,
+    summary_md_path: str,
+) -> tuple[str, str, str]:
+    stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
+    try:
+        os.remove(stale_sarif_path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise ExecFailureError(
+            f"Failed to remove stale review-summary.sarif.json artifact: {stale_sarif_path}: {type(exc).__name__}: {exc}"
+        ) from exc
+    return summary_json_path, summary_md_path, ""
+
+
 def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
     message = str(exc).lower()
     return (
@@ -2073,7 +2091,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     )
         except ExecFailureError as exc:
             summary_json_path, summary_md_path, sarif_json_path = (
-                _clear_stale_review_summary_and_reset_paths(out_dir)
+                _clear_stale_sarif_and_reset_path(
+                    out_dir,
+                    summary_json_path=summary_json_path,
+                    summary_md_path=summary_md_path,
+                )
             )
             deferred_exc = exc
 

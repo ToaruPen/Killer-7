@@ -3794,12 +3794,24 @@ class TestCli(unittest.TestCase):
             payload = json.loads(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
             message = payload.get("error", {}).get("message", "")
+            # test_post_summary_fails_when_head_moves_during_post:
+            # Two messages are valid depending on whether head change is detected
+            # by post_summary internals or by the post-call recheck in CLI.
+            allowed_message_fragments = {
+                "PR head changed; skip stale summary mutation",
+                "PR head changed during summary posting",
+            }
+            matched_fragments = {
+                fragment
+                for fragment in allowed_message_fragments
+                if fragment in message
+            }
             self.assertTrue(
-                (
-                    "PR head changed; skip stale summary mutation" in message
-                    or "PR head changed during summary posting" in message
+                matched_fragments,
+                msg=(
+                    "unexpected error message: "
+                    f"{message}; allowed={sorted(allowed_message_fragments)}"
                 ),
-                msg=f"unexpected error message: {message}",
             )
 
             out_dir = Path(td) / ".ai-review"
@@ -4731,8 +4743,8 @@ class TestCli(unittest.TestCase):
             self.assertIn("reviewdog failed (exit=2)", p.stderr)
 
             out_dir = Path(td) / ".ai-review"
-            self.assertFalse((out_dir / "review-summary.json").exists())
-            self.assertFalse((out_dir / "review-summary.md").exists())
+            self.assertTrue((out_dir / "review-summary.json").exists())
+            self.assertTrue((out_dir / "review-summary.md").exists())
             self.assertFalse((out_dir / "review-summary.sarif.json").exists())
 
     def test_reviewdog_stale_head_is_blocked_before_reviewdog_run(self) -> None:
