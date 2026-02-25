@@ -64,10 +64,13 @@ jobs:
       - name: Report file info
         run: |
           FILE="${{ steps.sarif.outputs.file }}"
-          echo "### SARIF Fixture Info" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **File**: \`${FILE}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Size**: $(du -h "${FILE}" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Results**: $(python3 -c "import json; d=json.load(open('${FILE}')); print(len(d['runs'][0]['results']))")" >> "$GITHUB_STEP_SUMMARY"
+          RESULTS="$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); print(len(d["runs"][0]["results"]))' "$FILE")"
+          {
+            echo "### SARIF Fixture Info"
+            echo "- **File**: \`${FILE}\`"
+            echo "- **Size**: $(du -h "${FILE}" | cut -f1)"
+            echo "- **Results**: ${RESULTS}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
