@@ -801,15 +801,9 @@ def clear_stale_review_summary(out_dir: str) -> None:
         except FileNotFoundError:
             pass
         except OSError as exc:
-            if name in (
-                "review-summary.sarif.json",
-                "review-summary.json",
-                "review-summary.md",
-            ):
-                raise ExecFailureError(
-                    f"Failed to remove stale {name} artifact: {stale_path}: {type(exc).__name__}: {exc}"
-                ) from exc
-            raise
+            raise ExecFailureError(
+                f"Failed to remove stale {name} artifact: {stale_path}: {type(exc).__name__}: {exc}"
+            ) from exc
 
 
 def _clear_stale_review_summary_and_reset_paths(out_dir: str) -> tuple[str, str, str]:
@@ -2212,6 +2206,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         parser = build_parser()
         args = parser.parse_args(argv_list)
+        reviewdog_reporter_provided = any(
+            arg == "--reviewdog-reporter" or arg.startswith("--reviewdog-reporter=")
+            for arg in argv_list
+        )
+        if (
+            getattr(args, "command", "") == "review"
+            and reviewdog_reporter_provided
+            and not bool(getattr(args, "reviewdog", False))
+        ):
+            parser.error("--reviewdog-reporter requires --reviewdog")
         handler = getattr(args, "_handler", None)
         if handler is None:
             raise BlockedError("No handler configured for this command")
