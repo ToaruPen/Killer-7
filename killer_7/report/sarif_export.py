@@ -79,7 +79,12 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
             f"Invalid review summary: missing required scope_id (summary={summary!r})"
         )
     raw_findings = summary.get("findings")
-    findings = raw_findings if isinstance(raw_findings, list) else []
+    if not isinstance(raw_findings, list):
+        raise ValueError(
+            "Invalid review summary: raw_findings must be a list to construct findings "
+            f"(raw_findings={raw_findings!r}, raw_findings_type={type(raw_findings).__name__}, summary={summary!r})"
+        )
+    findings = raw_findings
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()

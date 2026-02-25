@@ -166,6 +166,82 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
             review_summary_to_sarif(summary)
 
+    def test_missing_line_range_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "missing line_range"):
+            review_summary_to_sarif(summary)
+
+    def test_missing_repo_relative_path_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "line_range": {"start": 1, "end": 1},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "missing repo_relative_path"):
+            review_summary_to_sarif(summary)
+
+    def test_line_range_end_before_start_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": [
+                {
+                    "title": "A",
+                    "body": "B",
+                    "priority": "P1",
+                    "sources": ["a.py#L1-L1"],
+                    "code_location": {
+                        "repo_relative_path": "a.py",
+                        "line_range": {"start": 5, "end": 3},
+                    },
+                }
+            ],
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
+            review_summary_to_sarif(summary)
+
     def test_missing_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
@@ -240,6 +316,21 @@ class TestSarifExport(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "missing required scope_id"):
+            review_summary_to_sarif(summary)
+
+    def test_findings_not_array_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "s",
+            "status": "Approved",
+            "findings": "not-a-list",
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+
+        with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
             review_summary_to_sarif(summary)
 
 
