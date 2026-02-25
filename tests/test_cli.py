@@ -4712,7 +4712,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
             self.assertTrue(capture.exists())
 
-    def test_reviewdog_failure_clears_stale_summary_artifacts(self) -> None:
+    def test_reviewdog_failure_clears_only_sarif_not_summary(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             fake_gh = Path(td) / "fake-gh"
             _write_fake_gh(fake_gh)
