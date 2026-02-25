@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import unittest
-from typing import cast
+from typing import Mapping, cast
 
 
 class TestSarifExport(unittest.TestCase):
+    def test_non_mapping_summary_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        with self.assertRaisesRegex(ValueError, "expected mapping at root"):
+            invalid_summary = cast("Mapping[str, object]", cast(object, None))
+            review_summary_to_sarif(invalid_summary)
+
     def test_empty_findings_generates_sarif(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 

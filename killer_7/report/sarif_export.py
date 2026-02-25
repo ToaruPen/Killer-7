@@ -76,6 +76,11 @@ def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
 
 
 def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(summary, Mapping):
+        raise ValueError(
+            "Invalid review summary: expected mapping at root "
+            f"(summary_type={type(summary).__name__})"
+        )
     scope_id = _as_non_empty_str(summary.get("scope_id"))
     if not scope_id:
         summary_keys = sorted(str(k) for k in summary.keys())
