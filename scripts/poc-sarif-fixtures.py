@@ -26,6 +26,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
 
 _PROJECT_URL = "https://github.com/ToaruPen/Killer-7"
 _SARIF_HELP_URI = (
@@ -204,7 +205,7 @@ def generate_count_fixture(count: int) -> dict[str, object]:
     global_idx = 0
     for priority, n in priority_counts:
         priorities_used.add(priority)
-        for i in range(n):
+        for _ in range(n):
             path = _SYNTHETIC_PATHS[global_idx % len(_SYNTHETIC_PATHS)]
             start_line = (global_idx % 500) + 1
             results.append(
@@ -224,14 +225,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate SARIF fixtures for Issue #56 PoC verification"
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--output-dir",
         default=".ai-review/poc-sarif-fixtures",
         help="Directory to write SARIF fixture files (default: .ai-review/poc-sarif-fixtures)",
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(str(args.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- category-split (pretty only) ---
@@ -265,16 +266,20 @@ def _write_and_report(
         sarif, indent=indent, ensure_ascii=False, separators=separators
     )
     raw_bytes = (content + "\n").encode("utf-8")
-    filepath.write_bytes(raw_bytes)
+    _ = filepath.write_bytes(raw_bytes)
 
-    result_count = len(sarif["runs"][0]["results"])  # type: ignore[index]
+    runs = cast(list[object], sarif.get("runs", []))
+    if not runs or not isinstance(runs[0], dict):
+        raise ValueError("Invalid SARIF shape: missing runs[0]")
+    run0 = cast(dict[str, object], runs[0])
+    results = cast(list[object], run0.get("results", []))
+    result_count = len(results)
     size_mb = len(raw_bytes) / (1024 * 1024)
     gz_size = len(gzip.compress(raw_bytes, compresslevel=6))
     gz_mb = gz_size / (1024 * 1024)
     flag = " *** >10 MB" if size_mb > 10 else ""
     print(
-        f"  {filename}: {result_count} results, "
-        f"{size_mb:.2f} MB (gzip {gz_mb:.2f} MB){flag}"
+        f"  {filename}: {result_count} results, {size_mb:.2f} MB (gzip {gz_mb:.2f} MB){flag}"
     )
 
 
