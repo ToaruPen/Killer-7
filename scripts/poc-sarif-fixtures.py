@@ -194,13 +194,15 @@ def generate_category_split() -> dict[str, object]:
     return _wrap_sarif(results, priorities)
 
 
-def generate_count_fixture(count: int) -> dict[str, object]:
+def generate_count_fixture(count: object) -> dict[str, object]:
     """Generate a SARIF with exactly `count` findings.
 
     Distributes findings across priorities (P0:P1:P2:P3 = 1:2:4:3 ratio)
     and rotates through synthetic file paths.
     """
-    if type(count) is not int or count < 0:
+    if not isinstance(count, int):
+        raise TypeError("count must be an int")
+    if count < 0:
         raise ValueError("count must be non-negative")
 
     results: list[dict[str, object]] = []
@@ -285,11 +287,6 @@ def _write_and_report(
     """Write a SARIF file and print size metrics."""
     filepath = output_dir / filename
     separators = (",", ":") if indent is None else (", ", ": ")
-    content = json.dumps(
-        sarif, indent=indent, ensure_ascii=False, separators=separators
-    )
-    raw_bytes = (content + "\n").encode("utf-8")
-    _ = filepath.write_bytes(raw_bytes)
 
     runs = cast(list[object], sarif.get("runs", []))
     if not runs or not isinstance(runs[0], dict):
@@ -298,6 +295,12 @@ def _write_and_report(
     if "results" not in run0:
         raise ValueError(f"Invalid SARIF shape: missing runs[0].results ({run0!r})")
     results = cast(list[object], run0["results"])
+
+    content = json.dumps(
+        sarif, indent=indent, ensure_ascii=False, separators=separators
+    )
+    raw_bytes = (content + "\n").encode("utf-8")
+    _ = filepath.write_bytes(raw_bytes)
     result_count = len(results)
     size_mb = len(raw_bytes) / (1024 * 1024)
     gz_size = len(gzip.compress(raw_bytes, compresslevel=6))
