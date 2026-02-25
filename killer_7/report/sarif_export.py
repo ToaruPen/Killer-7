@@ -121,6 +121,8 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
             raise ValueError("Invalid finding: line_range.start must be int >= 1")
         start = start_raw
 
+        # line_range.end is optional; when omitted, it defaults to start.
+        # This lets single-line ranges omit `end` while preserving explicit spans.
         end_raw = line_range.get("end", start)
         if isinstance(end_raw, bool) or not isinstance(end_raw, int) or end_raw < start:
             raise ValueError("Invalid finding: line_range.end must be int >= start")

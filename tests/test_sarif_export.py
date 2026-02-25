@@ -5,6 +5,27 @@ from typing import cast
 
 
 class TestSarifExport(unittest.TestCase):
+    def test_empty_findings_generates_sarif(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = {
+            "schema_version": 3,
+            "scope_id": "owner/name#pr-123@empty",
+            "status": "Approved",
+            "findings": [],
+            "questions": [],
+            "overall_explanation": "No findings.",
+        }
+
+        sarif = review_summary_to_sarif(summary)
+        self.assertIsInstance(sarif, dict)
+        self.assertEqual(sarif.get("version"), "2.1.0")
+        runs = cast(list[object], sarif.get("runs", []))
+        self.assertTrue(isinstance(runs, list) and len(runs) == 1)
+        self.assertIsInstance(runs[0], dict)
+        run0 = cast(dict[str, object], runs[0])
+        self.assertEqual(run0.get("results"), [])
+
     def test_converts_review_summary_to_sarif_with_locations(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
