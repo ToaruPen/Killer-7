@@ -5,12 +5,73 @@ from typing import Mapping, cast
 
 
 class TestSarifExport(unittest.TestCase):
+    def _build_finding(self) -> dict[str, object]:
+        return {
+            "title": "A",
+            "body": "B",
+            "priority": "P1",
+            "sources": ["a.py#L1-L1"],
+            "code_location": {
+                "repo_relative_path": "a.py",
+                "line_range": {"start": 1, "end": 1},
+            },
+        }
+
+    def _build_summary(
+        self,
+        *,
+        scope_id: str | None = "s",
+        status: str = "Approved",
+        findings: object | None = None,
+    ) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "schema_version": 3,
+            "status": status,
+            "findings": [self._build_finding()] if findings is None else findings,
+            "questions": [],
+            "overall_explanation": "ok",
+        }
+        if scope_id is not None:
+            summary["scope_id"] = scope_id
+        return summary
+
     def test_non_mapping_summary_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
         with self.assertRaisesRegex(ValueError, "expected mapping at root"):
             invalid_summary = cast(object, None)
             review_summary_to_sarif(cast("Mapping[str, object]", invalid_summary))
+
+    def test_line_range_without_end_defaults_endline_to_start(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        finding = self._build_finding()
+        code_location = cast(dict[str, object], finding["code_location"])
+        code_location["repo_relative_path"] = "src/app.py"
+        code_location["line_range"] = {"start": 42}
+        finding["sources"] = ["src/app.py#L42-L42"]
+
+        summary = self._build_summary(
+            scope_id="owner/name#pr-123@line-range-default",
+            findings=[finding],
+        )
+
+        sarif = review_summary_to_sarif(summary)
+        runs = cast(list[object], sarif["runs"])
+        run = cast(dict[str, object], runs[0])
+        results = cast(list[object], run["results"])
+        result = cast(dict[str, object], results[0])
+        locations = cast(list[object], result["locations"])
+        loc0_holder = locations[0]
+        self.assertIsInstance(loc0_holder, dict)
+        loc0 = cast(dict[str, object], loc0_holder)["physicalLocation"]
+        self.assertIsInstance(loc0, dict)
+        loc0_map = cast(dict[str, object], loc0)
+        artifact = cast(dict[str, object], loc0_map["artifactLocation"])
+        region = cast(dict[str, object], loc0_map["region"])
+        self.assertEqual(artifact["uri"], "src/app.py")
+        self.assertEqual(region["startLine"], 42)
+        self.assertEqual(region["endLine"], 42)
 
     def test_empty_findings_generates_sarif(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -171,25 +232,10 @@ class TestSarifExport(unittest.TestCase):
     def test_invalid_line_range_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "s",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 0, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        code_location = cast(dict[str, object], finding["code_location"])
+        code_location["line_range"] = {"start": 0, "end": 1}
+        summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
             review_summary_to_sarif(summary)
@@ -197,24 +243,10 @@ class TestSarifExport(unittest.TestCase):
     def test_missing_line_range_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "s",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        code_location = cast(dict[str, object], finding["code_location"])
+        code_location.pop("line_range", None)
+        summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing line_range"):
             review_summary_to_sarif(summary)
@@ -222,24 +254,10 @@ class TestSarifExport(unittest.TestCase):
     def test_missing_repo_relative_path_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "s",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "line_range": {"start": 1, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        code_location = cast(dict[str, object], finding["code_location"])
+        code_location.pop("repo_relative_path", None)
+        summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing repo_relative_path"):
             review_summary_to_sarif(summary)
@@ -247,25 +265,10 @@ class TestSarifExport(unittest.TestCase):
     def test_line_range_end_before_start_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "s",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 5, "end": 3},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        code_location = cast(dict[str, object], finding["code_location"])
+        code_location["line_range"] = {"start": 5, "end": 3}
+        summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
             review_summary_to_sarif(summary)
@@ -325,24 +328,12 @@ class TestSarifExport(unittest.TestCase):
     def test_missing_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "owner/name#pr-123@abcdef",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 1, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        finding.pop("priority", None)
+        summary = self._build_summary(
+            scope_id="owner/name#pr-123@abcdef",
+            findings=[finding],
+        )
 
         with self.assertRaisesRegex(ValueError, "missing required priority"):
             review_summary_to_sarif(summary)
@@ -350,24 +341,12 @@ class TestSarifExport(unittest.TestCase):
     def test_missing_title_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "owner/name#pr-123@abcdef",
-            "status": "Approved",
-            "findings": [
-                {
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 1, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        finding.pop("title", None)
+        summary = self._build_summary(
+            scope_id="owner/name#pr-123@abcdef",
+            findings=[finding],
+        )
 
         with self.assertRaisesRegex(ValueError, "missing title"):
             review_summary_to_sarif(summary)
@@ -375,25 +354,12 @@ class TestSarifExport(unittest.TestCase):
     def test_unknown_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "owner/name#pr-123@abcdef",
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P9",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 1, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        finding = self._build_finding()
+        finding["priority"] = "P9"
+        summary = self._build_summary(
+            scope_id="owner/name#pr-123@abcdef",
+            findings=[finding],
+        )
 
         with self.assertRaisesRegex(ValueError, "unsupported value 'P9'"):
             review_summary_to_sarif(summary)
@@ -401,24 +367,7 @@ class TestSarifExport(unittest.TestCase):
     def test_missing_scope_id_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "status": "Approved",
-            "findings": [
-                {
-                    "title": "A",
-                    "body": "B",
-                    "priority": "P1",
-                    "sources": ["a.py#L1-L1"],
-                    "code_location": {
-                        "repo_relative_path": "a.py",
-                        "line_range": {"start": 1, "end": 1},
-                    },
-                }
-            ],
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        summary = self._build_summary(scope_id=None)
 
         with self.assertRaisesRegex(ValueError, "missing required scope_id"):
             review_summary_to_sarif(summary)
@@ -426,14 +375,7 @@ class TestSarifExport(unittest.TestCase):
     def test_findings_not_array_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
-        summary = {
-            "schema_version": 3,
-            "scope_id": "s",
-            "status": "Approved",
-            "findings": "not-a-list",
-            "questions": [],
-            "overall_explanation": "ok",
-        }
+        summary = self._build_summary(findings="not-a-list")
 
         with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
             review_summary_to_sarif(summary)
