@@ -200,7 +200,7 @@ def generate_count_fixture(count: object) -> dict[str, object]:
     Distributes findings across priorities (P0:P1:P2:P3 = 1:2:4:3 ratio)
     and rotates through synthetic file paths.
     """
-    if not isinstance(count, int):
+    if isinstance(count, bool) or not isinstance(count, int):
         raise TypeError("count must be an int")
     if count < 0:
         raise ValueError("count must be non-negative")
@@ -288,9 +288,13 @@ def _write_and_report(
     filepath = output_dir / filename
     separators = (",", ":") if indent is None else (", ", ": ")
 
-    runs = cast(list[object], sarif.get("runs", []))
+    if "runs" not in sarif:
+        raise ValueError("Invalid SARIF shape: missing 'runs' key")
+    runs = cast(list[object], sarif["runs"])
     if not runs or not isinstance(runs[0], dict):
-        raise ValueError("Invalid SARIF shape: missing runs[0]")
+        raise ValueError(
+            "Invalid SARIF shape: runs must be a non-empty list with dict elements"
+        )
     run0 = cast(dict[str, object], runs[0])
     if "results" not in run0:
         raise ValueError(f"Invalid SARIF shape: missing runs[0].results ({run0!r})")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -62,6 +63,20 @@ class TestPocSarifFixtures(unittest.TestCase):
     def test_generate_count_fixture_rejects_negative_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "count must be non-negative"):
             _ = self.mod.generate_count_fixture(-1)
+
+    def test_generate_count_fixture_rejects_bool_count(self) -> None:
+        with self.assertRaisesRegex(TypeError, "count must be an int"):
+            _ = self.mod.generate_count_fixture(True)
+
+    def test_write_and_report_requires_runs_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, "missing 'runs' key"):
+                self.mod._write_and_report(
+                    Path(temp_dir),
+                    "invalid.sarif.json",
+                    {},
+                    indent=2,
+                )
 
     def test_default_count_targets_are_stable(self) -> None:
         targets = cast(tuple[int, ...], getattr(self.mod, "_DEFAULT_COUNT_TARGETS"))
