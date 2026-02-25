@@ -9,8 +9,8 @@ class TestSarifExport(unittest.TestCase):
         from killer_7.report.sarif_export import review_summary_to_sarif
 
         with self.assertRaisesRegex(ValueError, "expected mapping at root"):
-            invalid_summary = cast("Mapping[str, object]", cast(object, None))
-            review_summary_to_sarif(invalid_summary)
+            invalid_summary = cast(object, None)
+            review_summary_to_sarif(cast("Mapping[str, object]", invalid_summary))
 
     def test_empty_findings_generates_sarif(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
