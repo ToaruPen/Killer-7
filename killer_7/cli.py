@@ -2020,7 +2020,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             )
 
     should_post_summary = bool(args.post or args.inline)
-    if should_post_summary and summary_payload is not None:
+    can_post_summary = deferred_exc is None or isinstance(deferred_exc, BlockedError)
+    if should_post_summary and can_post_summary and summary_payload is not None:
         gh_client = GhClient.from_env()
         try:
             current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
