@@ -68,3 +68,31 @@ killer-7 review --repo owner/name --pr 123 --sarif --reviewdog --reviewdog-repor
 - `--reviewdog` は補助経路。品質ゲート判定は既存の review-summary / evidence / inline 制約を優先する
 - stale head を検知した場合は fail-fast で終了し、成果物をクリアして再実行を要求する
 - `--sarif` / `--reviewdog` を使わない実行では、古い `review-summary.sarif.json` は自動削除される
+
+## GitHub Code Scanning 制限事項（PoC #56 実測結果）
+
+Issue #56 の PoC（2026-02-25 実施）で実測した GitHub Code Scanning の制限値。
+詳細: `docs/poc/issue-56-sarif-display.md`
+
+### ファイルサイズ
+
+- 制限: **10 MB（gzip 圧縮後のサイズに適用される）**
+- 未圧縮 11.24 MB の SARIF が gzip 1.40 MB で正常アップロードされた
+- Killer-7 の通常運用（数十〜数百件の findings）ではサイズ制限に達する可能性は極めて低い
+
+### 結果数上限
+
+| 制限 | 値 | 超過時の動作 |
+|---|---|---|
+| 表示上限（analysis あたり） | **5,000件** | サイレント切り捨て（severity 上位のみ処理、エラーなし） |
+| ハード上限（run あたり） | **25,000件** | 明示的なエラー拒否 |
+
+- 5,001件以上を送信しても `processing_status: "complete"`, `errors: null` が返る
+- severity ランク順（error > warning > note）で上位 5,000件のみが反映される
+- **ユーザーが切り捨てに気づきにくい** — Killer-7 側でのガードレールが必要（#57 で対応予定）
+
+### カテゴリ分割
+
+- 複数 ruleId（K7.P0, K7.P1, K7.P2, K7.P3）を含む SARIF は正常に処理される
+- severity 別フィルタリングが可能（error, warning, note）
+- `automationDetails.id` が Code Scanning の category として使用される

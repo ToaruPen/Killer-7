@@ -1,0 +1,82 @@
+# PoC workflow for Issue #56: SARIF display verification.
+# Manually triggered to upload test SARIF fixtures to Code Scanning.
+# DELETE THIS FILE after PoC is complete.
+
+name: poc-sarif-upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture:
+        description: "Fixture to upload"
+        required: true
+        type: choice
+        options:
+          - category-split
+          - count-100
+          - count-1000
+          - count-5000
+          - count-5001
+          - count-10000
+          - count-25000
+          - count-25001
+      compact:
+        description: "Use compact format (no indent, smaller file)"
+        type: boolean
+        default: true
+
+permissions:
+  security-events: write
+  contents: read
+
+concurrency:
+  group: poc-sarif-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate fixtures
+        run: python scripts/poc-sarif-fixtures.py
+
+      - name: Determine SARIF file path
+        id: sarif
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+          COMPACT: ${{ inputs.compact }}
+        run: |
+          if [ "$FIXTURE" = "category-split" ]; then
+            echo "file=.ai-review/poc-sarif-fixtures/category-split.sarif.json" >> "$GITHUB_OUTPUT"
+          elif [ "$COMPACT" = "true" ]; then
+            echo "file=.ai-review/poc-sarif-fixtures/${FIXTURE}.compact.sarif.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=.ai-review/poc-sarif-fixtures/${FIXTURE}.sarif.json" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report file info
+        run: |
+          FILE="${{ steps.sarif.outputs.file }}"
+          RESULTS="$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); print(len(d["runs"][0]["results"]))' "$FILE")"
+          {
+            echo "### SARIF Fixture Info"
+            echo "- **File**: \`${FILE}\`"
+            echo "- **Size**: $(du -h "${FILE}" | cut -f1)"
+            echo "- **Results**: ${RESULTS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.sarif.outputs.file }}
+          category: poc-issue-56/${{ inputs.fixture }}
