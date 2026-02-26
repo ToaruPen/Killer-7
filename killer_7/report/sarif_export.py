@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+from ..coerce import (
+    coerce_object_list as _coerce_object_list,
+    coerce_str_object_dict as _coerce_str_object_dict,
+)
 from .fingerprint import finding_fingerprint
 
 _PRIORITY_TO_LEVEL = {
@@ -18,17 +22,6 @@ _SARIF_HELP_URI = (
 )
 
 
-def _coerce_str_object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {}
-    mapping_value = cast(Mapping[object, object], value)
-    out: dict[str, object] = {}
-    for key_obj, mapped_value in mapping_value.items():
-        if isinstance(key_obj, str):
-            out[key_obj] = mapped_value
-    return out
-
-
 def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
     if isinstance(value, str):
         s = value.strip()
@@ -38,9 +31,7 @@ def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
 
 
 def _as_sources(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    source_list = cast(list[object], value)
+    source_list = _coerce_object_list(value)
     out: list[str] = []
     seen: set[str] = set()
     for item in source_list:
@@ -99,7 +90,7 @@ def review_summary_to_sarif(summary: object) -> dict[str, object]:
             "Invalid review summary: raw_findings must be a list to construct findings "
             + f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
         )
-    findings = cast(list[object], raw_findings)
+    findings = _coerce_object_list(cast(object, raw_findings))
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()

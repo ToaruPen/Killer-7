@@ -40,6 +40,10 @@ from .aspect_id import normalize_aspect
 from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
 from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
+from .coerce import (
+    coerce_object_list as _coerce_object_list,
+    coerce_str_object_dict as _coerce_str_object_dict,
+)
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.gh import GhClient
@@ -77,23 +81,6 @@ def _strip_machine_fields_from_findings(
         item.pop("original_priority", None)
         out.append(item)
     return out
-
-
-def _coerce_str_object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {}
-    raw_dict = cast(dict[object, object], value)
-    out: dict[str, object] = {}
-    for key_obj, mapped_value in raw_dict.items():
-        if isinstance(key_obj, str):
-            out[key_obj] = mapped_value
-    return out
-
-
-def _coerce_object_list(value: object) -> list[object]:
-    if not isinstance(value, list):
-        return []
-    return cast(list[object], value)
 
 
 def now_utc_z() -> str:
