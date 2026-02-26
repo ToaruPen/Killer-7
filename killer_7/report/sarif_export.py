@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from .fingerprint import finding_fingerprint
 
@@ -20,8 +21,9 @@ _SARIF_HELP_URI = (
 def _coerce_str_object_dict(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         return {}
+    mapping_value = cast(Mapping[object, object], value)
     out: dict[str, object] = {}
-    for key_obj, mapped_value in value.items():
+    for key_obj, mapped_value in mapping_value.items():
         if isinstance(key_obj, str):
             out[key_obj] = mapped_value
     return out
@@ -38,9 +40,10 @@ def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
 def _as_sources(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
+    source_list = cast(list[object], value)
     out: list[str] = []
     seen: set[str] = set()
-    for item in value:
+    for item in source_list:
         s = _as_non_empty_str(item)
         if not s or s in seen:
             continue
@@ -75,26 +78,28 @@ def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
     )
 
 
-def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
+def review_summary_to_sarif(summary: object) -> dict[str, object]:
     if not isinstance(summary, Mapping):
         raise ValueError(
             "Invalid review summary: expected mapping at root "
-            f"(summary_type={type(summary).__name__})"
+            + f"(summary_type={type(summary).__name__})"
         )
-    scope_id = _as_non_empty_str(summary.get("scope_id"))
+    summary_obj = cast(object, summary)
+    summary_dict = _coerce_str_object_dict(summary_obj)
+    scope_id = _as_non_empty_str(summary_dict.get("scope_id"))
     if not scope_id:
-        summary_keys = sorted(str(k) for k in summary.keys())
+        summary_keys = sorted(str(k) for k in summary_dict.keys())
         raise ValueError(
             "Invalid review summary: missing required scope_id "
-            f"(summary_type={type(summary).__name__}, summary_keys={summary_keys})"
+            + f"(summary_type={type(summary_obj).__name__}, summary_keys={summary_keys})"
         )
-    raw_findings = summary.get("findings")
+    raw_findings = summary_dict.get("findings")
     if not isinstance(raw_findings, list):
         raise ValueError(
             "Invalid review summary: raw_findings must be a list to construct findings "
-            f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
+            + f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
         )
-    findings = raw_findings
+    findings = cast(list[object], raw_findings)
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()

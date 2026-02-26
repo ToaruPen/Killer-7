@@ -18,6 +18,7 @@ All notable changes to this project are documented in this file.
 - Documented `docs/operations/sarif-reviewdog.md` with reproducible GitHub Actions linkage examples (`upload-sarif` and reviewdog annotation flow).
 
 ### Changed
+- Reduced basedpyright warnings in SARIF/review CLI paths (Issue #59 Phase 1): `reportImplicitStringConcatenation` was eliminated in `killer_7/report/sarif_export.py` and `killer_7/cli.py`, and `reportUnknown*` in those files was driven to zero.
 - Improved `killer-7 review --help` examples and validation around aspect selection.
 - Changed preset resolution precedence to `--aspect` > `--preset` > `default_preset` > builtin full, and made invalid preset/config fail as `ExecFailure` recorded in `.ai-review/run.json`.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.
