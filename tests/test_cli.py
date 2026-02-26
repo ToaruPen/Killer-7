@@ -8,7 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from killer_7.report.sarif_export import (
+    SARIF_RESULTS_DISPLAY_LIMIT,
+    SARIF_RESULTS_HARD_LIMIT,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SARIF_TRUNCATION_RISK_COUNT = SARIF_RESULTS_DISPLAY_LIMIT + 1
+SARIF_HARD_LIMIT_EXCEEDED_COUNT = SARIF_RESULTS_HARD_LIMIT + 1
 
 
 def _write_fake_gh(path: Path) -> None:
@@ -727,8 +734,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_sarif_truncation_risk(path: Path) -> None:
-    path.write_text(
-        """#!/usr/bin/env python3
+    script = """#!/usr/bin/env python3
 import json
 import re
 import sys
@@ -756,7 +762,7 @@ payload = {
 
 if aspect == "correctness":
   findings = []
-  for i in range(5001):
+  for i in range(__SARIF_TRUNCATION_RISK_COUNT__):
     findings.append({
       "title": f"Truncation risk #{i}",
       "body": "Potentially truncated by GitHub Code Scanning display limit.",
@@ -771,7 +777,66 @@ if aspect == "correctness":
 event = {"type": "text", "part": {"text": json.dumps(payload)}}
 sys.stdout.write(json.dumps(event) + "\\n")
 raise SystemExit(0)
-""",
+"""
+    path.write_text(
+        script.replace(
+            "__SARIF_TRUNCATION_RISK_COUNT__", str(SARIF_TRUNCATION_RISK_COUNT)
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_opencode_sarif_hard_limit_exceeded(path: Path) -> None:
+    script = """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "correctness":
+  findings = []
+  for i in range(__SARIF_HARD_LIMIT_EXCEEDED_COUNT__):
+    findings.append({
+      "title": f"Hard limit exceeded #{i}",
+      "body": "This payload should exceed SARIF hard limit.",
+      "priority": "P1",
+      "sources": ["hello.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
+    })
+  payload["findings"] = findings
+  payload["status"] = "Blocked"
+  payload["overall_explanation"] = "Too many findings."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+"""
+    path.write_text(
+        script.replace(
+            "__SARIF_HARD_LIMIT_EXCEEDED_COUNT__",
+            str(SARIF_HARD_LIMIT_EXCEEDED_COUNT),
+        ),
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -4469,7 +4534,41 @@ class TestCli(unittest.TestCase):
             self.assertTrue(warnings_txt.is_file())
             warn = warnings_txt.read_text(encoding="utf-8")
             self.assertIn("sarif_result_limit_warning", warn)
-            self.assertIn("findings=5001", warn)
+            self.assertIn(f"findings={SARIF_TRUNCATION_RISK_COUNT}", warn)
+
+    def test_sarif_hard_limit_failure_clears_stale_sarif_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_sarif_hard_limit_exceeded(fake_opencode)
+
+            out_dir = Path(td) / ".ai-review"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stale = out_dir / "review-summary.sarif.json"
+            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            self.assertTrue(stale.exists())
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--sarif",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
+            self.assertIn("SARIF export failed:", p.stderr)
+            self.assertFalse(stale.exists())
+            self.assertTrue((out_dir / "review-summary.json").exists())
+            self.assertTrue((out_dir / "review-summary.md").exists())
 
     def test_sarif_only_flow_fails_on_stale_head_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as td:

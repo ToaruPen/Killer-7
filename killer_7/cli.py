@@ -1933,6 +1933,27 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 warning_lines.append(sarif_warning)
                 warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
 
+            def _emit_sarif_or_set_failure() -> None:
+                nonlocal \
+                    summary_json_path, \
+                    summary_md_path, \
+                    sarif_json_path, \
+                    deferred_exc
+                try:
+                    sarif_payload = review_summary_to_sarif(summary_payload)
+                    sarif_json_path = write_review_summary_sarif_json(
+                        out_dir, sarif_payload
+                    )
+                except ValueError as exc:
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_sarif_and_reset_path(
+                            out_dir,
+                            summary_json_path=summary_json_path,
+                            summary_md_path=summary_md_path,
+                        )
+                    )
+                    deferred_exc = ExecFailureError(f"SARIF export failed: {exc}")
+
             should_validate_head_for_sarif_only = not bool(
                 args.post or args.inline
             ) and not bool(getattr(args, "reviewdog", False))
@@ -1947,15 +1968,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                         "PR head changed before SARIF export; rerun review on latest head"
                     )
                 else:
-                    sarif_payload = review_summary_to_sarif(summary_payload)
-                    sarif_json_path = write_review_summary_sarif_json(
-                        out_dir, sarif_payload
-                    )
+                    _emit_sarif_or_set_failure()
             else:
-                sarif_payload = review_summary_to_sarif(summary_payload)
-                sarif_json_path = write_review_summary_sarif_json(
-                    out_dir, sarif_payload
-                )
+                _emit_sarif_or_set_failure()
         else:
             stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
             try:

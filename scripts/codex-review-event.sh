@@ -37,14 +37,18 @@ csv_contains() {
 
 check_auth() {
   local require_auth="$1"
+  local gh_token
   if [[ "$require_auth" != "1" ]]; then
     return 0
   fi
 
   require_cmd gh
 
-  if ! gh auth status >/dev/null 2>&1; then
-    die "GitHub authentication failed. Ensure GH_TOKEN/GITHUB_TOKEN has required permissions."
+  gh_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ -z "$gh_token" ]]; then
+    if ! gh auth status >/dev/null 2>&1; then
+      die "GitHub authentication failed. Ensure GH_TOKEN/GITHUB_TOKEN has required permissions."
+    fi
   fi
 
   if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then

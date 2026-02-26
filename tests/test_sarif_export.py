@@ -411,6 +411,12 @@ class TestSarifExport(unittest.TestCase):
         self.assertIsInstance(warn, str)
         self.assertIn("sarif_result_limit_warning", warn or "")
 
+        warn_at_hard_limit = sarif_results_warning_line(
+            findings_count=SARIF_RESULTS_HARD_LIMIT
+        )
+        self.assertIsInstance(warn_at_hard_limit, str)
+        self.assertIn("sarif_result_limit_warning", warn_at_hard_limit or "")
+
         self.assertIsNone(
             sarif_results_warning_line(findings_count=SARIF_RESULTS_HARD_LIMIT + 1)
         )
