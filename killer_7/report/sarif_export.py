@@ -22,6 +22,8 @@ _PROJECT_URL = "https://github.com/ToaruPen/Killer-7"
 _SARIF_HELP_URI = (
     "https://github.com/ToaruPen/Killer-7/blob/main/docs/operations/sarif-reviewdog.md"
 )
+SARIF_RESULTS_DISPLAY_LIMIT = 5000
+SARIF_RESULTS_HARD_LIMIT = 25000
 
 
 def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
@@ -71,6 +73,20 @@ def _finding_context(scope_id: str, finding: dict[str, object]) -> str:
     )
 
 
+def sarif_results_warning_line(*, findings_count: int) -> str | None:
+    if findings_count <= SARIF_RESULTS_DISPLAY_LIMIT:
+        return None
+    if findings_count > SARIF_RESULTS_HARD_LIMIT:
+        return None
+    return (
+        "sarif_result_limit_warning"
+        f" findings={findings_count}"
+        f" display_limit={SARIF_RESULTS_DISPLAY_LIMIT}"
+        f" hard_limit={SARIF_RESULTS_HARD_LIMIT}"
+        " note=github-code-scanning-may-silently-truncate-to-top-severity-results"
+    )
+
+
 def review_summary_to_sarif(summary: object) -> dict[str, object]:
     if not isinstance(summary, Mapping):
         raise ValueError(
@@ -93,6 +109,13 @@ def review_summary_to_sarif(summary: object) -> dict[str, object]:
             + f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
         )
     findings = _coerce_object_list(cast(object, raw_findings))
+    findings_count = len(findings)
+    if findings_count > SARIF_RESULTS_HARD_LIMIT:
+        raise ValueError(
+            "Invalid review summary: findings exceed SARIF hard limit "
+            f"({findings_count} > {SARIF_RESULTS_HARD_LIMIT}). "
+            "Split results into multiple runs or reduce findings before SARIF export."
+        )
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()

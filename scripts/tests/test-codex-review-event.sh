@@ -37,9 +37,25 @@ set -euo pipefail
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
   exit 1
 fi
+if [[ "${1:-}" == "api" ]]; then
+  exit 1
+fi
 exit 0
 EOF
 chmod +x "$tmpdir/bin/gh-fail"
+
+cat > "$tmpdir/bin/gh-auth-fail-api-ok" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  exit 1
+fi
+if [[ "${1:-}" == "api" ]]; then
+  exit 0
+fi
+exit 0
+EOF
+chmod +x "$tmpdir/bin/gh-auth-fail-api-ok"
 
 cat > "$tmpdir/issue_comment.json" <<'EOF'
 {
@@ -158,8 +174,16 @@ if [[ "$rc" -eq 0 ]]; then
   eprint "Expected auth failure path to exit non-zero"
   exit 1
 fi
-if ! grep -Fq 'error: GitHub authentication failed.' "$tmpdir/out4.txt"; then
-  eprint "Expected auth failure message"
+if ! grep -Fq 'error: GitHub API access failed for o/r.' "$tmpdir/out4.txt"; then
+  eprint "Expected API access failure message"
+  exit 1
+fi
+
+ln -sf "$tmpdir/bin/gh-auth-fail-api-ok" "$tmpdir/bin/gh"
+out5="$tmpdir/out5.txt"
+PATH="$tmpdir/bin:$PATH" GH_TOKEN=dummy GITHUB_REPOSITORY=o/r GITHUB_EVENT_NAME=issue_comment GITHUB_EVENT_PATH="$tmpdir/issue_comment.json" CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' CODEX_REVIEW_REQUIRE_GH_AUTH=1 bash "$script_path" >"$out5" 2>&1
+if ! grep -Fq 'type=issue pr_number=103 pr_url=https://github.com/o/r/pull/103' "$out5"; then
+  eprint "Expected token-authenticated path to pass without gh auth status"
   exit 1
 fi
 

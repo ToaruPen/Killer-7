@@ -58,7 +58,10 @@ from .hybrid.re_run import write_questions_rerun_artifacts
 from .llm.opencode_runner import OpenCodeRunner, opencode_artifacts_dir
 from .report.format_md import format_review_summary_md
 from .report.merge import merge_review_summary
-from .report.sarif_export import review_summary_to_sarif
+from .report.sarif_export import (
+    review_summary_to_sarif,
+    sarif_results_warning_line,
+)
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 from .validate.evidence import (
@@ -1955,6 +1958,41 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             getattr(args, "reviewdog", False)
         )
         if should_emit_sarif:
+            findings_obj = summary_payload.get("findings")
+            if not isinstance(findings_obj, list):
+                raise ValueError(
+                    "Invalid review summary: summary_payload['findings'] must be a list "
+                    f"(summary_payload_type={type(summary_payload).__name__}, "
+                    f"summary_payload_keys={sorted(summary_payload.keys())}, "
+                    f"findings_obj_type={type(findings_obj).__name__})"
+                )
+            findings_count = len(findings_obj)
+            sarif_warning = sarif_results_warning_line(findings_count=findings_count)
+            if sarif_warning:
+                warning_lines.append(sarif_warning)
+                warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
+
+            def _emit_sarif_or_set_failure() -> None:
+                nonlocal \
+                    summary_json_path, \
+                    summary_md_path, \
+                    sarif_json_path, \
+                    deferred_exc
+                try:
+                    sarif_payload = review_summary_to_sarif(summary_payload)
+                    sarif_json_path = write_review_summary_sarif_json(
+                        out_dir, sarif_payload
+                    )
+                except ValueError as exc:
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_sarif_and_reset_path(
+                            out_dir,
+                            summary_json_path=summary_json_path,
+                            summary_md_path=summary_md_path,
+                        )
+                    )
+                    deferred_exc = ExecFailureError(f"SARIF export failed: {exc}")
+
             should_validate_head_for_sarif_only = not bool(
                 args.post or args.inline
             ) and not bool(getattr(args, "reviewdog", False))
@@ -1969,15 +2007,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                         "PR head changed before SARIF export; rerun review on latest head"
                     )
                 else:
-                    sarif_payload = review_summary_to_sarif(summary_payload)
-                    sarif_json_path = write_review_summary_sarif_json(
-                        out_dir, sarif_payload
-                    )
+                    _emit_sarif_or_set_failure()
             else:
-                sarif_payload = review_summary_to_sarif(summary_payload)
-                sarif_json_path = write_review_summary_sarif_json(
-                    out_dir, sarif_payload
-                )
+                _emit_sarif_or_set_failure()
         else:
             stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
             try:
@@ -2020,7 +2052,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             )
 
     should_post_summary = bool(args.post or args.inline)
-    if should_post_summary and summary_payload is not None:
+    can_post_summary = deferred_exc is None or isinstance(deferred_exc, BlockedError)
+    if should_post_summary and can_post_summary and summary_payload is not None:
         gh_client = GhClient.from_env()
         try:
             current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)

@@ -89,7 +89,12 @@ Issue #56 の PoC（2026-02-25 実施）で実測した GitHub Code Scanning の
 
 - 5,001件以上を送信しても `processing_status: "complete"`, `errors: null` が返る
 - severity ランク順（error > warning > note）で上位 5,000件のみが反映される
-- **ユーザーが切り捨てに気づきにくい** — Killer-7 側でのガードレールが必要（#57 で対応予定）
+- **ユーザーが切り捨てに気づきにくい** — Killer-7 側でガードレールを実装済み（Issue #57）
+
+### Killer-7 側ガードレール（Issue #57）
+
+- findings が **5,001〜25,000件** の場合、`warnings.txt` に `sarif_result_limit_warning` を記録して注意喚起する
+- findings が **25,001件以上** の場合、SARIF出力を fail-fast で停止する
 
 ### カテゴリ分割
 

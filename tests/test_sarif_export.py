@@ -392,6 +392,72 @@ class TestSarifExport(unittest.TestCase):
         runs = cast(list[object], sarif.get("runs", []))
         self.assertTrue(len(runs) == 1)
 
+    def test_findings_over_hard_limit_fail_fast(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_HARD_LIMIT,
+            review_summary_to_sarif,
+        )
+
+        finding = self._build_finding()
+        summary = self._build_summary(
+            findings=[finding] * (SARIF_RESULTS_HARD_LIMIT + 1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "findings exceed SARIF hard limit"):
+            review_summary_to_sarif(summary)
+
+    def test_findings_at_hard_limit_succeeds(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_HARD_LIMIT,
+            review_summary_to_sarif,
+        )
+
+        finding = self._build_finding()
+        summary = self._build_summary(findings=[finding] * SARIF_RESULTS_HARD_LIMIT)
+
+        sarif_payload = review_summary_to_sarif(summary)
+        self.assertIsInstance(sarif_payload, dict)
+        runs_obj = sarif_payload.get("runs")
+        self.assertIsInstance(runs_obj, list)
+        if not isinstance(runs_obj, list) or not runs_obj:
+            self.fail("SARIF payload must contain at least one run")
+        first_run_obj = runs_obj[0]
+        self.assertIsInstance(first_run_obj, dict)
+        if not isinstance(first_run_obj, dict):
+            self.fail("SARIF run must be a dict")
+        results_obj = first_run_obj.get("results")
+        self.assertIsInstance(results_obj, list)
+        if not isinstance(results_obj, list):
+            self.fail("SARIF run results must be a list")
+        self.assertEqual(len(results_obj), SARIF_RESULTS_HARD_LIMIT)
+
+    def test_sarif_results_warning_line_only_for_truncation_risk_range(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_DISPLAY_LIMIT,
+            SARIF_RESULTS_HARD_LIMIT,
+            sarif_results_warning_line,
+        )
+
+        self.assertIsNone(
+            sarif_results_warning_line(findings_count=SARIF_RESULTS_DISPLAY_LIMIT)
+        )
+
+        warn = sarif_results_warning_line(
+            findings_count=SARIF_RESULTS_DISPLAY_LIMIT + 1
+        )
+        self.assertIsInstance(warn, str)
+        self.assertIn("sarif_result_limit_warning", warn or "")
+
+        warn_at_hard_limit = sarif_results_warning_line(
+            findings_count=SARIF_RESULTS_HARD_LIMIT
+        )
+        self.assertIsInstance(warn_at_hard_limit, str)
+        self.assertIn("sarif_result_limit_warning", warn_at_hard_limit or "")
+
+        self.assertIsNone(
+            sarif_results_warning_line(findings_count=SARIF_RESULTS_HARD_LIMIT + 1)
+        )
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
