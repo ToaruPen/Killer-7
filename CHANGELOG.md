@@ -16,6 +16,7 @@ All notable changes to this project are documented in this file.
 - Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
 - Added SARIF/reviewdog integration for `killer-7 review`: `--sarif`, `--reviewdog`, and `--reviewdog-reporter`.
 - Documented `docs/operations/sarif-reviewdog.md` with reproducible GitHub Actions linkage examples (`upload-sarif` and reviewdog annotation flow).
+- Added SARIF result-count guardrails: `sarif_result_limit_warning` for 5,001-25,000 findings and fail-fast rejection above 25,000 findings.
 
 ### Changed
 - Improved `killer-7 review --help` examples and validation around aspect selection.

@@ -380,6 +380,41 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
             review_summary_to_sarif(summary)
 
+    def test_findings_over_hard_limit_fail_fast(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_HARD_LIMIT,
+            review_summary_to_sarif,
+        )
+
+        finding = self._build_finding()
+        summary = self._build_summary(
+            findings=[finding] * (SARIF_RESULTS_HARD_LIMIT + 1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "findings exceed SARIF hard limit"):
+            review_summary_to_sarif(summary)
+
+    def test_sarif_results_warning_line_only_for_truncation_risk_range(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_DISPLAY_LIMIT,
+            SARIF_RESULTS_HARD_LIMIT,
+            sarif_results_warning_line,
+        )
+
+        self.assertIsNone(
+            sarif_results_warning_line(findings_count=SARIF_RESULTS_DISPLAY_LIMIT)
+        )
+
+        warn = sarif_results_warning_line(
+            findings_count=SARIF_RESULTS_DISPLAY_LIMIT + 1
+        )
+        self.assertIsInstance(warn, str)
+        self.assertIn("sarif_result_limit_warning", warn or "")
+
+        self.assertIsNone(
+            sarif_results_warning_line(findings_count=SARIF_RESULTS_HARD_LIMIT + 1)
+        )
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

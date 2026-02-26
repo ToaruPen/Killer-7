@@ -52,7 +52,10 @@ from .hybrid.re_run import write_questions_rerun_artifacts
 from .llm.opencode_runner import OpenCodeRunner, opencode_artifacts_dir
 from .report.format_md import format_review_summary_md
 from .report.merge import merge_review_summary
-from .report.sarif_export import review_summary_to_sarif
+from .report.sarif_export import (
+    review_summary_to_sarif,
+    sarif_results_warning_line,
+)
 from .sot.allowlist import default_sot_allowlist
 from .sot.collect import build_sot_markdown
 from .validate.evidence import (
@@ -1923,6 +1926,13 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             getattr(args, "reviewdog", False)
         )
         if should_emit_sarif:
+            findings_obj = summary_payload.get("findings")
+            findings_count = len(findings_obj) if isinstance(findings_obj, list) else 0
+            sarif_warning = sarif_results_warning_line(findings_count=findings_count)
+            if sarif_warning:
+                warning_lines.append(sarif_warning)
+                warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
+
             should_validate_head_for_sarif_only = not bool(
                 args.post or args.inline
             ) and not bool(getattr(args, "reviewdog", False))

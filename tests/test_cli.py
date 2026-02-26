@@ -726,6 +726,57 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
+def _write_fake_opencode_sarif_truncation_risk(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import re
+import sys
+
+args = sys.argv[1:]
+
+if args[:1] != ["run"]:
+    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
+    raise SystemExit(2)
+
+prompt = sys.stdin.read()
+m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
+scope_id = m.group(1).strip() if m else "scope-unknown"
+m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
+aspect = m2.group(1).strip() if m2 else ""
+
+payload = {
+  "schema_version": 3,
+  "scope_id": scope_id,
+  "status": "Approved",
+  "findings": [],
+  "questions": [],
+  "overall_explanation": "ok",
+}
+
+if aspect == "correctness":
+  findings = []
+  for i in range(5001):
+    findings.append({
+      "title": f"Truncation risk #{i}",
+      "body": "Potentially truncated by GitHub Code Scanning display limit.",
+      "priority": "P2",
+      "sources": ["hello.txt#L1-L1"],
+      "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
+    })
+  payload["findings"] = findings
+  payload["status"] = "Approved with nits"
+  payload["overall_explanation"] = "Many warnings."
+
+event = {"type": "text", "part": {"text": json.dumps(payload)}}
+sys.stdout.write(json.dumps(event) + "\\n")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def _write_fake_opencode_blocked_with_question(path: Path) -> None:
     """Fake opencode that returns a P0 finding and a question."""
 
@@ -4389,6 +4440,36 @@ class TestCli(unittest.TestCase):
             self.assertTrue(isinstance(runs, list) and len(runs) == 1)
             results = runs[0].get("results", []) if isinstance(runs[0], dict) else []
             self.assertTrue(isinstance(results, list) and len(results) >= 1)
+
+    def test_sarif_truncation_risk_writes_warning_line(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            fake_gh = Path(td) / "fake-gh"
+            _write_fake_gh(fake_gh)
+            fake_opencode = Path(td) / "fake-opencode"
+            _write_fake_opencode_sarif_truncation_risk(fake_opencode)
+
+            p = run_cli(
+                [
+                    "review",
+                    "--repo",
+                    "owner/name",
+                    "--pr",
+                    "123",
+                    "--aspect",
+                    "correctness",
+                    "--sarif",
+                ],
+                cwd=td,
+                gh_bin=str(fake_gh),
+                opencode_bin=str(fake_opencode),
+            )
+            self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
+
+            warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
+            self.assertTrue(warnings_txt.is_file())
+            warn = warnings_txt.read_text(encoding="utf-8")
+            self.assertIn("sarif_result_limit_warning", warn)
+            self.assertIn("findings=5001", warn)
 
     def test_sarif_only_flow_fails_on_stale_head_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as td:
