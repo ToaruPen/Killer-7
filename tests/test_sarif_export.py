@@ -380,6 +380,18 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
             review_summary_to_sarif(summary)
 
+    def test_summary_with_non_string_root_keys_is_processed(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = self._build_summary()
+        mixed_summary: dict[object, object] = {1: "ignored"}
+        mixed_summary.update(summary)
+
+        sarif = review_summary_to_sarif(cast(object, mixed_summary))
+        self.assertEqual(sarif.get("version"), "2.1.0")
+        runs = cast(list[object], sarif.get("runs", []))
+        self.assertTrue(len(runs) == 1)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
