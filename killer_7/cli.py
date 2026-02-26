@@ -1932,7 +1932,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     "Invalid review summary: summary_payload['findings'] must be a list "
                     f"(summary_payload_type={type(summary_payload).__name__}, "
                     f"summary_payload_keys={sorted(summary_payload.keys())}, "
-                    f"findings_obj_type={type(findings_obj).__name__}, findings_obj={findings_obj!r})"
+                    f"findings_obj_type={type(findings_obj).__name__})"
                 )
             findings_count = len(findings_obj)
             sarif_warning = sarif_results_warning_line(findings_count=findings_count)
