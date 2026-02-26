@@ -290,15 +290,24 @@ def _write_and_report(
 
     if "runs" not in sarif:
         raise ValueError("Invalid SARIF shape: missing 'runs' key")
-    runs = cast(list[object], sarif["runs"])
-    if not runs or not isinstance(runs[0], dict):
+    raw_runs = sarif["runs"]
+    if (
+        not isinstance(raw_runs, list)
+        or not raw_runs
+        or not isinstance(raw_runs[0], dict)
+    ):
         raise ValueError(
-            "Invalid SARIF shape: runs must be a non-empty list with dict elements"
+            f"Invalid SARIF shape: runs must be a non-empty list with dict elements ({raw_runs!r})"
         )
-    run0 = cast(dict[str, object], runs[0])
+    run0 = cast(dict[str, object], raw_runs[0])
     if "results" not in run0:
         raise ValueError(f"Invalid SARIF shape: missing runs[0].results ({run0!r})")
-    results = cast(list[object], run0["results"])
+    raw_results = run0["results"]
+    if not isinstance(raw_results, list):
+        raise ValueError(
+            f"Invalid SARIF shape: runs[0].results must be a list ({raw_results!r})"
+        )
+    results = cast(list[object], raw_results)
 
     content = json.dumps(
         sarif, indent=indent, ensure_ascii=False, separators=separators

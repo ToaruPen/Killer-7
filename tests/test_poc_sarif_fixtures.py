@@ -78,6 +78,22 @@ class TestPocSarifFixtures(unittest.TestCase):
                     indent=2,
                 )
 
+            with self.assertRaisesRegex(ValueError, "runs"):
+                self.mod._write_and_report(
+                    Path(temp_dir),
+                    "invalid-runs-shape.sarif.json",
+                    {"runs": {}},
+                    indent=2,
+                )
+
+            with self.assertRaisesRegex(ValueError, "results"):
+                self.mod._write_and_report(
+                    Path(temp_dir),
+                    "invalid-results-shape.sarif.json",
+                    {"runs": [{"results": {}}]},
+                    indent=2,
+                )
+
     def test_default_count_targets_are_stable(self) -> None:
         targets = cast(tuple[int, ...], getattr(self.mod, "_DEFAULT_COUNT_TARGETS"))
         self.assertEqual(targets, (100, 1000, 5000, 5001, 10000, 25000, 25001))
