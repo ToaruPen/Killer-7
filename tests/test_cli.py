@@ -733,7 +733,16 @@ raise SystemExit(0)
     path.chmod(0o755)
 
 
-def _write_fake_opencode_sarif_truncation_risk(path: Path) -> None:
+def _write_fake_opencode_sarif_script(
+    path: Path,
+    *,
+    findings_count: int,
+    title_prefix: str,
+    finding_body: str,
+    priority: str,
+    status: str,
+    overall_explanation: str,
+) -> None:
     script = """#!/usr/bin/env python3
 import json
 import re
@@ -762,84 +771,56 @@ payload = {
 
 if aspect == "correctness":
   findings = []
-  for i in range(__SARIF_TRUNCATION_RISK_COUNT__):
+  for i in range(__SARIF_FINDINGS_COUNT__):
     findings.append({
-      "title": f"Truncation risk #{i}",
-      "body": "Potentially truncated by GitHub Code Scanning display limit.",
-      "priority": "P2",
+      "title": __SARIF_TITLE_PREFIX__ + f" #{i}",
+      "body": __SARIF_FINDING_BODY__,
+      "priority": __SARIF_PRIORITY__,
       "sources": ["hello.txt#L1-L1"],
       "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
     })
   payload["findings"] = findings
-  payload["status"] = "Approved with nits"
-  payload["overall_explanation"] = "Many warnings."
+  payload["status"] = __SARIF_STATUS__
+  payload["overall_explanation"] = __SARIF_OVERALL_EXPLANATION__
 
 event = {"type": "text", "part": {"text": json.dumps(payload)}}
 sys.stdout.write(json.dumps(event) + "\\n")
 raise SystemExit(0)
 """
     path.write_text(
-        script.replace(
-            "__SARIF_TRUNCATION_RISK_COUNT__", str(SARIF_TRUNCATION_RISK_COUNT)
-        ),
+        script.replace("__SARIF_FINDINGS_COUNT__", str(findings_count))
+        .replace("__SARIF_TITLE_PREFIX__", json.dumps(title_prefix))
+        .replace("__SARIF_FINDING_BODY__", json.dumps(finding_body))
+        .replace("__SARIF_PRIORITY__", json.dumps(priority))
+        .replace("__SARIF_STATUS__", json.dumps(status))
+        .replace("__SARIF_OVERALL_EXPLANATION__", json.dumps(overall_explanation)),
         encoding="utf-8",
     )
     path.chmod(0o755)
+
+
+def _write_fake_opencode_sarif_truncation_risk(path: Path) -> None:
+    _write_fake_opencode_sarif_script(
+        path,
+        findings_count=SARIF_TRUNCATION_RISK_COUNT,
+        title_prefix="Truncation risk",
+        finding_body="Potentially truncated by GitHub Code Scanning display limit.",
+        priority="P2",
+        status="Approved with nits",
+        overall_explanation="Many warnings.",
+    )
 
 
 def _write_fake_opencode_sarif_hard_limit_exceeded(path: Path) -> None:
-    script = """#!/usr/bin/env python3
-import json
-import re
-import sys
-
-args = sys.argv[1:]
-
-if args[:1] != ["run"]:
-    sys.stderr.write("fake opencode: unsupported args: " + " ".join(args) + "\\n")
-    raise SystemExit(2)
-
-prompt = sys.stdin.read()
-m = re.search(r"^Scope ID:\\s*(.+)\\s*$", prompt, flags=re.M)
-scope_id = m.group(1).strip() if m else "scope-unknown"
-m2 = re.search(r"^Aspect:\\s*(.+)\\s*$", prompt, flags=re.M)
-aspect = m2.group(1).strip() if m2 else ""
-
-payload = {
-  "schema_version": 3,
-  "scope_id": scope_id,
-  "status": "Approved",
-  "findings": [],
-  "questions": [],
-  "overall_explanation": "ok",
-}
-
-if aspect == "correctness":
-  findings = []
-  for i in range(__SARIF_HARD_LIMIT_EXCEEDED_COUNT__):
-    findings.append({
-      "title": f"Hard limit exceeded #{i}",
-      "body": "This payload should exceed SARIF hard limit.",
-      "priority": "P1",
-      "sources": ["hello.txt#L1-L1"],
-      "code_location": {"repo_relative_path": "hello.txt", "line_range": {"start": 1, "end": 1}},
-    })
-  payload["findings"] = findings
-  payload["status"] = "Blocked"
-  payload["overall_explanation"] = "Too many findings."
-
-event = {"type": "text", "part": {"text": json.dumps(payload)}}
-sys.stdout.write(json.dumps(event) + "\\n")
-raise SystemExit(0)
-"""
-    path.write_text(
-        script.replace(
-            "__SARIF_HARD_LIMIT_EXCEEDED_COUNT__",
-            str(SARIF_HARD_LIMIT_EXCEEDED_COUNT),
-        ),
-        encoding="utf-8",
+    _write_fake_opencode_sarif_script(
+        path,
+        findings_count=SARIF_HARD_LIMIT_EXCEEDED_COUNT,
+        title_prefix="Hard limit exceeded",
+        finding_body="This payload should exceed SARIF hard limit.",
+        priority="P1",
+        status="Blocked",
+        overall_explanation="Too many findings.",
     )
-    path.chmod(0o755)
 
 
 def _write_fake_opencode_blocked_with_question(path: Path) -> None:

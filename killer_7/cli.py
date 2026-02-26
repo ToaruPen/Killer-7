@@ -1927,7 +1927,14 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         )
         if should_emit_sarif:
             findings_obj = summary_payload.get("findings")
-            findings_count = len(findings_obj) if isinstance(findings_obj, list) else 0
+            if not isinstance(findings_obj, list):
+                raise ValueError(
+                    "Invalid review summary: summary_payload['findings'] must be a list "
+                    f"(summary_payload_type={type(summary_payload).__name__}, "
+                    f"summary_payload_keys={sorted(summary_payload.keys())}, "
+                    f"findings_obj_type={type(findings_obj).__name__}, findings_obj={findings_obj!r})"
+                )
+            findings_count = len(findings_obj)
             sarif_warning = sarif_results_warning_line(findings_count=findings_count)
             if sarif_warning:
                 warning_lines.append(sarif_warning)

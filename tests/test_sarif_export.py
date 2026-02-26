@@ -394,6 +394,31 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "findings exceed SARIF hard limit"):
             review_summary_to_sarif(summary)
 
+    def test_findings_at_hard_limit_succeeds(self) -> None:
+        from killer_7.report.sarif_export import (
+            SARIF_RESULTS_HARD_LIMIT,
+            review_summary_to_sarif,
+        )
+
+        finding = self._build_finding()
+        summary = self._build_summary(findings=[finding] * SARIF_RESULTS_HARD_LIMIT)
+
+        sarif_payload = review_summary_to_sarif(summary)
+        self.assertIsInstance(sarif_payload, dict)
+        runs_obj = sarif_payload.get("runs")
+        self.assertIsInstance(runs_obj, list)
+        if not isinstance(runs_obj, list) or not runs_obj:
+            self.fail("SARIF payload must contain at least one run")
+        first_run_obj = runs_obj[0]
+        self.assertIsInstance(first_run_obj, dict)
+        if not isinstance(first_run_obj, dict):
+            self.fail("SARIF run must be a dict")
+        results_obj = first_run_obj.get("results")
+        self.assertIsInstance(results_obj, list)
+        if not isinstance(results_obj, list):
+            self.fail("SARIF run results must be a list")
+        self.assertEqual(len(results_obj), SARIF_RESULTS_HARD_LIMIT)
+
     def test_sarif_results_warning_line_only_for_truncation_risk_range(self) -> None:
         from killer_7.report.sarif_export import (
             SARIF_RESULTS_DISPLAY_LIMIT,
