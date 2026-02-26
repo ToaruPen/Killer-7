@@ -5,6 +5,8 @@ from typing import cast
 
 from ..coerce import (
     coerce_object_list as _coerce_object_list,
+)
+from ..coerce import (
     coerce_str_object_dict as _coerce_str_object_dict,
 )
 from .fingerprint import finding_fingerprint

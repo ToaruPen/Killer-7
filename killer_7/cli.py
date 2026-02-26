@@ -42,6 +42,8 @@ from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
 from .coerce import (
     coerce_object_list as _coerce_object_list,
+)
+from .coerce import (
     coerce_str_object_dict as _coerce_str_object_dict,
 )
 from .errors import BlockedError, ExecFailureError, ExitCode
