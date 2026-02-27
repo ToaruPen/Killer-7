@@ -113,15 +113,20 @@ def review_summary_to_sarif(summary: object) -> dict[str, object]:
     if findings_count > SARIF_RESULTS_HARD_LIMIT:
         raise ValueError(
             "Invalid review summary: findings exceed SARIF hard limit "
-            f"({findings_count} > {SARIF_RESULTS_HARD_LIMIT}). "
-            "Split results into multiple runs or reduce findings before SARIF export."
+            + f"({findings_count} > {SARIF_RESULTS_HARD_LIMIT}). "
+            + "Split results into multiple runs or reduce findings before SARIF export."
         )
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()
 
-    for item in findings:
-        finding = _coerce_str_object_dict(item)
+    for finding_index, item in enumerate(findings):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                "Invalid finding: expected mapping item "
+                + f"(scope_id={scope_id}, finding_index={finding_index}, item_type={type(item).__name__}, item={item!r})"
+            )
+        finding = _coerce_str_object_dict(cast(object, item))
         priority = _as_non_empty_str(finding.get("priority"))
         if not priority:
             raise ValueError(
