@@ -156,12 +156,14 @@ def _read_ns_str(args: argparse.Namespace, name: str, required: bool = False) ->
 
 
 def _read_ns_int(args: argparse.Namespace, name: str, required: bool = False) -> int:
-    value = getattr(args, name, 0)
-    if required and value == 0:
+    value_obj = getattr(args, name, None)
+    if required and value_obj is None:
         _raise_invalid_review_args(f"--{name.replace('_', '-')} is required")
-    if not isinstance(value, int) or isinstance(value, bool):
+    if value_obj is None:
+        value_obj = 0
+    if not isinstance(value_obj, int) or isinstance(value_obj, bool):
         _raise_invalid_review_args(f"--{name.replace('_', '-')} must be integer")
-    return value
+    return value_obj
 
 
 def _read_ns_bool(args: argparse.Namespace, name: str) -> bool:
@@ -218,8 +220,7 @@ def _parse_review_args(args: argparse.Namespace) -> ReviewCommandArgs:
         inline=_read_ns_bool(args, "inline"),
         sarif=_read_ns_bool(args, "sarif"),
         reviewdog=_read_ns_bool(args, "reviewdog"),
-        reviewdog_reporter=_read_ns_str(args, "reviewdog_reporter")
-        or "github-pr-review",
+        reviewdog_reporter=_read_ns_str(args, "reviewdog_reporter"),
         hybrid_aspects=_read_ns_str_list(args, "hybrid_aspect"),
         hybrid_allowlist=_read_ns_str_list(args, "hybrid_allowlist"),
         reuse=_read_ns_bool(args, "reuse"),
