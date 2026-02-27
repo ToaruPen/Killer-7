@@ -98,17 +98,13 @@ Before collecting diffs, verify the scope matches the current branch context.
 - `BASE_REF`: base ref for `range` mode (default: `origin/main`; fallback to `main`)
 - `CONSTRAINTS`: additional constraints (default: `none`)
 - `REVIEW_CYCLE_INCREMENTAL`: `1` enables conditional reuse of the latest `review.json` when strict fingerprints match; default `1`
-- `REVIEW_CYCLE_CACHE_POLICY`: `strict` | `balanced` | `off` (default: `balanced`)
-  - `strict`: reuse only when latest status is `Approved` or `Approved with nits` (backward compatible)
-  - `balanced`: reuse any latest status (`Approved`/`Approved with nits`/`Blocked`/`Question`) when strict fingerprints match
-  - `off`: disable reuse and force full execution even when fingerprints match
   - Reuse is fail-closed. Any missing/mismatched metadata field forces full execution.
+  - Reuse is allowed only when latest status is `Approved` or `Approved with nits`.
   - Internal compatibility token `script_semantics_version` is included in reuse metadata checks.
     Bump it when prompt composition or reuse eligibility semantics change.
   - Recommended operation:
-    - Keep `REVIEW_CYCLE_INCREMENTAL=1` + `REVIEW_CYCLE_CACHE_POLICY=balanced` as the default baseline.
-    - Use `REVIEW_CYCLE_CACHE_POLICY=strict` when you want to avoid reusing non-Approved results.
-    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` (or `REVIEW_CYCLE_CACHE_POLICY=off`) when base/HEAD context changed materially (for example rebase/base update) and right before `/final-review`.
+    - Keep `REVIEW_CYCLE_INCREMENTAL=1` as the default baseline.
+    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` when base/HEAD context changed materially (for example rebase/base update) or right before `/final-review`.
 
 ### Timeout (review engine execution)
 
