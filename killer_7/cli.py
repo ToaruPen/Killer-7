@@ -40,6 +40,12 @@ from .aspect_id import normalize_aspect
 from .aspects.orchestrate import ASPECTS_V1, run_all_aspects
 from .bundle.context_bundle import build_context_bundle
 from .bundle.diff_parse import parse_diff_patch
+from .coerce import (
+    coerce_object_list as _coerce_object_list,
+)
+from .coerce import (
+    coerce_str_object_dict as _coerce_str_object_dict,
+)
 from .errors import BlockedError, ExecFailureError, ExitCode
 from .github.content import ContentWarning, GitHubContentFetcher
 from .github.gh import GhClient
@@ -140,15 +146,19 @@ class ReviewCommandArgs:
     explore: bool
 
 
-def _read_ns_str(args: argparse.Namespace, name: str) -> str:
+def _read_ns_str(args: argparse.Namespace, name: str, required: bool = False) -> str:
     value = getattr(args, name, "")
+    if required and value == "":
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} is required")
     if not isinstance(value, str):
         _raise_invalid_review_args(f"--{name.replace('_', '-')} must be string")
     return value
 
 
-def _read_ns_int(args: argparse.Namespace, name: str) -> int:
+def _read_ns_int(args: argparse.Namespace, name: str, required: bool = False) -> int:
     value = getattr(args, name, 0)
+    if required and value == 0:
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} is required")
     if not isinstance(value, int) or isinstance(value, bool):
         _raise_invalid_review_args(f"--{name.replace('_', '-')} must be integer")
     return value
@@ -182,7 +192,9 @@ def _read_json_mapping(path: str) -> JsonMap:
     with open(path, "r", encoding="utf-8") as fh:
         loaded_obj: object = json.load(fh)
     if not isinstance(loaded_obj, dict):
-        raise ExecFailureError(f"Invalid JSON object: {path!r} root must be object")
+        raise ExecFailureError(
+            f"Invalid JSON object: {path!r} root must be object (got {type(loaded_obj).__name__})"
+        )
     return cast(JsonMap, loaded_obj)
 
 
@@ -196,8 +208,8 @@ def _parse_review_args(args: argparse.Namespace) -> ReviewCommandArgs:
         _raise_invalid_review_args("--preset must be string")
 
     return ReviewCommandArgs(
-        repo=_read_ns_str(args, "repo"),
-        pr=_read_ns_int(args, "pr"),
+        repo=_read_ns_str(args, "repo", required=True),
+        pr=_read_ns_int(args, "pr", required=True),
         preset=preset,
         aspects=_read_ns_str_list(args, "aspect"),
         no_sot_aspects=_read_ns_str_list(args, "no_sot_aspect"),
@@ -325,21 +337,23 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
     except json.JSONDecodeError as exc:
         raise ExecFailureError(f"Invalid config JSON: {path!r}: {exc.msg}") from exc
 
-    schema_version = raw.get("schema_version")
+    raw_dict = _coerce_str_object_dict(cast(object, raw))
+    schema_version = raw_dict.get("schema_version")
     if schema_version != 1:
         raise ExecFailureError(f"Invalid config schema_version in {path!r}: expected 1")
 
-    raw_presets = raw.get("presets", {})
-    if raw_presets is None:
+    raw_presets_obj = raw_dict.get("presets", {})
+    if raw_presets_obj is None:
         raise ExecFailureError(
             f"Invalid config presets in {path!r}: must be object (got null)"
         )
-    if not isinstance(raw_presets, dict):
+    if not isinstance(raw_presets_obj, dict):
         raise ExecFailureError(f"Invalid config presets in {path!r}: must be object")
+    raw_presets = _coerce_str_object_dict(cast(object, raw_presets_obj))
 
     config_presets: dict[str, tuple[str, ...]] = {}
-    for raw_name, raw_aspects in raw_presets.items():
-        if not isinstance(raw_name, str) or not raw_name.strip():
+    for raw_name, raw_aspects_obj in raw_presets.items():
+        if not raw_name.strip():
             raise ExecFailureError(
                 f"Invalid preset name in {path!r}: must be non-empty string"
             )
@@ -353,20 +367,22 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
         if name in config_presets:
             raise ExecFailureError(
                 f"Duplicate preset name in {path!r}: {raw_name!r} normalizes to"
-                f" {name!r} which is already defined"
+                + f" {name!r} which is already defined"
             )
 
-        if not isinstance(raw_aspects, list):
+        if not isinstance(raw_aspects_obj, list):
             raise ExecFailureError(
                 f"Invalid preset definition in {path!r}: {raw_name!r} must be array"
             )
+        raw_aspects = _coerce_object_list(cast(object, raw_aspects_obj))
 
         normalized_aspects: list[str] = []
-        for raw_aspect in raw_aspects:
-            if not isinstance(raw_aspect, str):
+        for raw_aspect_obj in raw_aspects:
+            if not isinstance(raw_aspect_obj, str):
                 raise ExecFailureError(
                     f"Invalid aspect in preset {raw_name!r} ({path!r}): must be string"
                 )
+            raw_aspect = raw_aspect_obj
             try:
                 aspect = normalize_aspect(raw_aspect)
             except ExecFailureError as exc:
@@ -392,7 +408,7 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
             )
         config_presets[name] = deduped
 
-    default_preset_obj = raw.get("default_preset")
+    default_preset_obj = raw_dict.get("default_preset")
     default_preset: str | None
     if default_preset_obj is None:
         default_preset = None
@@ -600,21 +616,23 @@ def _cache_json_path(out_dir: str) -> str:
 def _load_state_json(out_dir: str) -> JsonMap:
     path = _state_json_path(out_dir)
     try:
-        return _read_json_mapping(path)
+        payload = _read_json_mapping(path)
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError, ExecFailureError):
         return {}
+    return _coerce_str_object_dict(cast(object, payload))
 
 
 def _load_cache_json(out_dir: str) -> JsonMap:
     path = _cache_json_path(out_dir)
     try:
-        return _read_json_mapping(path)
+        payload = _read_json_mapping(path)
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError, ExecFailureError):
         return {}
+    return _coerce_str_object_dict(cast(object, payload))
 
 
 def _write_cache_json(out_dir: str, payload: JsonMap) -> str:
@@ -757,24 +775,27 @@ def _validate_reuse_artifacts(
         raise ExecFailureError(
             "reuse artifact invalid: aspects index root must be object"
         )
-    if index_payload.get("scope_id") != scope_id:
+    index_dict = _coerce_str_object_dict(cast(object, index_payload))
+    if index_dict.get("scope_id") != scope_id:
         raise ExecFailureError(
             "reuse artifact scope mismatch: .ai-review/aspects/index.json"
         )
 
-    aspects_obj = index_payload.get("aspects")
-    if not isinstance(aspects_obj, list):
+    aspects_obj_raw = index_dict.get("aspects")
+    if not isinstance(aspects_obj_raw, list):
         raise ExecFailureError(
             "reuse artifact invalid: .ai-review/aspects/index.json missing aspects[]"
         )
+    aspects_obj = _coerce_object_list(cast(object, aspects_obj_raw))
 
     selected_aspect_set = set(selected_aspects)
     entry_by_aspect: dict[str, dict[str, object]] = {}
-    for i, item in enumerate(aspects_obj):
-        if not isinstance(item, dict):
+    for i, item_obj in enumerate(aspects_obj):
+        if not isinstance(item_obj, dict):
             raise ExecFailureError(
                 f"reuse artifact invalid index entry at aspects[{i}]"
             )
+        item = _coerce_str_object_dict(cast(object, item_obj))
         aspect = item.get("aspect")
         if not isinstance(aspect, str) or not aspect:
             raise ExecFailureError(f"reuse artifact invalid aspect at aspects[{i}]")
@@ -968,13 +989,18 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
     has_prev_incremental_base = "incremental_base_head_sha" in state_payload
     prev_head = state_payload.get("head_sha")
     prev_incremental_base_head = state_payload.get("incremental_base_head_sha")
-    prev_selected_aspects = state_payload.get("selected_aspects")
+    prev_selected_aspects_obj = state_payload.get("selected_aspects")
+    prev_selected_aspects_list: list[object] | None
+    if isinstance(prev_selected_aspects_obj, list):
+        prev_selected_aspects_list = cast(list[object], prev_selected_aspects_obj)
+    else:
+        prev_selected_aspects_list = None
     prev_no_sot_aspects = state_payload.get("no_sot_aspects")
     prev_no_sot_aspects_list: list[object] | None
     if prev_no_sot_aspects is None:
         prev_no_sot_aspects_list = []
     elif isinstance(prev_no_sot_aspects, list):
-        prev_no_sot_aspects_list = prev_no_sot_aspects
+        prev_no_sot_aspects_list = cast(list[object], prev_no_sot_aspects)
     else:
         prev_no_sot_aspects_list = None
 
@@ -1005,11 +1031,13 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         incremental_reason = "missing_previous_head"
     elif prev_repo != review_args.repo or prev_pr != review_args.pr:
         incremental_reason = "previous_scope_mismatch"
-    elif not isinstance(prev_selected_aspects, list) or not prev_selected_aspects:
+    elif prev_selected_aspects_list is None or not prev_selected_aspects_list:
         incremental_reason = "missing_previous_selected_aspects"
-    elif any(not isinstance(a, str) or not a.strip() for a in prev_selected_aspects):
+    elif any(
+        not isinstance(a, str) or not a.strip() for a in prev_selected_aspects_list
+    ):
         incremental_reason = "invalid_previous_selected_aspects"
-    elif set(prev_selected_aspects) != set(selected_aspects):
+    elif set(str(a) for a in prev_selected_aspects_list) != set(selected_aspects):
         incremental_reason = "previous_aspects_mismatch"
     elif prev_no_sot_aspects_list is None:
         incremental_reason = "invalid_previous_no_sot_aspects"
@@ -1154,9 +1182,9 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
 
         warning_lines.append(
             "content_warning"
-            f" kind={one_line(w.kind)}"
-            f" path={one_line(w.path)}"
-            f" message={one_line(w.message)}{tail}"
+            + f" kind={one_line(w.kind)}"
+            + f" path={one_line(w.path)}"
+            + f" message={one_line(w.message)}{tail}"
         )
 
     tool_bundle_files: list[str] = []
@@ -1167,7 +1195,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
             dir_warning_lines: list[str] = [
                 "tool_bundle_dir_skipped kind=not_a_directory"
-                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
             ]
             return ([], {}, dir_warning_lines)
         if not os.path.isdir(tool_bundle_dir):
@@ -1181,7 +1209,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         if os.path.islink(tool_bundle_dir):
             extra_warning_lines.append(
                 "tool_bundle_dir_skipped kind=is_symlink"
-                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
             )
             return ([], {}, extra_warning_lines)
         tool_bundle_dir_real = os.path.realpath(tool_bundle_dir)
@@ -1194,7 +1222,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         if not under_artifacts:
             extra_warning_lines.append(
                 "tool_bundle_dir_skipped kind=escapes_artifacts"
-                f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
+                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
             )
             return ([], {}, extra_warning_lines)
 
@@ -1205,13 +1233,13 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             manifest_present = False
             extra_warning_lines.append(
                 "tool_bundle_manifest_skipped kind=missing"
-                f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
             )
         elif os.path.islink(manifest_path):
             manifest_present = False
             extra_warning_lines.append(
                 "tool_bundle_manifest_skipped kind=is_symlink"
-                f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
             )
         else:
             manifest_present = True
@@ -1223,17 +1251,17 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             except OSError as exc:
                 extra_warning_lines.append(
                     "tool_bundle_manifest_skipped kind=stat_failed"
-                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                    f" message={one_line(str(exc))}"
+                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    + f" message={one_line(str(exc))}"
                 )
                 manifest_present = False
             else:
                 if manifest_size_bytes > max_manifest_bytes:
                     extra_warning_lines.append(
                         "tool_bundle_manifest_skipped kind=size_limit_exceeded"
-                        f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                        f" size_bytes={manifest_size_bytes}"
-                        f" limit_bytes={max_manifest_bytes}"
+                        + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                        + f" size_bytes={manifest_size_bytes}"
+                        + f" limit_bytes={max_manifest_bytes}"
                     )
                     manifest_present = False
 
@@ -1242,18 +1270,18 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
                 with open(manifest_path, "r", encoding="utf-8") as fh:
                     loaded = json.load(fh)
                 if isinstance(loaded, dict):
-                    manifest = loaded
+                    manifest = _coerce_str_object_dict(cast(object, loaded))
                 else:
                     extra_warning_lines.append(
                         "tool_bundle_manifest_skipped kind=invalid_type"
-                        f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                        + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
                     )
                     manifest_present = False
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 extra_warning_lines.append(
                     "tool_bundle_manifest_skipped kind=invalid_json"
-                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                    f" message={one_line(str(exc))}"
+                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    + f" message={one_line(str(exc))}"
                 )
                 manifest_present = False
 
@@ -1263,14 +1291,14 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             if manifest_present:
                 extra_warning_lines.append(
                     "tool_bundle_manifest_skipped kind=missing_head_sha"
-                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
                 )
             names: list[str] = []
         elif head_sha != pr_input.head_sha:
             extra_warning_lines.append(
                 "tool_bundle_manifest_skipped kind=head_sha_mismatch"
-                f" expected={one_line(pr_input.head_sha)}"
-                f" actual={one_line(head_sha)}"
+                + f" expected={one_line(pr_input.head_sha)}"
+                + f" actual={one_line(head_sha)}"
             )
             names = []
         else:
@@ -1278,19 +1306,20 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             if not isinstance(files_obj, list):
                 extra_warning_lines.append(
                     "tool_bundle_manifest_skipped kind=invalid_files"
-                    f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
+                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
                 )
                 names = []
             else:
                 names = []
                 max_manifest_entries = 1000
-                if len(files_obj) > max_manifest_entries:
+                files_list = _coerce_object_list(cast(object, files_obj))
+                if len(files_list) > max_manifest_entries:
                     extra_warning_lines.append(
                         "tool_bundle_manifest_files_truncated"
-                        f" total={len(files_obj)}"
-                        f" limit={max_manifest_entries}"
+                        + f" total={len(files_list)}"
+                        + f" limit={max_manifest_entries}"
                     )
-                for raw in files_obj[:max_manifest_entries]:
+                for raw in files_list[:max_manifest_entries]:
                     if not isinstance(raw, str):
                         continue
                     n = raw.strip()
@@ -1320,7 +1349,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             if processed_files >= max_files:
                 extra_warning_lines.append(
                     "tool_bundle_processing_stopped kind=max_files_exceeded"
-                    f" max_files={max_files}"
+                    + f" max_files={max_files}"
                 )
                 break
 
@@ -1330,7 +1359,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             if os.path.islink(p):
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=is_symlink"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
                 )
                 continue
             p_real = os.path.realpath(p)
@@ -1344,13 +1373,13 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             if not under_tool_bundle:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=escapes_tool_bundle"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
                 )
                 continue
             if not os.path.isfile(p):
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=missing"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
                 )
                 continue
             try:
@@ -1358,25 +1387,25 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             except OSError as exc:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=stat_failed"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    f" message={one_line(str(exc))}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" message={one_line(str(exc))}"
                 )
                 continue
 
             if size_bytes > max_bytes:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=size_limit_exceeded"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    f" size_bytes={size_bytes}"
-                    f" limit_bytes={max_bytes}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" size_bytes={size_bytes}"
+                    + f" limit_bytes={max_bytes}"
                 )
                 continue
 
             if processed_total_bytes + size_bytes > max_total_bytes:
                 extra_warning_lines.append(
                     "tool_bundle_processing_stopped kind=max_total_bytes_exceeded"
-                    f" max_total_bytes={max_total_bytes}"
-                    f" next_file_size_bytes={size_bytes}"
+                    + f" max_total_bytes={max_total_bytes}"
+                    + f" next_file_size_bytes={size_bytes}"
                 )
                 break
 
@@ -1388,17 +1417,17 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             except OSError as exc:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=read_failed"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    f" message={one_line(str(exc))}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" message={one_line(str(exc))}"
                 )
                 continue
 
             if len(raw) > max_bytes:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=size_limit_exceeded"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    f" size_bytes={len(raw)}"
-                    f" limit_bytes={max_bytes}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" size_bytes={len(raw)}"
+                    + f" limit_bytes={max_bytes}"
                 )
                 continue
 
@@ -1407,8 +1436,8 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
             except UnicodeDecodeError:
                 extra_warning_lines.append(
                     "tool_bundle_file_skipped kind=decode_error"
-                    f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    f" size_bytes={size_bytes}"
+                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                    + f" size_bytes={size_bytes}"
                 )
                 continue
 
@@ -1418,7 +1447,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
                 if not normalized:
                     extra_warning_lines.append(
                         "tool_bundle_src_skipped kind=invalid_src"
-                        f" path={one_line(os.path.relpath(p, os.getcwd()))}"
+                        + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
                     )
                     continue
 
@@ -1707,17 +1736,20 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
 
     if not isinstance(index_payload, dict):
         raise ExecFailureError("Invalid aspects index JSON: root must be object")
+    index_payload_dict = _coerce_str_object_dict(cast(object, index_payload))
 
-    aspects_list = index_payload.get("aspects")
-    if not isinstance(aspects_list, list):
+    aspects_list_obj = index_payload_dict.get("aspects")
+    if not isinstance(aspects_list_obj, list):
         raise ExecFailureError("Invalid aspects index JSON: 'aspects' must be an array")
+    aspects_list = _coerce_object_list(cast(object, aspects_list_obj))
 
-    for i, entry in enumerate(aspects_list):
+    for i, entry_obj in enumerate(aspects_list):
         totals["aspects_total"] += 1
-        if not isinstance(entry, dict):
+        if not isinstance(entry_obj, dict):
             raise ExecFailureError(
                 f"Invalid aspects index JSON: aspects[{i}] must be an object"
             )
+        entry = _coerce_str_object_dict(cast(object, entry_obj))
 
         aspect_name = entry.get("aspect")
         ok = entry.get("ok")
@@ -1805,34 +1837,39 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
 
         if not isinstance(review_payload, dict):
             raise ExecFailureError(f"Aspect JSON must be an object: {src_path}")
+        review_payload_dict = _coerce_str_object_dict(cast(object, review_payload))
 
-        findings = review_payload.get("findings")
-        if not isinstance(findings, list):
+        findings_obj = review_payload_dict.get("findings")
+        if not isinstance(findings_obj, list):
             raise ExecFailureError(f"Aspect JSON findings must be an array: {src_path}")
-        if any(not isinstance(x, dict) for x in findings):
+        findings_list = _coerce_object_list(cast(object, findings_obj))
+        if any(not isinstance(x, dict) for x in findings_list):
             raise ExecFailureError(
                 f"Aspect JSON findings entries must be objects: {src_path}"
             )
-        questions = review_payload.get("questions")
-        if not isinstance(questions, list):
+        questions_obj = review_payload_dict.get("questions")
+        if not isinstance(questions_obj, list):
             raise ExecFailureError(
                 f"Aspect JSON questions must be an array: {src_path}"
             )
+        questions = _coerce_object_list(cast(object, questions_obj))
 
-        out_findings, stats = apply_evidence_policy_to_findings(findings, context_index)
+        out_findings, stats = apply_evidence_policy_to_findings(
+            findings_list, context_index
+        )
 
-        updated_review = dict(review_payload)
+        updated_review: dict[str, object] = dict(review_payload_dict)
         updated_review["findings"] = out_findings
         updated_review["status"] = recompute_review_status(out_findings, questions)
 
-        policy_review = dict(review_payload)
+        policy_review: dict[str, object] = dict(review_payload_dict)
         policy_findings = _strip_machine_fields_from_findings(out_findings)
         policy_review["findings"] = policy_findings
         policy_review["status"] = recompute_review_status(policy_findings, questions)
 
         # Preserve the raw (pre-policy) review for debugging/auditing.
         raw_path = f"{os.path.splitext(src_path)[0]}.raw.json"
-        atomic_write_json_secure(raw_path, review_payload)
+        atomic_write_json_secure(raw_path, review_payload_dict)
 
         raw_rel_path = os.path.relpath(raw_path, out_dir).replace(os.sep, "/")
         canonical_rel_path = rel_path.replace(os.sep, "/")
@@ -1841,7 +1878,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         # that still read `.ai-review/aspects/<aspect>.json`.
         atomic_write_json_secure(src_path, policy_review)
 
-        aspect_evidence_payload = {
+        aspect_evidence_payload: dict[str, object] = {
             "schema_version": 1,
             "kind": "aspect_evidence",
             "generated_at": now_utc_z(),
@@ -1989,12 +2026,15 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
 
             # Best-effort: mark failed aspects as Blocked for easier debugging.
             statuses_obj = summary_payload.get("aspect_statuses")
-            merged_statuses: dict[str, str] = (
-                dict(statuses_obj) if isinstance(statuses_obj, dict) else {}
-            )
-            for entry in aspects_list:
-                if not isinstance(entry, dict):
+            statuses_dict = _coerce_str_object_dict(statuses_obj)
+            merged_statuses: dict[str, str] = {}
+            for key, value in statuses_dict.items():
+                if isinstance(value, str):
+                    merged_statuses[key] = value
+            for entry_obj in aspects_list:
+                if not isinstance(entry_obj, dict):
                     continue
+                entry = _coerce_str_object_dict(cast(object, entry_obj))
                 a = entry.get("aspect")
                 ok = entry.get("ok")
                 if isinstance(a, str) and a and ok is not True:
@@ -2082,7 +2122,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         for aspect, review in summary_reviews.items():
             qs_obj = review.get("questions")
             if isinstance(qs_obj, list) and any(
-                isinstance(x, str) and x.strip() for x in qs_obj
+                isinstance(x, str) and x.strip() for x in cast(list[object], qs_obj)
             ):
                 question_aspects.append(aspect)
         rerun_aspects = [
@@ -2365,6 +2405,14 @@ def main(argv: Iterable[str] | None = None) -> int:
             and not bool(getattr(args, "reviewdog", False))
         ):
             parser.error("--reviewdog-reporter requires --reviewdog")
+        if (
+            getattr(args, "command", "") == "review"
+            and bool(getattr(args, "reviewdog", False))
+            and reviewdog_reporter_provided
+        ):
+            reporter_obj = getattr(args, "reviewdog_reporter", "")
+            if not isinstance(reporter_obj, str) or not reporter_obj.strip():
+                parser.error("--reviewdog-reporter must be a non-empty string")
         handler = getattr(args, "_handler", None)
         if not callable(handler):
             raise BlockedError("No handler configured for this command")

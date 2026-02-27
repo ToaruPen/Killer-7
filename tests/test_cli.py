@@ -5133,3 +5133,33 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
             self.assertFalse(capture.exists())
+
+
+class TestCliTypeCoercion(unittest.TestCase):
+    def test_coerce_str_object_dict_filters_non_string_keys(self) -> None:
+        from killer_7 import cli
+
+        raw: dict[object, object] = {"ok": 1, 2: "drop", "nested": {"k": "v"}}
+        got = cli._coerce_str_object_dict(raw)
+        self.assertEqual(got, {"ok": 1, "nested": {"k": "v"}})
+
+    def test_coerce_str_object_dict_accepts_mapping(self) -> None:
+        from types import MappingProxyType
+
+        from killer_7 import cli
+
+        raw = MappingProxyType({"ok": 1, 2: "drop"})
+        got = cli._coerce_str_object_dict(raw)
+        self.assertEqual(got, {"ok": 1})
+
+    def test_coerce_object_list_returns_empty_for_non_list(self) -> None:
+        from killer_7 import cli
+
+        got = cli._coerce_object_list({"not": "a-list"})
+        self.assertEqual(got, [])
+
+    def test_coerce_object_list_accepts_tuple(self) -> None:
+        from killer_7 import cli
+
+        got = cli._coerce_object_list((1, "a", {"k": "v"}))
+        self.assertEqual(got, [1, "a", {"k": "v"}])

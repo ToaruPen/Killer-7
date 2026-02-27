@@ -1,5 +1,8 @@
 # Decision: review-cycle の再利用ポリシー既定値を balanced に変更
 
+> Note (2026-02-27): この決定で扱っている `REVIEW_CYCLE_CACHE_POLICY` は PR #63 で廃止されました。
+> 現在の仕様では再利用条件は固定で、最新ステータスが `Approved` または `Approved with nits` の場合のみ再利用されます。
+
 ## Decision-ID
 
 D-2026-02-21-REVIEW_CYCLE_DEFAULT_BALANCED
