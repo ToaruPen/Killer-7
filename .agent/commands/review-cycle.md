@@ -104,7 +104,7 @@ Before collecting diffs, verify the scope matches the current branch context.
     Bump it when prompt composition or reuse eligibility semantics change.
   - Recommended operation:
     - Keep `REVIEW_CYCLE_INCREMENTAL=1` as the default baseline.
-    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` when base/HEAD context changed materially (for example rebase/base update) and right before `/final-review`.
+    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` when base/HEAD context changed materially (for example rebase/base update) or right before `/final-review`.
 
 ### Timeout (review engine execution)
 
