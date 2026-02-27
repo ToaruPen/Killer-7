@@ -14,3 +14,11 @@ select = [
 ignore = [
   "E501",
 ]
+
+[tool.basedpyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
+reportAny = "warning"
+reportExplicitAny = "warning"
+reportUnusedCallResult = "warning"

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 
 from killer_7.report.sarif_export import (
     SARIF_RESULTS_DISPLAY_LIMIT,
@@ -18,10 +19,19 @@ SARIF_TRUNCATION_RISK_COUNT = SARIF_RESULTS_DISPLAY_LIMIT + 1
 SARIF_HARD_LIMIT_EXCEEDED_COUNT = SARIF_RESULTS_HARD_LIMIT + 1
 
 
+def _read_json_object(text: str) -> dict[str, Any]:
+    loaded = json.loads(text)
+    if not isinstance(loaded, dict):
+        raise AssertionError(
+            f"Expected JSON object at root, got {type(loaded).__name__}"
+        )
+    return cast(dict[str, Any], loaded)
+
+
 def _write_fake_gh(path: Path) -> None:
     """Write a tiny fake `gh` binary for tests."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import base64
 import json
@@ -431,7 +441,7 @@ def _write_fake_opencode(path: Path) -> None:
     `type=text` event's `part.text` as JSON.
     """
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -466,7 +476,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -516,7 +526,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source_writes_tool_bundle(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import os
@@ -580,7 +590,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source_dot_slash(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -632,7 +642,7 @@ raise SystemExit(0)
 def _write_fake_opencode_blocked(path: Path) -> None:
     """Fake opencode that returns a blocking P0 for one aspect."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -682,7 +692,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_too_many_inline(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -787,7 +797,7 @@ event = {"type": "text", "part": {"text": json.dumps(payload)}}
 sys.stdout.write(json.dumps(event) + "\\n")
 raise SystemExit(0)
 """
-    path.write_text(
+    _ = path.write_text(
         script.replace("__SARIF_FINDINGS_COUNT__", str(findings_count))
         .replace("__SARIF_TITLE_PREFIX__", json.dumps(title_prefix))
         .replace("__SARIF_FINDING_BODY__", json.dumps(finding_body))
@@ -826,7 +836,7 @@ def _write_fake_opencode_sarif_hard_limit_exceeded(path: Path) -> None:
 def _write_fake_opencode_blocked_with_question(path: Path) -> None:
     """Fake opencode that returns a P0 finding and a question."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -879,7 +889,7 @@ raise SystemExit(0)
 def _write_fake_opencode_inline_mismatch(path: Path) -> None:
     """Fake opencode that returns a P0 finding on a missing inline location."""
 
-    path.write_text(
+    _ = path.write_text(
         r"""#!/usr/bin/env python3
 import json
 import re
@@ -929,7 +939,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_incremental_inc_finding(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         r"""#!/usr/bin/env python3
 import json
 import re
@@ -974,7 +984,7 @@ raise SystemExit(0)
 def _write_fake_opencode_exec_failure(path: Path) -> None:
     """Fake opencode that always fails."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import sys
 
@@ -987,7 +997,7 @@ raise SystemExit(2)
 
 
 def _write_fake_reviewdog(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import os
@@ -1009,7 +1019,7 @@ raise SystemExit(0)
 
 
 def _write_fake_reviewdog_fail(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import sys
 
@@ -1142,7 +1152,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             reuse = run_payload.get("result", {}).get("reuse", {})
@@ -1190,7 +1200,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertNotEqual(p2.returncode, 0)
 
-            cache_payload = json.loads(
+            cache_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
             )
             reuse = cache_payload.get("reuse", {})
@@ -1213,7 +1223,7 @@ class TestCli(unittest.TestCase):
             prev_path = os.environ.get("PATH")
             prev_bin = os.environ.get("KILLER7_OPENCODE_BIN")
             try:
-                os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                _ = os.environ.pop("KILLER7_OPENCODE_BIN", None)
                 base_path = prev_path or ""
                 os.environ["PATH"] = f"{bin_a}{os.pathsep}{base_path}"
 
@@ -1250,17 +1260,17 @@ class TestCli(unittest.TestCase):
                 )
             finally:
                 if prev_bin is None:
-                    os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                    _ = os.environ.pop("KILLER7_OPENCODE_BIN", None)
                 else:
                     os.environ["KILLER7_OPENCODE_BIN"] = prev_bin
                 if prev_path is None:
-                    os.environ.pop("PATH", None)
+                    _ = os.environ.pop("PATH", None)
                 else:
                     os.environ["PATH"] = prev_path
 
             self.assertNotEqual(p2.returncode, 0)
 
-            cache_payload = json.loads(
+            cache_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
             )
             reuse = cache_payload.get("reuse", {})
@@ -1310,7 +1320,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             reuse = run_payload.get("result", {}).get("reuse", {})
@@ -1330,7 +1340,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -1380,7 +1390,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertNotEqual(p2.returncode, 0)
 
-            cache_payload = json.loads(
+            cache_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
             )
             reuse = cache_payload.get("reuse", {})
@@ -1435,7 +1445,7 @@ class TestCli(unittest.TestCase):
                 )
             finally:
                 if prev_timeout is None:
-                    os.environ.pop("KILLER7_OPENCODE_TIMEOUT_S", None)
+                    _ = os.environ.pop("KILLER7_OPENCODE_TIMEOUT_S", None)
                 else:
                     os.environ["KILLER7_OPENCODE_TIMEOUT_S"] = prev_timeout
 
@@ -1488,7 +1498,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertNotEqual(p2.returncode, 0)
 
-            cache_payload = json.loads(
+            cache_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "cache.json").read_text(encoding="utf-8")
             )
             reuse = cache_payload.get("reuse", {})
@@ -1550,7 +1560,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             reuse = run_payload.get("result", {}).get("reuse", {})
@@ -1583,7 +1593,7 @@ class TestCli(unittest.TestCase):
             self.assertNotEqual(p1.returncode, 0)
 
             out_dir = Path(td) / ".ai-review"
-            cache_payload = json.loads(
+            cache_payload = _read_json_object(
                 (out_dir / "cache.json").read_text(encoding="utf-8")
             )
             self.assertTrue(isinstance(cache_payload.get("cache_key"), str))
@@ -1591,7 +1601,7 @@ class TestCli(unittest.TestCase):
             scope_id = "owner/name#pr-123@0123456789ab"
             aspects_dir = out_dir / "aspects"
             aspects_dir.mkdir(parents=True, exist_ok=True)
-            (aspects_dir / "correctness.json").write_text(
+            _ = (aspects_dir / "correctness.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 3,
@@ -1605,7 +1615,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (aspects_dir / "index.json").write_text(
+            _ = (aspects_dir / "index.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -1628,11 +1638,11 @@ class TestCli(unittest.TestCase):
 
             aspect_dir = Path(td) / ".ai-review" / "opencode" / "correctness"
             aspect_dir.mkdir(parents=True, exist_ok=True)
-            (aspect_dir / "tool-bundle.txt").write_text(
+            _ = (aspect_dir / "tool-bundle.txt").write_text(
                 "# SRC: hello.txt\nL1: hello\n",
                 encoding="utf-8",
             )
-            (aspect_dir / "tool-trace.jsonl").write_text(
+            _ = (aspect_dir / "tool-trace.jsonl").write_text(
                 '{"type":"tool_use"}\n',
                 encoding="utf-8",
             )
@@ -1658,7 +1668,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue((aspect_dir / "tool-bundle.txt").is_file())
             self.assertTrue((aspect_dir / "tool-trace.jsonl").is_file())
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             reuse = run_payload.get("result", {}).get("reuse", {})
@@ -1703,7 +1713,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertNotEqual(p2.returncode, 0)
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertNotEqual(run_payload.get("status"), "ok")
@@ -1732,8 +1742,8 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
 
             out_dir = Path(td) / ".ai-review"
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             (Path(td) / ".ai-review" / "aspects" / "correctness.json").unlink()
 
@@ -1822,11 +1832,11 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
 
             index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
-            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            index_payload = _read_json_object(index_path.read_text(encoding="utf-8"))
             for item in index_payload.get("aspects", []):
                 if item.get("aspect") == "correctness":
                     item["result_path"] = "aspects/security.json"
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -1873,11 +1883,11 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
 
             index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
-            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            index_payload = _read_json_object(index_path.read_text(encoding="utf-8"))
             scope_id = str(index_payload.get("scope_id") or "")
 
             security_path = Path(td) / ".ai-review" / "aspects" / "security.json"
-            security_path.write_text(
+            _ = security_path.write_text(
                 json.dumps(
                     {
                         "schema_version": 3,
@@ -1903,7 +1913,7 @@ class TestCli(unittest.TestCase):
                 }
             )
             index_payload["aspects"] = aspects
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -1950,12 +1960,12 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
 
             index_path = Path(td) / ".ai-review" / "aspects" / "index.json"
-            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+            index_payload = _read_json_object(index_path.read_text(encoding="utf-8"))
             aspects = list(index_payload.get("aspects") or [])
             if aspects:
                 aspects.append(dict(aspects[0]))
             index_payload["aspects"] = aspects
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -1996,7 +2006,7 @@ class TestCli(unittest.TestCase):
             run_json = Path(td) / ".ai-review" / "run.json"
             self.assertTrue(run_json.is_file())
 
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload["exit_code"], 0)
             self.assertEqual(payload["status"], "ok")
 
@@ -2031,12 +2041,14 @@ class TestCli(unittest.TestCase):
             self.assertTrue((aspects_dir / "security.json").is_file())
             self.assertFalse((aspects_dir / "readability.json").exists())
 
-            idx = json.loads((aspects_dir / "index.json").read_text(encoding="utf-8"))
+            idx = _read_json_object(
+                (aspects_dir / "index.json").read_text(encoding="utf-8")
+            )
             names = [x.get("aspect") for x in idx.get("aspects", [])]
             self.assertEqual(names, ["correctness", "security"])
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(
                 payload.get("result", {}).get("selected_aspects"),
                 ["correctness", "security"],
@@ -2071,7 +2083,7 @@ class TestCli(unittest.TestCase):
             self.assertFalse((aspects_dir / "readability.json").exists())
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(
                 payload.get("result", {}).get("selected_aspects"),
                 ["correctness", "security"],
@@ -2085,7 +2097,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "head_ref_oid_sequence": [
@@ -2120,14 +2132,14 @@ class TestCli(unittest.TestCase):
             )
             self.assertIn("incremental-line", diff_patch)
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertEqual(inc.get("diff_mode"), "incremental")
             self.assertTrue(bool(inc.get("applied")))
 
-            state_payload = json.loads(
+            state_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(state_payload.get("head_sha"), "bbbbbbbbbbbbbbbb")
@@ -2144,7 +2156,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2165,7 +2177,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertFalse(bool(inc.get("applied")))
             self.assertEqual(inc.get("reason"), "forced_full")
@@ -2180,7 +2194,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2212,7 +2226,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertFalse(bool(inc.get("applied")))
             self.assertEqual(inc.get("reason"), "previous_aspects_mismatch")
@@ -2231,7 +2247,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2266,7 +2282,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertFalse(bool(inc.get("applied")))
             self.assertEqual(inc.get("reason"), "previous_no_sot_aspects_mismatch")
@@ -2303,7 +2321,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             policy = run_payload.get("result", {}).get("aspect_input_policy", {})
@@ -2318,7 +2336,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2348,7 +2366,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertTrue(bool(inc.get("applied")))
             self.assertEqual(inc.get("diff_mode"), "incremental")
@@ -2365,7 +2385,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2396,7 +2416,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertFalse(bool(inc.get("applied")))
             self.assertEqual(inc.get("diff_mode"), "full")
@@ -2415,7 +2437,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2447,7 +2469,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
-            state_payload = json.loads(
+            state_payload = _read_json_object(
                 (out_dir / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
@@ -2464,7 +2486,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2496,7 +2518,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
-            state_payload = json.loads(
+            state_payload = _read_json_object(
                 (out_dir / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(state_payload.get("repo"), "owner/name")
@@ -2512,7 +2534,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2544,7 +2566,9 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            run_payload = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+            run_payload = _read_json_object(
+                (out_dir / "run.json").read_text(encoding="utf-8")
+            )
             inc = run_payload.get("result", {}).get("incremental", {})
             self.assertFalse(bool(inc.get("applied")))
             self.assertEqual(inc.get("reason"), "missing_previous_head")
@@ -2556,8 +2580,8 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             p = run_cli(
                 [
@@ -2581,7 +2605,7 @@ class TestCli(unittest.TestCase):
 
             run_json = out_dir / "run.json"
             self.assertTrue(run_json.is_file())
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "invalid_args")
             self.assertIn(
                 "Duplicate aspect", payload.get("error", {}).get("message", "")
@@ -2593,8 +2617,8 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             p = run_cli(
                 [
@@ -2616,7 +2640,7 @@ class TestCli(unittest.TestCase):
 
             run_json = out_dir / "run.json"
             self.assertTrue(run_json.is_file())
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "exec_failure")
 
     def test_config_preset_can_be_used_from_cli_preset_flag(self) -> None:
@@ -2629,7 +2653,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2659,7 +2683,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            payload = json.loads(
+            payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
@@ -2677,7 +2701,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2697,7 +2721,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            payload = json.loads(
+            payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
@@ -2715,7 +2739,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2743,7 +2767,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            payload = json.loads(
+            payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
@@ -2758,7 +2782,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text("{ broken", encoding="utf-8")
+            _ = (cfg_dir / "config.json").write_text("{ broken", encoding="utf-8")
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -2768,7 +2792,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
             self.assertIn("config", p.stderr.lower())
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertEqual(run_payload.get("status"), "exec_failure")
@@ -2783,7 +2807,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps({"schema_version": 1, "presets": None}),
                 encoding="utf-8",
             )
@@ -2796,7 +2820,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
             self.assertIn("presets", p.stderr.lower())
 
-            run_payload = json.loads(
+            run_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "run.json").read_text(encoding="utf-8")
             )
             self.assertEqual(run_payload.get("status"), "exec_failure")
@@ -2893,7 +2917,7 @@ class TestCli(unittest.TestCase):
             evidence = out_dir / "evidence.json"
             self.assertTrue(evidence.is_file())
 
-            payload = json.loads(evidence.read_text(encoding="utf-8"))
+            payload = _read_json_object(evidence.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("schema_version"), 1)
             self.assertEqual(payload.get("kind"), "evidence_summary")
             self.assertIn("per_aspect", payload)
@@ -2910,7 +2934,7 @@ class TestCli(unittest.TestCase):
             ]:
                 evidence_path = aspects_dir / f"{a}.evidence.json"
                 self.assertTrue(evidence_path.is_file())
-                payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+                payload = _read_json_object(evidence_path.read_text(encoding="utf-8"))
                 self.assertEqual(payload.get("schema_version"), 1)
                 self.assertEqual(payload.get("kind"), "aspect_evidence")
                 self.assertIn("review", payload)
@@ -2930,7 +2954,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2941,7 +2965,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: ./tool-only.txt\n",
@@ -2963,16 +2987,19 @@ class TestCli(unittest.TestCase):
                 Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
             )
             self.assertTrue(evidence_path.is_file())
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence = _read_json_object(evidence_path.read_text(encoding="utf-8"))
             review = evidence.get("review")
             self.assertTrue(isinstance(review, dict))
-            findings = review.get("findings")
+            review_map = cast(dict[str, Any], review)
+            findings = review_map.get("findings")
             self.assertTrue(isinstance(findings, list))
             self.assertTrue(findings, msg="expected at least one finding")
-            f0 = findings[0]
+            findings_list = cast(list[object], findings)
+            f0 = findings_list[0]
             self.assertTrue(isinstance(f0, dict))
-            self.assertEqual(f0.get("priority"), "P2")
-            self.assertEqual(f0.get("verified"), True)
+            f0_map = cast(dict[str, Any], f0)
+            self.assertEqual(f0_map.get("priority"), "P2")
+            self.assertEqual(f0_map.get("verified"), True)
 
     def test_tool_bundle_generated_during_run_extends_evidence_index(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2993,27 +3020,33 @@ class TestCli(unittest.TestCase):
                 Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
             )
             self.assertTrue(evidence_path.is_file())
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence = _read_json_object(evidence_path.read_text(encoding="utf-8"))
             review = evidence.get("review")
             self.assertTrue(isinstance(review, dict))
-            findings = review.get("findings")
+            review_map = cast(dict[str, Any], review)
+            findings = review_map.get("findings")
             self.assertTrue(isinstance(findings, list))
             self.assertTrue(findings, msg="expected at least one finding")
-            f0 = findings[0]
+            findings_list = cast(list[object], findings)
+            f0 = findings_list[0]
             self.assertTrue(isinstance(f0, dict))
-            self.assertEqual(f0.get("priority"), "P2")
-            self.assertEqual(f0.get("verified"), True)
+            f0_map = cast(dict[str, Any], f0)
+            self.assertEqual(f0_map.get("priority"), "P2")
+            self.assertEqual(f0_map.get("verified"), True)
 
             run_json = Path(td) / ".ai-review" / "run.json"
             self.assertTrue(run_json.is_file())
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             result = payload.get("result")
             self.assertTrue(isinstance(result, dict))
-            artifacts = result.get("artifacts")
+            result_map = cast(dict[str, Any], result)
+            artifacts = result_map.get("artifacts")
             self.assertTrue(isinstance(artifacts, dict))
-            files = artifacts.get("tool_bundle_files")
+            artifacts_map = cast(dict[str, Any], artifacts)
+            files = artifacts_map.get("tool_bundle_files")
             self.assertTrue(isinstance(files, list))
-            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
+            files_list = cast(list[object], files)
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files_list)
 
     def test_tool_bundle_symlink_is_skipped(self) -> None:
         if not hasattr(os, "symlink"):
@@ -3027,7 +3060,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3038,7 +3071,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3049,7 +3082,7 @@ class TestCli(unittest.TestCase):
             )
 
             outside = Path(td) / "outside.txt"
-            outside.write_text("secret\n", encoding="utf-8")
+            _ = outside.write_text("secret\n", encoding="utf-8")
             link = tool_dir / "link.txt"
             try:
                 os.symlink(str(outside), str(link))
@@ -3068,28 +3101,34 @@ class TestCli(unittest.TestCase):
                 Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
             )
             self.assertTrue(evidence_path.is_file())
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence = _read_json_object(evidence_path.read_text(encoding="utf-8"))
             review = evidence.get("review")
             self.assertTrue(isinstance(review, dict))
-            findings = review.get("findings")
+            review_map = cast(dict[str, Any], review)
+            findings = review_map.get("findings")
             self.assertTrue(isinstance(findings, list))
             self.assertTrue(findings)
-            f0 = findings[0]
+            findings_list = cast(list[object], findings)
+            f0 = findings_list[0]
             self.assertTrue(isinstance(f0, dict))
-            self.assertEqual(f0.get("priority"), "P2")
-            self.assertEqual(f0.get("verified"), True)
+            f0_map = cast(dict[str, Any], f0)
+            self.assertEqual(f0_map.get("priority"), "P2")
+            self.assertEqual(f0_map.get("verified"), True)
 
             run_json = Path(td) / ".ai-review" / "run.json"
             self.assertTrue(run_json.is_file())
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             result = payload.get("result")
             self.assertTrue(isinstance(result, dict))
-            artifacts = result.get("artifacts")
+            result_map = cast(dict[str, Any], result)
+            artifacts = result_map.get("artifacts")
             self.assertTrue(isinstance(artifacts, dict))
-            files = artifacts.get("tool_bundle_files")
+            artifacts_map = cast(dict[str, Any], artifacts)
+            files = artifacts_map.get("tool_bundle_files")
             self.assertTrue(isinstance(files, list))
-            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
-            self.assertNotIn(".ai-review/tool-bundle/link.txt", files)
+            files_list = cast(list[object], files)
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files_list)
+            self.assertNotIn(".ai-review/tool-bundle/link.txt", files_list)
 
             warnings_txt = Path(td) / ".ai-review" / "warnings.txt"
             self.assertTrue(warnings_txt.is_file())
@@ -3107,7 +3146,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3118,7 +3157,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3137,12 +3176,14 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             result = payload.get("result")
             self.assertTrue(isinstance(result, dict))
-            artifacts = result.get("artifacts")
+            result_map = cast(dict[str, Any], result)
+            artifacts = result_map.get("artifacts")
             self.assertTrue(isinstance(artifacts, dict))
-            files = artifacts.get("tool_bundle_files")
+            artifacts_map = cast(dict[str, Any], artifacts)
+            files = artifacts_map.get("tool_bundle_files")
             self.assertTrue(isinstance(files, list))
             self.assertEqual(files, [])
 
@@ -3160,7 +3201,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3171,7 +3212,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3192,15 +3233,18 @@ class TestCli(unittest.TestCase):
             evidence_path = (
                 Path(td) / ".ai-review" / "aspects" / "readability.evidence.json"
             )
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence = _read_json_object(evidence_path.read_text(encoding="utf-8"))
             review = evidence.get("review")
             self.assertTrue(isinstance(review, dict))
-            findings = review.get("findings")
+            review_map = cast(dict[str, Any], review)
+            findings = review_map.get("findings")
             self.assertTrue(isinstance(findings, list))
             self.assertTrue(findings)
-            f0 = findings[0]
-            self.assertEqual(f0.get("priority"), "P2")
-            self.assertEqual(f0.get("verified"), True)
+            findings_list = cast(list[object], findings)
+            f0 = findings_list[0]
+            f0_map = cast(dict[str, Any], f0)
+            self.assertEqual(f0_map.get("priority"), "P2")
+            self.assertEqual(f0_map.get("verified"), True)
 
     def test_run_json_records_tool_bundle_files(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -3211,7 +3255,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3222,7 +3266,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3242,14 +3286,17 @@ class TestCli(unittest.TestCase):
 
             run_json = Path(td) / ".ai-review" / "run.json"
             self.assertTrue(run_json.is_file())
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             result = payload.get("result")
             self.assertTrue(isinstance(result, dict))
-            artifacts = result.get("artifacts")
+            result_map = cast(dict[str, Any], result)
+            artifacts = result_map.get("artifacts")
             self.assertTrue(isinstance(artifacts, dict))
-            files = artifacts.get("tool_bundle_files")
+            artifacts_map = cast(dict[str, Any], artifacts)
+            files = artifacts_map.get("tool_bundle_files")
             self.assertTrue(isinstance(files, list))
-            self.assertIn(".ai-review/tool-bundle/bundle.txt", files)
+            files_list = cast(list[object], files)
+            self.assertIn(".ai-review/tool-bundle/bundle.txt", files_list)
 
     def test_tool_bundle_skip_records_warning(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -3260,7 +3307,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3271,7 +3318,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "too-large.txt").write_bytes(b"x" * (100 * 1024 + 1))
+            _ = (tool_dir / "too-large.txt").write_bytes(b"x" * (100 * 1024 + 1))
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -3298,7 +3345,7 @@ class TestCli(unittest.TestCase):
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
             names = [f"b{i:03d}.txt" for i in range(201)]
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3310,7 +3357,7 @@ class TestCli(unittest.TestCase):
                 encoding="utf-8",
             )
             for n in names:
-                (tool_dir / n).write_bytes(b"\xff")
+                _ = (tool_dir / n).write_bytes(b"\xff")
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -3336,7 +3383,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3348,7 +3395,7 @@ class TestCli(unittest.TestCase):
                 encoding="utf-8",
             )
             path_fixture = "PUBLIC_ID_ABC123"
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 f"# SRC: ../../secrets/{path_fixture}\nL1: x\n",
                 encoding="utf-8",
             )
@@ -3390,7 +3437,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue(summary_json.is_file())
             self.assertTrue(summary_md.is_file())
 
-            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("schema_version"), 3)
             self.assertEqual(payload.get("status"), "Approved")
 
@@ -3415,12 +3462,12 @@ class TestCli(unittest.TestCase):
             self.assertTrue(summary_json.is_file())
             self.assertTrue(summary_md.is_file())
 
-            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
 
             state_json = out_dir / "state.json"
             self.assertTrue(state_json.is_file())
-            state_payload = json.loads(state_json.read_text(encoding="utf-8"))
+            state_payload = _read_json_object(state_json.read_text(encoding="utf-8"))
             self.assertEqual(state_payload.get("repo"), "owner/name")
             self.assertEqual(state_payload.get("pr"), 123)
             self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
@@ -3444,7 +3491,7 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             summary_json = out_dir / "review-summary.json"
             self.assertTrue(summary_json.is_file())
-            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
 
     def test_questions_create_rerun_artifacts(self) -> None:
@@ -3477,7 +3524,7 @@ class TestCli(unittest.TestCase):
             plan_files = sorted(rerun_dir.glob("*/plan.json"))
             self.assertEqual(len(plan_files), 1)
 
-            plan = json.loads(plan_files[0].read_text(encoding="utf-8"))
+            plan = _read_json_object(plan_files[0].read_text(encoding="utf-8"))
             self.assertEqual(plan.get("question_aspects"), ["correctness"])
             self.assertIn(
                 "--hybrid-aspect correctness",
@@ -3530,7 +3577,7 @@ class TestCli(unittest.TestCase):
             summary_json = out_dir / "review-summary.json"
             self.assertTrue(summary_json.is_file())
 
-            payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "Blocked")
             explanation = (payload.get("overall_explanation") or "").lower()
             self.assertTrue(
@@ -3594,7 +3641,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue(summary_md.is_file())
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "head_ref_oid_sequence": [
@@ -3682,7 +3729,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p2.returncode, 0, msg=(p2.stdout + "\n" + p2.stderr))
 
             state_path = Path(td) / "fake-gh-state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             body = comments[0].get("body", "")
@@ -3698,7 +3745,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -3723,7 +3770,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 2)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[1].get("body", ""))
@@ -3737,7 +3784,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -3766,7 +3813,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 2)
@@ -3780,7 +3827,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3799,7 +3846,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
@@ -3813,7 +3860,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3836,12 +3883,12 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 0)
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
             self.assertIn(
                 "PR head changed before summary posting",
@@ -3859,7 +3906,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3883,12 +3930,12 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 0)
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
             message = payload.get("error", {}).get("message", "")
             # test_post_summary_fails_when_head_moves_during_post:
@@ -3923,7 +3970,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3946,7 +3993,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue((out_dir / "review-summary.json").exists())
             self.assertTrue((out_dir / "review-summary.md").exists())
             self.assertTrue((out_dir / "cache.json").exists())
-            state_payload = json.loads(
+            state_payload = _read_json_object(
                 (out_dir / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
@@ -3962,7 +4009,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_exec_failure(failing_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3981,7 +4028,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
 
-            state_payload = json.loads(
+            state_payload = _read_json_object(
                 (Path(td) / ".ai-review" / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(state_payload.get("head_sha"), "0123456789abcdef")
@@ -3995,7 +4042,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4025,7 +4072,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 1)
@@ -4039,7 +4086,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4074,7 +4121,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 1)
@@ -4090,7 +4137,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4121,7 +4168,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
@@ -4137,7 +4184,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4168,7 +4215,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0].get("id"), 2)
@@ -4184,7 +4231,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4217,7 +4264,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
             self.assertIn("<!-- killer-7:summary:v1 -->", comments[0].get("body", ""))
@@ -4231,7 +4278,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4256,7 +4303,7 @@ class TestCli(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 2)
             self.assertEqual(comments[0].get("id"), 1)
@@ -4281,7 +4328,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
             state_path = Path(td) / "fake-gh-state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
 
@@ -4301,7 +4348,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 1, msg=(p.stdout + "\n" + p.stderr))
 
             state_path = Path(td) / "fake-gh-state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
 
@@ -4320,7 +4367,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -4357,7 +4404,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("incremental-line", diff_patch)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             review_comments = state.get("review_comments", [])
             self.assertEqual(len(review_comments), 0)
 
@@ -4388,7 +4435,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
             state_path = Path(td) / "fake-gh-state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 1)
 
@@ -4397,7 +4444,7 @@ class TestCli(unittest.TestCase):
 
             summary_path = Path(td) / ".ai-review" / "review-summary.json"
             self.assertTrue(summary_path.is_file())
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary = _read_json_object(summary_path.read_text(encoding="utf-8"))
             findings = summary.get("findings", [])
             self.assertTrue(isinstance(findings, list) and findings)
             first = findings[0] if isinstance(findings[0], dict) else {}
@@ -4413,7 +4460,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_blocked(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4437,7 +4484,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
 
             run_json = Path(td) / ".ai-review" / "run.json"
-            payload = json.loads(run_json.read_text(encoding="utf-8"))
+            payload = _read_json_object(run_json.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("status"), "exec_failure")
             self.assertIn(
                 "PR head changed before summary posting",
@@ -4448,7 +4495,7 @@ class TestCli(unittest.TestCase):
             self.assertFalse((out_dir / "review-summary.json").exists())
             self.assertFalse((out_dir / "review-summary.md").exists())
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 0)
 
@@ -4480,11 +4527,13 @@ class TestCli(unittest.TestCase):
             sarif_path = out_dir / "review-summary.sarif.json"
             self.assertTrue(sarif_path.is_file())
 
-            sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
+            sarif = _read_json_object(sarif_path.read_text(encoding="utf-8"))
             self.assertEqual(sarif.get("version"), "2.1.0")
             runs = sarif.get("runs")
             self.assertTrue(isinstance(runs, list) and len(runs) == 1)
-            results = runs[0].get("results", []) if isinstance(runs[0], dict) else []
+            runs_list = cast(list[object], runs)
+            run0 = runs_list[0]
+            results = run0.get("results", []) if isinstance(run0, dict) else []
             self.assertTrue(isinstance(results, list) and len(results) >= 1)
 
     def test_sarif_truncation_risk_writes_warning_line(self) -> None:
@@ -4527,7 +4576,7 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
             stale = out_dir / "review-summary.sarif.json"
-            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            _ = stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
             self.assertTrue(stale.exists())
 
             p = run_cli(
@@ -4559,7 +4608,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_sarif_hard_limit_exceeded(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4588,7 +4637,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 2, msg=(p.stdout + "\n" + p.stderr))
             self.assertIn("SARIF export failed:", p.stderr)
 
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state = _read_json_object(state_path.read_text(encoding="utf-8"))
             comments = state.get("comments", [])
             self.assertEqual(len(comments), 0)
 
@@ -4600,7 +4649,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4645,7 +4694,7 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
             stale = out_dir / "review-summary.sarif.json"
-            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            _ = stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
             self.assertTrue(stale.exists())
 
             p = run_cli(
@@ -4707,7 +4756,7 @@ class TestCli(unittest.TestCase):
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4757,7 +4806,7 @@ class TestCli(unittest.TestCase):
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4803,12 +4852,12 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}", encoding="utf-8")
             stale_dir = out_dir / "review-summary.md"
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4874,7 +4923,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p.returncode, 0, msg=(p.stdout + "\n" + p.stderr))
 
             self.assertTrue(capture.is_file())
-            cap_payload = json.loads(capture.read_text(encoding="utf-8"))
+            cap_payload = _read_json_object(capture.read_text(encoding="utf-8"))
             argv = cap_payload.get("argv", [])
             self.assertIn("-f=sarif", argv)
             self.assertIn("-reporter=github-pr-annotations", argv)
@@ -4960,7 +5009,7 @@ class TestCli(unittest.TestCase):
             capture = Path(td) / "reviewdog-capture.json"
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -5011,7 +5060,7 @@ class TestCli(unittest.TestCase):
             capture = Path(td) / "reviewdog-capture.json"
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
