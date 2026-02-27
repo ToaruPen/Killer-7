@@ -14,7 +14,7 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, NoReturn
+from typing import Callable, NoReturn, cast
 
 from .artifacts import (
     atomic_write_json_secure,
@@ -76,8 +76,8 @@ def _strip_machine_fields_from_findings(
     out: list[dict[str, object]] = []
     for f in findings:
         item = dict(f)
-        item.pop("verified", None)
-        item.pop("original_priority", None)
+        _ = item.pop("verified", None)
+        _ = item.pop("original_priority", None)
         out.append(item)
     return out
 
@@ -115,6 +115,105 @@ def _normalize_tool_bundle_src_path(path: str) -> str:
 class ParserExit(Exception):
     code: int
     message: str = ""
+
+
+JsonMap = dict[str, object]
+
+
+@dataclass(frozen=True)
+class ReviewCommandArgs:
+    repo: str
+    pr: int
+    preset: str
+    aspects: tuple[str, ...]
+    no_sot_aspects: tuple[str, ...]
+    full: bool
+    post: bool
+    inline: bool
+    sarif: bool
+    reviewdog: bool
+    reviewdog_reporter: str
+    hybrid_aspects: tuple[str, ...]
+    hybrid_allowlist: tuple[str, ...]
+    reuse: bool
+    no_reuse: bool
+    explore: bool
+
+
+def _read_ns_str(args: argparse.Namespace, name: str) -> str:
+    value = getattr(args, name, "")
+    if not isinstance(value, str):
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} must be string")
+    return value
+
+
+def _read_ns_int(args: argparse.Namespace, name: str) -> int:
+    value = getattr(args, name, 0)
+    if not isinstance(value, int) or isinstance(value, bool):
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} must be integer")
+    return value
+
+
+def _read_ns_bool(args: argparse.Namespace, name: str) -> bool:
+    value = getattr(args, name, False)
+    if not isinstance(value, bool):
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} must be boolean")
+    return value
+
+
+def _read_ns_str_list(args: argparse.Namespace, name: str) -> tuple[str, ...]:
+    raw = getattr(args, name, ())
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        _raise_invalid_review_args(f"--{name.replace('_', '-')} must be a list")
+    raw_list = cast(list[object], raw)
+    out: list[str] = []
+    for item in raw_list:
+        if not isinstance(item, str):
+            _raise_invalid_review_args(
+                f"--{name.replace('_', '-')} item must be string"
+            )
+        out.append(item)
+    return tuple(out)
+
+
+def _read_json_mapping(path: str) -> JsonMap:
+    with open(path, "r", encoding="utf-8") as fh:
+        loaded_obj: object = json.load(fh)
+    if not isinstance(loaded_obj, dict):
+        raise ExecFailureError(f"Invalid JSON object: {path!r} root must be object")
+    return cast(JsonMap, loaded_obj)
+
+
+def _parse_review_args(args: argparse.Namespace) -> ReviewCommandArgs:
+    preset_obj = getattr(args, "preset", None)
+    if preset_obj is None:
+        preset = ""
+    elif isinstance(preset_obj, str):
+        preset = preset_obj.strip()
+    else:
+        _raise_invalid_review_args("--preset must be string")
+
+    return ReviewCommandArgs(
+        repo=_read_ns_str(args, "repo"),
+        pr=_read_ns_int(args, "pr"),
+        preset=preset,
+        aspects=_read_ns_str_list(args, "aspect"),
+        no_sot_aspects=_read_ns_str_list(args, "no_sot_aspect"),
+        full=_read_ns_bool(args, "full"),
+        post=_read_ns_bool(args, "post"),
+        inline=_read_ns_bool(args, "inline"),
+        sarif=_read_ns_bool(args, "sarif"),
+        reviewdog=_read_ns_bool(args, "reviewdog"),
+        reviewdog_reporter=_read_ns_str(args, "reviewdog_reporter")
+        or "github-pr-review",
+        hybrid_aspects=_read_ns_str_list(args, "hybrid_aspect"),
+        hybrid_allowlist=_read_ns_str_list(args, "hybrid_allowlist"),
+        reuse=_read_ns_bool(args, "reuse"),
+        no_reuse=_read_ns_bool(args, "no_reuse"),
+        explore=_read_ns_bool(args, "explore"),
+    )
 
 
 class ThrowingArgumentParser(argparse.ArgumentParser):
@@ -216,8 +315,7 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
     if path is None:
         return (None, dict(BUILTIN_PRESETS))
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            raw = json.load(fh)
+        raw = _read_json_mapping(path)
     except FileNotFoundError:
         return (None, dict(BUILTIN_PRESETS))
     except OSError as exc:
@@ -226,9 +324,6 @@ def _load_user_presets_config() -> tuple[str | None, dict[str, tuple[str, ...]]]
         ) from exc
     except json.JSONDecodeError as exc:
         raise ExecFailureError(f"Invalid config JSON: {path!r}: {exc.msg}") from exc
-
-    if not isinstance(raw, dict):
-        raise ExecFailureError(f"Invalid config schema: {path!r} root must be object")
 
     schema_version = raw.get("schema_version")
     if schema_version != 1:
@@ -371,11 +466,13 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=examples,
     )
-    review.add_argument("--repo", required=True, type=parse_repo, help="<owner/name>")
-    review.add_argument("--pr", required=True, type=parse_pr, help="PR number")
+    _ = review.add_argument(
+        "--repo", required=True, type=parse_repo, help="<owner/name>"
+    )
+    _ = review.add_argument("--pr", required=True, type=parse_pr, help="PR number")
 
     aspect_sel = review.add_mutually_exclusive_group()
-    aspect_sel.add_argument(
+    _ = aspect_sel.add_argument(
         "--aspect",
         action="append",
         default=[],
@@ -386,7 +483,7 @@ Examples:
             f"Valid: {', '.join(ASPECTS_V1)}"
         ),
     )
-    aspect_sel.add_argument(
+    _ = aspect_sel.add_argument(
         "--preset",
         default=None,
         type=parse_preset_name,
@@ -397,23 +494,23 @@ Examples:
         ),
     )
 
-    review.add_argument(
+    _ = review.add_argument(
         "--full",
         action="store_true",
         help="Disable incremental diff and force full PR diff review",
     )
     reuse_sel = review.add_mutually_exclusive_group()
-    reuse_sel.add_argument(
+    _ = reuse_sel.add_argument(
         "--reuse",
         action="store_true",
         help="Reuse existing aspect artifacts when cache key matches",
     )
-    reuse_sel.add_argument(
+    _ = reuse_sel.add_argument(
         "--no-reuse",
         action="store_true",
         help="Explicitly disable artifact reuse",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--no-sot-aspect",
         action="append",
         default=[],
@@ -425,32 +522,32 @@ Examples:
         ),
     )
 
-    review.add_argument(
+    _ = review.add_argument(
         "--post",
         action="store_true",
         help="Post/update the summary comment on the PR",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--inline",
         action="store_true",
         help="Post/update inline review comments for P0/P1 findings",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--sarif",
         action="store_true",
         help="Export review-summary as SARIF 2.1.0 JSON artifact",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--reviewdog",
         action="store_true",
         help="Run reviewdog on generated SARIF artifact (optional)",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--reviewdog-reporter",
         default="github-pr-review",
         help="reviewdog reporter (for example: github-pr-review, github-pr-annotations)",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--hybrid-aspect",
         action="append",
         default=[],
@@ -460,14 +557,14 @@ Examples:
             "Requires --hybrid-allowlist."
         ),
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--hybrid-allowlist",
         action="append",
         default=[],
         metavar="GLOB",
         help="Repo read-only allowlist path glob (repeatable)",
     )
-    review.add_argument(
+    _ = review.add_argument(
         "--explore",
         action="store_true",
         help="Enable OpenCode explore mode (tool trace + policy gating)",
@@ -483,12 +580,12 @@ def ensure_artifacts_dir(base_dir: str) -> str:
     return out_dir
 
 
-def write_run_json(out_dir: str, payload: dict[str, Any]) -> None:
+def write_run_json(out_dir: str, payload: JsonMap) -> None:
     path = os.path.join(out_dir, "run.json")
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        fh.write("\n")
+        _ = fh.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        _ = fh.write("\n")
     os.replace(tmp, path)
 
 
@@ -500,35 +597,27 @@ def _cache_json_path(out_dir: str) -> str:
     return os.path.join(out_dir, "cache.json")
 
 
-def _load_state_json(out_dir: str) -> dict[str, Any]:
+def _load_state_json(out_dir: str) -> JsonMap:
     path = _state_json_path(out_dir)
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
+        return _read_json_mapping(path)
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, ExecFailureError):
         return {}
-    if not isinstance(payload, dict):
-        return {}
-    return payload
 
 
-def _load_cache_json(out_dir: str) -> dict[str, Any]:
+def _load_cache_json(out_dir: str) -> JsonMap:
     path = _cache_json_path(out_dir)
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
+        return _read_json_mapping(path)
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, ExecFailureError):
         return {}
-    if not isinstance(payload, dict):
-        return {}
-    return payload
 
 
-def _write_cache_json(out_dir: str, payload: dict[str, Any]) -> str:
+def _write_cache_json(out_dir: str, payload: JsonMap) -> str:
     path = _cache_json_path(out_dir)
     atomic_write_json_secure(path, payload)
     return path
@@ -841,17 +930,18 @@ def _should_clear_stale_summary_on_post_failure(exc: ExecFailureError) -> bool:
     )
 
 
-def _raise_invalid_review_args(message: str) -> None:
+def _raise_invalid_review_args(message: str) -> NoReturn:
     full = f"killer-7 review: error: {message}\n"
-    sys.stderr.write(full)
+    _ = sys.stderr.write(full)
     raise ParserExit(2, full)
 
 
-def handle_review(args: argparse.Namespace) -> dict[str, Any]:
+def handle_review(args: argparse.Namespace) -> JsonMap:
+    review_args = _parse_review_args(args)
     selected_aspects: tuple[str, ...] = ASPECTS_V1
     default_preset, merged_presets = _load_user_presets_config()
-    preset = (args.preset or "").strip() if hasattr(args, "preset") else ""
-    raw_aspects = list(args.aspect or []) if hasattr(args, "aspect") else []
+    preset = review_args.preset
+    raw_aspects = list(review_args.aspects)
     if raw_aspects:
         seen: set[str] = set()
         for a in raw_aspects:
@@ -864,9 +954,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     elif default_preset:
         selected_aspects = resolve_preset_with(default_preset, presets=merged_presets)
 
-    requested_no_sot = (
-        tuple(args.no_sot_aspect or []) if hasattr(args, "no_sot_aspect") else ()
-    )
+    requested_no_sot = review_args.no_sot_aspects
     no_sot_aspects = set(DEFAULT_NO_SOT_ASPECTS)
     no_sot_aspects.update(requested_no_sot)
     no_sot_aspects.intersection_update(set(selected_aspects))
@@ -890,7 +978,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     else:
         prev_no_sot_aspects_list = None
 
-    incremental_requested = not bool(getattr(args, "full", False))
+    incremental_requested = not review_args.full
     incremental_applied = False
     incremental_reason = ""
     incremental_base_head_sha = ""
@@ -915,7 +1003,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         or not prev_head_for_incremental.strip()
     ):
         incremental_reason = "missing_previous_head"
-    elif prev_repo != args.repo or prev_pr != args.pr:
+    elif prev_repo != review_args.repo or prev_pr != review_args.pr:
         incremental_reason = "previous_scope_mismatch"
     elif not isinstance(prev_selected_aspects, list) or not prev_selected_aspects:
         incremental_reason = "missing_previous_selected_aspects"
@@ -939,8 +1027,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         if incremental_applied:
             try:
                 pr_input = fetch_pr_input(
-                    repo=args.repo,
-                    pr=args.pr,
+                    repo=review_args.repo,
+                    pr=review_args.pr,
                     base_head_sha=incremental_base_head_sha,
                 )
             except ExecFailureError as exc:
@@ -949,9 +1037,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     raise
                 incremental_applied = False
                 incremental_reason = f"incremental_fallback_full: {exc}"
-                pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+                pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)
         else:
-            pr_input = fetch_pr_input(repo=args.repo, pr=args.pr)
+            pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)
 
         if pr_input.diff_mode != "incremental":
             incremental_applied = False
@@ -973,7 +1061,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         sot_paths = fetcher.resolve_allowlist_paths(
-            repo=args.repo, ref=pr_input.head_sha, allowlist=allowlist
+            repo=review_args.repo, ref=pr_input.head_sha, allowlist=allowlist
         )
     except ExecFailureError as exc:
         # Allow the overall command to succeed even if SoT collection fails.
@@ -992,7 +1080,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     contents_by_path: dict[str, str] = {}
     try:
         fetched = fetcher.fetch_text_files(
-            repo=args.repo, ref=pr_input.head_sha, paths=sot_paths
+            repo=review_args.repo, ref=pr_input.head_sha, paths=sot_paths
         )
         contents_by_path = dict(fetched.contents_by_path)
         content_warning_objs.extend(list(fetched.warnings))
@@ -1354,29 +1442,27 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
     # Keep scope_id deterministic and tied to the PR input.
-    scope_id = f"{args.repo}#pr-{args.pr}@{pr_input.head_sha[:12]}"
+    scope_id = f"{review_args.repo}#pr-{review_args.pr}@{pr_input.head_sha[:12]}"
     try:
         hybrid_policy = build_hybrid_policy(
-            hybrid_aspects=list(args.hybrid_aspect or []),
-            hybrid_allowlist=list(args.hybrid_allowlist or []),
+            hybrid_aspects=list(review_args.hybrid_aspects),
+            hybrid_allowlist=list(review_args.hybrid_allowlist),
         )
     except ExecFailureError:
         clear_stale_review_summary(out_dir)
         raise
 
-    reuse_requested = bool(getattr(args, "reuse", False)) and not bool(
-        getattr(args, "no_reuse", False)
-    )
+    reuse_requested = review_args.reuse and not review_args.no_reuse
     try:
         reuse_key_material = _build_reuse_key_material(
-            repo=args.repo,
-            pr=args.pr,
+            repo=review_args.repo,
+            pr=review_args.pr,
             head_sha=pr_input.head_sha,
             scope_id=scope_id,
             context_bundle_txt=context_bundle_txt,
             sot_md=sot_md,
             diff_mode=pr_input.diff_mode,
-            explore_enabled=bool(getattr(args, "explore", False)),
+            explore_enabled=review_args.explore,
             hybrid_allowed_aspects=hybrid_policy.allowed_aspects,
             hybrid_allowlist_paths=hybrid_policy.allowlist_paths,
             selected_aspects=selected_aspects,
@@ -1400,13 +1486,13 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     def runner_env_for_aspect(aspect: str) -> dict[str, str]:
         base_env = hybrid_policy.decision_for(aspect=aspect).runner_env()
-        if not args.explore:
+        if not review_args.explore:
             return base_env
         out = dict(base_env)
         out["KILLER7_EXPLORE"] = "1"
         return out
 
-    if args.explore and not reuse_hit:
+    if review_args.explore and not reuse_hit:
         for aspect in selected_aspects:
             aspect_dir = opencode_artifacts_dir(out_dir, aspect)
             for name in ("tool-trace.jsonl", "tool-bundle.txt", "stdout.jsonl"):
@@ -1458,7 +1544,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     tool_trace_txt = ""
     tool_bundle_txt = ""
-    if args.explore:
+    if review_args.explore:
 
         def _join_capped(chunks: list[str], *, max_bytes: int) -> str:
             if max_bytes < 1:
@@ -1922,9 +2008,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             out_dir, format_review_summary_md(summary_payload)
         )
 
-        should_emit_sarif = bool(getattr(args, "sarif", False)) or bool(
-            getattr(args, "reviewdog", False)
-        )
+        should_emit_sarif = review_args.sarif or review_args.reviewdog
         if should_emit_sarif:
             findings_obj = summary_payload.get("findings")
             if not isinstance(findings_obj, list):
@@ -1961,12 +2045,15 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     deferred_exc = ExecFailureError(f"SARIF export failed: {exc}")
 
-            should_validate_head_for_sarif_only = not bool(
-                args.post or args.inline
-            ) and not bool(getattr(args, "reviewdog", False))
+            should_validate_head_for_sarif_only = (
+                not bool(review_args.post or review_args.inline)
+                and not review_args.reviewdog
+            )
             if should_validate_head_for_sarif_only:
                 gh_client = GhClient.from_env()
-                current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                current_head_sha = gh_client.pr_head_ref_oid(
+                    repo=review_args.repo, pr=review_args.pr
+                )
                 if current_head_sha != pr_input.head_sha:
                     summary_json_path, summary_md_path, sarif_json_path = (
                         _clear_stale_review_summary_and_reset_paths(out_dir)
@@ -2006,8 +2093,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
         if rerun_aspects:
             rerun = write_questions_rerun_artifacts(
                 out_dir=out_dir,
-                repo=args.repo,
-                pr=args.pr,
+                repo=review_args.repo,
+                pr=review_args.pr,
                 head_sha=pr_input.head_sha,
                 question_aspects=rerun_aspects,
                 hybrid_allowlist=list(hybrid_policy.allowlist_paths),
@@ -2019,12 +2106,14 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
             )
 
-    should_post_summary = bool(args.post or args.inline)
+    should_post_summary = bool(review_args.post or review_args.inline)
     can_post_summary = deferred_exc is None or isinstance(deferred_exc, BlockedError)
     if should_post_summary and can_post_summary and summary_payload is not None:
         gh_client = GhClient.from_env()
         try:
-            current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+            current_head_sha = gh_client.pr_head_ref_oid(
+                repo=review_args.repo, pr=review_args.pr
+            )
             if current_head_sha != pr_input.head_sha:
                 summary_json_path, summary_md_path, sarif_json_path = (
                     _clear_stale_review_summary_and_reset_paths(out_dir)
@@ -2039,13 +2128,15 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 )
             else:
                 post_result = post_summary_comment(
-                    repo=args.repo,
-                    pr=args.pr,
+                    repo=review_args.repo,
+                    pr=review_args.pr,
                     head_sha=pr_input.head_sha,
                     expected_head_sha=pr_input.head_sha,
                     summary=summary_payload,
                 )
-                latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                latest_head_sha = gh_client.pr_head_ref_oid(
+                    repo=review_args.repo, pr=review_args.pr
+                )
                 if latest_head_sha != pr_input.head_sha:
                     summary_json_path, summary_md_path, sarif_json_path = (
                         _clear_stale_review_summary_and_reset_paths(out_dir)
@@ -2059,17 +2150,17 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                         "PR head changed during summary posting; rerun review on latest head"
                     )
 
-                if args.inline and (
+                if review_args.inline and (
                     deferred_exc is None or isinstance(deferred_exc, BlockedError)
                 ):
                     inline_diff_patch = pr_input.diff_patch
                     if pr_input.diff_mode == "incremental":
                         inline_diff_patch = gh_client.pr_diff_patch(
-                            repo=args.repo, pr=args.pr
+                            repo=review_args.repo, pr=review_args.pr
                         )
                     inline_result = post_inline_comments(
-                        repo=args.repo,
-                        pr=args.pr,
+                        repo=review_args.repo,
+                        pr=review_args.pr,
                         head_sha=pr_input.head_sha,
                         expected_head_sha=pr_input.head_sha,
                         review_summary=summary_payload,
@@ -2087,7 +2178,7 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
                 )
             deferred_exc = exc
 
-    should_run_reviewdog = bool(getattr(args, "reviewdog", False))
+    should_run_reviewdog = review_args.reviewdog
     if (
         should_run_reviewdog
         and summary_payload is not None
@@ -2099,7 +2190,9 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     ):
         gh_client = GhClient.from_env()
         try:
-            current_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+            current_head_sha = gh_client.pr_head_ref_oid(
+                repo=review_args.repo, pr=review_args.pr
+            )
             if current_head_sha != pr_input.head_sha:
                 summary_json_path, summary_md_path, sarif_json_path = (
                     _clear_stale_review_summary_and_reset_paths(out_dir)
@@ -2110,11 +2203,11 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 reviewdog_result = run_reviewdog_from_sarif(
                     sarif_path=sarif_json_path,
-                    reporter=str(
-                        getattr(args, "reviewdog_reporter", "github-pr-review")
-                    ),
+                    reporter=review_args.reviewdog_reporter,
                 )
-                latest_head_sha = gh_client.pr_head_ref_oid(repo=args.repo, pr=args.pr)
+                latest_head_sha = gh_client.pr_head_ref_oid(
+                    repo=review_args.repo, pr=review_args.pr
+                )
                 if latest_head_sha != pr_input.head_sha:
                     summary_json_path, summary_md_path, sarif_json_path = (
                         _clear_stale_review_summary_and_reset_paths(out_dir)
@@ -2136,8 +2229,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
     if deferred_exc is not None:
         if (
             isinstance(prev_head_for_incremental, str)
-            and prev_repo == args.repo
-            and prev_pr == args.pr
+            and prev_repo == review_args.repo
+            and prev_pr == review_args.pr
         ):
             next_incremental_base = prev_head_for_incremental.strip()
         else:
@@ -2145,8 +2238,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     state_json_path = _write_state_json(
         out_dir,
-        repo=args.repo,
-        pr=args.pr,
+        repo=review_args.repo,
+        pr=review_args.pr,
         head_sha=pr_input.head_sha,
         incremental_base_head_sha=next_incremental_base,
         selected_aspects=selected_aspects,
@@ -2179,8 +2272,8 @@ def handle_review(args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         "action": "review",
-        "repo": args.repo,
-        "pr": args.pr,
+        "repo": review_args.repo,
+        "pr": review_args.pr,
         "head_sha": pr_input.head_sha,
         "scope_id": scope_id,
         "selected_aspects": list(selected_aspects),
@@ -2256,8 +2349,8 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     exit_code: int = int(ExitCode.EXEC_FAILURE)
     status = "unknown"
-    result: dict[str, Any] = {}
-    error: dict[str, Any] | None = None
+    result: JsonMap = {}
+    error: JsonMap | None = None
 
     try:
         parser = build_parser()
@@ -2273,9 +2366,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         ):
             parser.error("--reviewdog-reporter requires --reviewdog")
         handler = getattr(args, "_handler", None)
-        if handler is None:
+        if not callable(handler):
             raise BlockedError("No handler configured for this command")
-        result = handler(args)
+        typed_handler = cast(Callable[[argparse.Namespace], JsonMap], handler)
+        result = typed_handler(args)
         status = "ok"
         exit_code = int(ExitCode.SUCCESS)
     except ParserExit as exc:
@@ -2303,7 +2397,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         ended_at = now_utc_z()
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        payload: dict[str, Any] = {
+        payload: JsonMap = {
             "schema_version": 1,
             "started_at": started_at,
             "ended_at": ended_at,

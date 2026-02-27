@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import unittest
-from typing import Mapping, cast
+from collections.abc import Mapping
+from typing import cast
 
 
 class TestSarifExport(unittest.TestCase):
@@ -40,7 +41,7 @@ class TestSarifExport(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "expected mapping at root"):
             invalid_summary = cast(object, None)
-            review_summary_to_sarif(cast("Mapping[str, object]", invalid_summary))
+            _ = review_summary_to_sarif(cast("Mapping[str, object]", invalid_summary))
 
     def test_line_range_without_end_defaults_endline_to_start(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -245,7 +246,7 @@ class TestSarifExport(unittest.TestCase):
 
         finding = self._build_finding()
         code_location = cast(dict[str, object], finding["code_location"])
-        code_location.pop("line_range", None)
+        _ = code_location.pop("line_range", None)
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing line_range"):
@@ -256,7 +257,7 @@ class TestSarifExport(unittest.TestCase):
 
         finding = self._build_finding()
         code_location = cast(dict[str, object], finding["code_location"])
-        code_location.pop("repo_relative_path", None)
+        _ = code_location.pop("repo_relative_path", None)
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing repo_relative_path"):

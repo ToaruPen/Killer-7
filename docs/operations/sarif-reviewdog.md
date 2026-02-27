@@ -69,6 +69,11 @@ killer-7 review --repo owner/name --pr 123 --sarif --reviewdog --reviewdog-repor
 - stale head を検知した場合は fail-fast で終了し、成果物をクリアして再実行を要求する
 - `--sarif` / `--reviewdog` を使わない実行では、古い `review-summary.sarif.json` は自動削除される
 
+### basedpyright 段階導入
+
+- `pyproject.toml` の `[tool.basedpyright]` で `reportAny` / `reportExplicitAny` / `reportUnusedCallResult` を warning として明示する
+- SARIF/inline 経路（Issue #62）の警告是正を先行し、残件は段階的に対象を拡大して収束させる
+
 ## GitHub Code Scanning 制限事項（PoC #56 実測結果）
 
 Issue #56 の PoC（2026-02-25 実施）で実測した GitHub Code Scanning の制限値。
