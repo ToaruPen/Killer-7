@@ -380,6 +380,29 @@ class TestSarifExport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
             review_summary_to_sarif(summary)
 
+    def test_findings_item_not_mapping_fails_fast(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = self._build_summary(findings=["not-a-mapping"])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"expected mapping item .*finding_index=0.*item_type=str",
+        ):
+            review_summary_to_sarif(summary)
+
+    def test_summary_with_non_string_root_keys_is_processed(self) -> None:
+        from killer_7.report.sarif_export import review_summary_to_sarif
+
+        summary = self._build_summary()
+        mixed_summary: dict[object, object] = {1: "ignored"}
+        mixed_summary.update(summary)
+
+        sarif = review_summary_to_sarif(cast(object, mixed_summary))
+        self.assertEqual(sarif.get("version"), "2.1.0")
+        runs = cast(list[object], sarif.get("runs", []))
+        self.assertTrue(len(runs) == 1)
+
     def test_findings_over_hard_limit_fail_fast(self) -> None:
         from killer_7.report.sarif_export import (
             SARIF_RESULTS_HARD_LIMIT,

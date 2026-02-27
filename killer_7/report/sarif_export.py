@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
+from ..coerce import (
+    coerce_object_list as _coerce_object_list,
+)
+from ..coerce import (
+    coerce_str_object_dict as _coerce_str_object_dict,
+)
 from .fingerprint import finding_fingerprint
 
 _PRIORITY_TO_LEVEL = {
@@ -19,16 +26,6 @@ SARIF_RESULTS_DISPLAY_LIMIT = 5000
 SARIF_RESULTS_HARD_LIMIT = 25000
 
 
-def _coerce_str_object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {}
-    out: dict[str, object] = {}
-    for key_obj, mapped_value in value.items():
-        if isinstance(key_obj, str):
-            out[key_obj] = mapped_value
-    return out
-
-
 def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
     if isinstance(value, str):
         s = value.strip()
@@ -38,11 +35,10 @@ def _as_non_empty_str(value: object, *, fallback: str = "") -> str:
 
 
 def _as_sources(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
+    source_list = _coerce_object_list(value)
     out: list[str] = []
     seen: set[str] = set()
-    for item in value:
+    for item in source_list:
         s = _as_non_empty_str(item)
         if not s or s in seen:
             continue
@@ -91,59 +87,72 @@ def sarif_results_warning_line(*, findings_count: int) -> str | None:
     )
 
 
-def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
+def review_summary_to_sarif(summary: object) -> dict[str, object]:
     if not isinstance(summary, Mapping):
         raise ValueError(
             "Invalid review summary: expected mapping at root "
-            f"(summary_type={type(summary).__name__})"
+            + f"(summary_type={type(summary).__name__})"
         )
-    scope_id = _as_non_empty_str(summary.get("scope_id"))
+    summary_obj = cast(object, summary)
+    summary_dict = _coerce_str_object_dict(summary_obj)
+    scope_id = _as_non_empty_str(summary_dict.get("scope_id"))
     if not scope_id:
-        summary_keys = sorted(str(k) for k in summary.keys())
+        summary_keys = sorted(str(k) for k in summary_dict.keys())
         raise ValueError(
             "Invalid review summary: missing required scope_id "
-            f"(summary_type={type(summary).__name__}, summary_keys={summary_keys})"
+            + f"(summary_type={type(summary_obj).__name__}, summary_keys={summary_keys})"
         )
-    raw_findings = summary.get("findings")
+    raw_findings = summary_dict.get("findings")
     if not isinstance(raw_findings, list):
         raise ValueError(
             "Invalid review summary: raw_findings must be a list to construct findings "
-            f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
+            + f"(scope_id={scope_id}, raw_findings_type={type(raw_findings).__name__})"
         )
-    findings = raw_findings
+    findings = _coerce_object_list(cast(object, raw_findings))
     findings_count = len(findings)
     if findings_count > SARIF_RESULTS_HARD_LIMIT:
         raise ValueError(
             "Invalid review summary: findings exceed SARIF hard limit "
-            f"({findings_count} > {SARIF_RESULTS_HARD_LIMIT}). "
-            "Split results into multiple runs or reduce findings before SARIF export."
+            + f"({findings_count} > {SARIF_RESULTS_HARD_LIMIT}). "
+            + "Split results into multiple runs or reduce findings before SARIF export."
         )
 
     results: list[dict[str, object]] = []
     priorities: set[str] = set()
 
-    for item in findings:
-        finding = _coerce_str_object_dict(item)
+    for finding_index, item in enumerate(findings):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                "Invalid finding: expected mapping item "
+                + f"(scope_id={scope_id}, finding_index={finding_index}, item_type={type(item).__name__}, item={item!r})"
+            )
+        finding = _coerce_str_object_dict(cast(object, item))
+        finding_context = _finding_context(scope_id, finding)
+        indexed_context = f"finding_index={finding_index}, {finding_context}"
         priority = _as_non_empty_str(finding.get("priority"))
         if not priority:
             raise ValueError(
-                f"Invalid finding priority: missing required priority ({_finding_context(scope_id, finding)})"
+                f"Invalid finding priority: missing required priority ({indexed_context})"
             )
         if priority not in _PRIORITY_TO_LEVEL:
             raise ValueError(
-                f"Invalid finding priority: unsupported value {priority!r} ({_finding_context(scope_id, finding)})"
+                f"Invalid finding priority: unsupported value {priority!r} ({indexed_context})"
             )
         priorities.add(priority)
 
         code_location = _coerce_str_object_dict(finding.get("code_location"))
         if not code_location:
-            raise ValueError("Invalid finding: missing code_location")
+            raise ValueError(
+                f"Invalid finding: missing code_location ({indexed_context})"
+            )
         line_range = _coerce_str_object_dict(code_location.get("line_range"))
         if not line_range:
-            raise ValueError("Invalid finding: missing line_range")
+            raise ValueError(f"Invalid finding: missing line_range ({indexed_context})")
         path = _as_non_empty_str(code_location.get("repo_relative_path"))
         if not path:
-            raise ValueError("Invalid finding: missing repo_relative_path")
+            raise ValueError(
+                f"Invalid finding: missing repo_relative_path ({indexed_context})"
+            )
 
         start_raw = line_range.get("start")
         if (
@@ -151,21 +160,23 @@ def review_summary_to_sarif(summary: Mapping[str, object]) -> dict[str, object]:
             or not isinstance(start_raw, int)
             or start_raw < 1
         ):
-            raise ValueError("Invalid finding: line_range.start must be int >= 1")
+            raise ValueError(
+                f"Invalid finding: line_range.start must be int >= 1 ({indexed_context})"
+            )
         start = start_raw
 
         # line_range.end is optional; when omitted, it defaults to start.
         # This lets single-line ranges omit `end` while preserving explicit spans.
         end_raw = line_range.get("end", start)
         if isinstance(end_raw, bool) or not isinstance(end_raw, int) or end_raw < start:
-            raise ValueError("Invalid finding: line_range.end must be int >= start")
+            raise ValueError(
+                f"Invalid finding: line_range.end must be int >= start ({indexed_context})"
+            )
         end = end_raw
 
         title = _as_non_empty_str(finding.get("title"))
         if not title:
-            raise ValueError(
-                f"Invalid finding: missing title ({_finding_context(scope_id, finding)})"
-            )
+            raise ValueError(f"Invalid finding: missing title ({indexed_context})")
         body = _as_non_empty_str(finding.get("body"))
         message = title if not body else f"{title}\n{body}"
 

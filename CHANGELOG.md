@@ -19,6 +19,7 @@ All notable changes to this project are documented in this file.
 - Added SARIF result-count guardrails: `sarif_result_limit_warning` for 5,001-25,000 findings and fail-fast rejection above 25,000 findings.
 
 ### Changed
+- Reduced basedpyright warnings in SARIF/review CLI paths (Issue #59 Phase 1): `reportImplicitStringConcatenation` was eliminated (`29 -> 0`), and `reportUnknown*` in `killer_7/report/sarif_export.py` / `killer_7/cli.py` was reduced from `80 -> 10`.
 - Improved `killer-7 review --help` examples and validation around aspect selection.
 - Changed preset resolution precedence to `--aspect` > `--preset` > `default_preset` > builtin full, and made invalid preset/config fail as `ExecFailure` recorded in `.ai-review/run.json`.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.

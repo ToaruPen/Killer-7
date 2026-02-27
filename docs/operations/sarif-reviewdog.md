@@ -101,3 +101,33 @@ Issue #56 の PoC（2026-02-25 実施）で実測した GitHub Code Scanning の
 - 複数 ruleId（K7.P0, K7.P1, K7.P2, K7.P3）を含む SARIF は正常に処理される
 - severity 別フィルタリングが可能（error, warning, note）
 - `automationDetails.id` が Code Scanning の category として使用される
+
+## LSP warning 是正フェーズ（Issue #59）
+
+### Phase 1 実績（今回）
+
+- 対象: `killer_7/report/sarif_export.py`, `killer_7/cli.py`（SARIF/inline周辺）
+- `reportImplicitStringConcatenation`: **29 -> 0**
+- `reportUnknown*`: **80 -> 10**
+- `killer_7/report/sarif_export.py`: **11 -> 0** warnings
+- `killer_7/cli.py`: **217 -> 130** warnings
+
+### Phase 2 分割方針（残課題）
+
+優先順:
+
+1. `killer_7/cli.py` の `reportAny` / `reportExplicitAny`
+   - 残件: `reportAny` 95件, `reportExplicitAny` 8件
+   - 方針: `argparse.Namespace` の型境界を helper で明示し、`Any` 伝播を局所化する
+
+2. `killer_7/cli.py` の `reportUnusedCallResult`
+   - 残件: 21件
+   - 方針: 副作用専用呼び出しに `_ = ...` を明示し、意図を固定する
+
+3. テストファイルの warning 解消
+   - 対象: `tests/test_cli.py`, `tests/test_sarif_export.py`
+   - 方針: 本体ロジック修正と切り離し、型付け専用Issueとして段階的に処理する
+
+4. basedpyright 設定の見直し
+   - 対象: `pyproject.toml`
+   - 方針: `[tool.basedpyright]` のルールレベル設定を明示し、段階導入可能な閾値を定義する
