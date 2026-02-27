@@ -31,7 +31,7 @@ def _read_json_object(text: str) -> dict[str, Any]:
 def _write_fake_gh(path: Path) -> None:
     """Write a tiny fake `gh` binary for tests."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import base64
 import json
@@ -441,7 +441,7 @@ def _write_fake_opencode(path: Path) -> None:
     `type=text` event's `part.text` as JSON.
     """
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -476,7 +476,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -526,7 +526,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source_writes_tool_bundle(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import os
@@ -590,7 +590,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_p2_tool_source_dot_slash(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -642,7 +642,7 @@ raise SystemExit(0)
 def _write_fake_opencode_blocked(path: Path) -> None:
     """Fake opencode that returns a blocking P0 for one aspect."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -692,7 +692,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_too_many_inline(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -797,7 +797,7 @@ event = {"type": "text", "part": {"text": json.dumps(payload)}}
 sys.stdout.write(json.dumps(event) + "\\n")
 raise SystemExit(0)
 """
-    path.write_text(
+    _ = path.write_text(
         script.replace("__SARIF_FINDINGS_COUNT__", str(findings_count))
         .replace("__SARIF_TITLE_PREFIX__", json.dumps(title_prefix))
         .replace("__SARIF_FINDING_BODY__", json.dumps(finding_body))
@@ -836,7 +836,7 @@ def _write_fake_opencode_sarif_hard_limit_exceeded(path: Path) -> None:
 def _write_fake_opencode_blocked_with_question(path: Path) -> None:
     """Fake opencode that returns a P0 finding and a question."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import re
@@ -889,7 +889,7 @@ raise SystemExit(0)
 def _write_fake_opencode_inline_mismatch(path: Path) -> None:
     """Fake opencode that returns a P0 finding on a missing inline location."""
 
-    path.write_text(
+    _ = path.write_text(
         r"""#!/usr/bin/env python3
 import json
 import re
@@ -939,7 +939,7 @@ raise SystemExit(0)
 
 
 def _write_fake_opencode_incremental_inc_finding(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         r"""#!/usr/bin/env python3
 import json
 import re
@@ -984,7 +984,7 @@ raise SystemExit(0)
 def _write_fake_opencode_exec_failure(path: Path) -> None:
     """Fake opencode that always fails."""
 
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import sys
 
@@ -997,7 +997,7 @@ raise SystemExit(2)
 
 
 def _write_fake_reviewdog(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import json
 import os
@@ -1019,7 +1019,7 @@ raise SystemExit(0)
 
 
 def _write_fake_reviewdog_fail(path: Path) -> None:
-    path.write_text(
+    _ = path.write_text(
         """#!/usr/bin/env python3
 import sys
 
@@ -1223,7 +1223,7 @@ class TestCli(unittest.TestCase):
             prev_path = os.environ.get("PATH")
             prev_bin = os.environ.get("KILLER7_OPENCODE_BIN")
             try:
-                os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                _ = os.environ.pop("KILLER7_OPENCODE_BIN", None)
                 base_path = prev_path or ""
                 os.environ["PATH"] = f"{bin_a}{os.pathsep}{base_path}"
 
@@ -1260,11 +1260,11 @@ class TestCli(unittest.TestCase):
                 )
             finally:
                 if prev_bin is None:
-                    os.environ.pop("KILLER7_OPENCODE_BIN", None)
+                    _ = os.environ.pop("KILLER7_OPENCODE_BIN", None)
                 else:
                     os.environ["KILLER7_OPENCODE_BIN"] = prev_bin
                 if prev_path is None:
-                    os.environ.pop("PATH", None)
+                    _ = os.environ.pop("PATH", None)
                 else:
                     os.environ["PATH"] = prev_path
 
@@ -1340,7 +1340,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -1445,7 +1445,7 @@ class TestCli(unittest.TestCase):
                 )
             finally:
                 if prev_timeout is None:
-                    os.environ.pop("KILLER7_OPENCODE_TIMEOUT_S", None)
+                    _ = os.environ.pop("KILLER7_OPENCODE_TIMEOUT_S", None)
                 else:
                     os.environ["KILLER7_OPENCODE_TIMEOUT_S"] = prev_timeout
 
@@ -1601,7 +1601,7 @@ class TestCli(unittest.TestCase):
             scope_id = "owner/name#pr-123@0123456789ab"
             aspects_dir = out_dir / "aspects"
             aspects_dir.mkdir(parents=True, exist_ok=True)
-            (aspects_dir / "correctness.json").write_text(
+            _ = (aspects_dir / "correctness.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 3,
@@ -1615,7 +1615,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (aspects_dir / "index.json").write_text(
+            _ = (aspects_dir / "index.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -1638,11 +1638,11 @@ class TestCli(unittest.TestCase):
 
             aspect_dir = Path(td) / ".ai-review" / "opencode" / "correctness"
             aspect_dir.mkdir(parents=True, exist_ok=True)
-            (aspect_dir / "tool-bundle.txt").write_text(
+            _ = (aspect_dir / "tool-bundle.txt").write_text(
                 "# SRC: hello.txt\nL1: hello\n",
                 encoding="utf-8",
             )
-            (aspect_dir / "tool-trace.jsonl").write_text(
+            _ = (aspect_dir / "tool-trace.jsonl").write_text(
                 '{"type":"tool_use"}\n',
                 encoding="utf-8",
             )
@@ -1742,8 +1742,8 @@ class TestCli(unittest.TestCase):
             self.assertEqual(p1.returncode, 0, msg=(p1.stdout + "\n" + p1.stderr))
 
             out_dir = Path(td) / ".ai-review"
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             (Path(td) / ".ai-review" / "aspects" / "correctness.json").unlink()
 
@@ -1836,7 +1836,7 @@ class TestCli(unittest.TestCase):
             for item in index_payload.get("aspects", []):
                 if item.get("aspect") == "correctness":
                     item["result_path"] = "aspects/security.json"
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -1887,7 +1887,7 @@ class TestCli(unittest.TestCase):
             scope_id = str(index_payload.get("scope_id") or "")
 
             security_path = Path(td) / ".ai-review" / "aspects" / "security.json"
-            security_path.write_text(
+            _ = security_path.write_text(
                 json.dumps(
                     {
                         "schema_version": 3,
@@ -1913,7 +1913,7 @@ class TestCli(unittest.TestCase):
                 }
             )
             index_payload["aspects"] = aspects
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -1965,7 +1965,7 @@ class TestCli(unittest.TestCase):
             if aspects:
                 aspects.append(dict(aspects[0]))
             index_payload["aspects"] = aspects
-            index_path.write_text(
+            _ = index_path.write_text(
                 json.dumps(index_payload, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -2097,7 +2097,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "head_ref_oid_sequence": [
@@ -2156,7 +2156,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2194,7 +2194,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2247,7 +2247,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2336,7 +2336,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2385,7 +2385,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2437,7 +2437,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2486,7 +2486,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2534,7 +2534,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2580,8 +2580,8 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             p = run_cli(
                 [
@@ -2617,8 +2617,8 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
-            (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}\n", encoding="utf-8")
+            _ = (out_dir / "review-summary.md").write_text("stale\n", encoding="utf-8")
 
             p = run_cli(
                 [
@@ -2653,7 +2653,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2701,7 +2701,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2739,7 +2739,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2782,7 +2782,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text("{ broken", encoding="utf-8")
+            _ = (cfg_dir / "config.json").write_text("{ broken", encoding="utf-8")
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -2807,7 +2807,7 @@ class TestCli(unittest.TestCase):
             config_home = Path(td) / "xdg-config"
             cfg_dir = config_home / "killer-7"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text(
+            _ = (cfg_dir / "config.json").write_text(
                 json.dumps({"schema_version": 1, "presets": None}),
                 encoding="utf-8",
             )
@@ -2954,7 +2954,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -2965,7 +2965,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: ./tool-only.txt\n",
@@ -3060,7 +3060,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3071,7 +3071,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3082,7 +3082,7 @@ class TestCli(unittest.TestCase):
             )
 
             outside = Path(td) / "outside.txt"
-            outside.write_text("secret\n", encoding="utf-8")
+            _ = outside.write_text("secret\n", encoding="utf-8")
             link = tool_dir / "link.txt"
             try:
                 os.symlink(str(outside), str(link))
@@ -3146,7 +3146,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3157,7 +3157,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3201,7 +3201,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3212,7 +3212,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3255,7 +3255,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3266,7 +3266,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 "".join(
                     [
                         "# SRC: tool-only.txt\n",
@@ -3307,7 +3307,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3318,7 +3318,7 @@ class TestCli(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (tool_dir / "too-large.txt").write_bytes(b"x" * (100 * 1024 + 1))
+            _ = (tool_dir / "too-large.txt").write_bytes(b"x" * (100 * 1024 + 1))
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -3345,7 +3345,7 @@ class TestCli(unittest.TestCase):
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
             names = [f"b{i:03d}.txt" for i in range(201)]
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3357,7 +3357,7 @@ class TestCli(unittest.TestCase):
                 encoding="utf-8",
             )
             for n in names:
-                (tool_dir / n).write_bytes(b"\xff")
+                _ = (tool_dir / n).write_bytes(b"\xff")
 
             p = run_cli(
                 ["review", "--repo", "owner/name", "--pr", "123"],
@@ -3383,7 +3383,7 @@ class TestCli(unittest.TestCase):
 
             tool_dir = Path(td) / ".ai-review" / "tool-bundle"
             tool_dir.mkdir(parents=True, exist_ok=True)
-            (tool_dir / "manifest.json").write_text(
+            _ = (tool_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -3395,7 +3395,7 @@ class TestCli(unittest.TestCase):
                 encoding="utf-8",
             )
             path_fixture = "PUBLIC_ID_ABC123"
-            (tool_dir / "bundle.txt").write_text(
+            _ = (tool_dir / "bundle.txt").write_text(
                 f"# SRC: ../../secrets/{path_fixture}\nL1: x\n",
                 encoding="utf-8",
             )
@@ -3641,7 +3641,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue(summary_md.is_file())
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "head_ref_oid_sequence": [
@@ -3745,7 +3745,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -3784,7 +3784,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -3827,7 +3827,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3860,7 +3860,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3906,7 +3906,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -3970,7 +3970,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4009,7 +4009,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_exec_failure(failing_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4042,7 +4042,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4086,7 +4086,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4137,7 +4137,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4184,7 +4184,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4231,7 +4231,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4278,7 +4278,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [
@@ -4367,7 +4367,7 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "state.json").write_text(
+            _ = (out_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -4460,7 +4460,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_blocked(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4576,7 +4576,7 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
             stale = out_dir / "review-summary.sarif.json"
-            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            _ = stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
             self.assertTrue(stale.exists())
 
             p = run_cli(
@@ -4608,7 +4608,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode_sarif_hard_limit_exceeded(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4649,7 +4649,7 @@ class TestCli(unittest.TestCase):
             _write_fake_opencode(fake_opencode)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4694,7 +4694,7 @@ class TestCli(unittest.TestCase):
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
             stale = out_dir / "review-summary.sarif.json"
-            stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
+            _ = stale.write_text('{"version":"2.1.0","runs":[]}', encoding="utf-8")
             self.assertTrue(stale.exists())
 
             p = run_cli(
@@ -4756,7 +4756,7 @@ class TestCli(unittest.TestCase):
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4806,7 +4806,7 @@ class TestCli(unittest.TestCase):
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -4852,12 +4852,12 @@ class TestCli(unittest.TestCase):
 
             out_dir = Path(td) / ".ai-review"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "review-summary.json").write_text("{}", encoding="utf-8")
+            _ = (out_dir / "review-summary.json").write_text("{}", encoding="utf-8")
             stale_dir = out_dir / "review-summary.md"
             stale_dir.mkdir(parents=True, exist_ok=True)
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -5009,7 +5009,7 @@ class TestCli(unittest.TestCase):
             capture = Path(td) / "reviewdog-capture.json"
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],
@@ -5060,7 +5060,7 @@ class TestCli(unittest.TestCase):
             capture = Path(td) / "reviewdog-capture.json"
 
             state_path = Path(td) / "fake-gh-state.json"
-            state_path.write_text(
+            _ = state_path.write_text(
                 json.dumps(
                     {
                         "comments": [],

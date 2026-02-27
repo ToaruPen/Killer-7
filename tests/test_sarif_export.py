@@ -228,7 +228,7 @@ class TestSarifExport(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "missing code_location"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_invalid_line_range_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -239,7 +239,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_missing_line_range_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -250,7 +250,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing line_range"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_missing_repo_relative_path_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -261,7 +261,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "missing repo_relative_path"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_line_range_end_before_start_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -272,7 +272,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(findings=[finding])
 
         with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_line_range_start_bool_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -298,7 +298,7 @@ class TestSarifExport(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "line_range.start must be int >= 1"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_line_range_end_bool_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -324,33 +324,33 @@ class TestSarifExport(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "line_range.end must be int >= start"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_missing_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
         finding = self._build_finding()
-        finding.pop("priority", None)
+        _ = finding.pop("priority", None)
         summary = self._build_summary(
             scope_id="owner/name#pr-123@abcdef",
             findings=[finding],
         )
 
         with self.assertRaisesRegex(ValueError, "missing required priority"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_missing_title_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
 
         finding = self._build_finding()
-        finding.pop("title", None)
+        _ = finding.pop("title", None)
         summary = self._build_summary(
             scope_id="owner/name#pr-123@abcdef",
             findings=[finding],
         )
 
         with self.assertRaisesRegex(ValueError, "missing title"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_unknown_priority_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -363,7 +363,7 @@ class TestSarifExport(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "unsupported value 'P9'"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_missing_scope_id_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -371,7 +371,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(scope_id=None)
 
         with self.assertRaisesRegex(ValueError, "missing required scope_id"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_findings_not_array_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -379,7 +379,7 @@ class TestSarifExport(unittest.TestCase):
         summary = self._build_summary(findings="not-a-list")
 
         with self.assertRaisesRegex(ValueError, "raw_findings must be a list"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_findings_item_not_mapping_fails_fast(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -390,7 +390,7 @@ class TestSarifExport(unittest.TestCase):
             ValueError,
             r"expected mapping item .*finding_index=0.*item_type=str",
         ):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_summary_with_non_string_root_keys_is_processed(self) -> None:
         from killer_7.report.sarif_export import review_summary_to_sarif
@@ -416,7 +416,7 @@ class TestSarifExport(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "findings exceed SARIF hard limit"):
-            review_summary_to_sarif(summary)
+            _ = review_summary_to_sarif(summary)
 
     def test_findings_at_hard_limit_succeeds(self) -> None:
         from killer_7.report.sarif_export import (
