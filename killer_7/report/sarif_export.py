@@ -127,26 +127,32 @@ def review_summary_to_sarif(summary: object) -> dict[str, object]:
                 + f"(scope_id={scope_id}, finding_index={finding_index}, item_type={type(item).__name__}, item={item!r})"
             )
         finding = _coerce_str_object_dict(cast(object, item))
+        finding_context = _finding_context(scope_id, finding)
+        indexed_context = f"finding_index={finding_index}, {finding_context}"
         priority = _as_non_empty_str(finding.get("priority"))
         if not priority:
             raise ValueError(
-                f"Invalid finding priority: missing required priority ({_finding_context(scope_id, finding)})"
+                f"Invalid finding priority: missing required priority ({indexed_context})"
             )
         if priority not in _PRIORITY_TO_LEVEL:
             raise ValueError(
-                f"Invalid finding priority: unsupported value {priority!r} ({_finding_context(scope_id, finding)})"
+                f"Invalid finding priority: unsupported value {priority!r} ({indexed_context})"
             )
         priorities.add(priority)
 
         code_location = _coerce_str_object_dict(finding.get("code_location"))
         if not code_location:
-            raise ValueError("Invalid finding: missing code_location")
+            raise ValueError(
+                f"Invalid finding: missing code_location ({indexed_context})"
+            )
         line_range = _coerce_str_object_dict(code_location.get("line_range"))
         if not line_range:
-            raise ValueError("Invalid finding: missing line_range")
+            raise ValueError(f"Invalid finding: missing line_range ({indexed_context})")
         path = _as_non_empty_str(code_location.get("repo_relative_path"))
         if not path:
-            raise ValueError("Invalid finding: missing repo_relative_path")
+            raise ValueError(
+                f"Invalid finding: missing repo_relative_path ({indexed_context})"
+            )
 
         start_raw = line_range.get("start")
         if (
@@ -154,21 +160,23 @@ def review_summary_to_sarif(summary: object) -> dict[str, object]:
             or not isinstance(start_raw, int)
             or start_raw < 1
         ):
-            raise ValueError("Invalid finding: line_range.start must be int >= 1")
+            raise ValueError(
+                f"Invalid finding: line_range.start must be int >= 1 ({indexed_context})"
+            )
         start = start_raw
 
         # line_range.end is optional; when omitted, it defaults to start.
         # This lets single-line ranges omit `end` while preserving explicit spans.
         end_raw = line_range.get("end", start)
         if isinstance(end_raw, bool) or not isinstance(end_raw, int) or end_raw < start:
-            raise ValueError("Invalid finding: line_range.end must be int >= start")
+            raise ValueError(
+                f"Invalid finding: line_range.end must be int >= start ({indexed_context})"
+            )
         end = end_raw
 
         title = _as_non_empty_str(finding.get("title"))
         if not title:
-            raise ValueError(
-                f"Invalid finding: missing title ({_finding_context(scope_id, finding)})"
-            )
+            raise ValueError(f"Invalid finding: missing title ({indexed_context})")
         body = _as_non_empty_str(finding.get("body"))
         message = title if not body else f"{title}\n{body}"
 
