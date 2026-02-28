@@ -30,15 +30,19 @@ Agent Guidelines (simplicity-first)
 Questions (user interaction)
 - When you need to ask the user a question, you MUST use the QuestionTool (the `question` tool).
   Do not ask questions in free-form text.
+- Exception: when `ralph-loop` is explicitly requested, step-by-step user confirmations are not required.
+  In that mode, you must still follow the mandatory gate flow:
+  `/test-review` -> `/review-cycle` -> `/final-review` -> `/test-review` (with `TEST_REVIEW_DIFF_MODE=range` on committed `HEAD`) -> `/create-pr` -> `/pr-bots-review`.
 
 Static analysis (required)
 - You must introduce and keep running static analysis: lint, format, and typecheck.
 - If the repository has no lint/format/typecheck yet, treat it as a blocker and introduce the minimal viable checks before proceeding.
 - If you cannot introduce or run a required check due to environment or constraints, STOP and ask a human for an explicit exception (with rationale and impact).
 
-Release hygiene (required)
-- After making changes to this repo, you MUST update `CHANGELOG.md`, publish a GitHub Release (tag),
-  and update pinned scripts (e.g. `scripts/agentic-sdd` default ref).
+Release hygiene (when publishing a release)
+- When publishing a release for this repo, you MUST update `CHANGELOG.md`,
+  update pinned scripts (e.g. `scripts/agentic-sdd` default ref),
+  and publish a GitHub Release via tag.
 
 0) Bootstrap
 - Read AGENTS.md (this section + command list). Read README.md only if needed (Workflow section).
@@ -47,26 +51,32 @@ Release hygiene (required)
 1) Entry decision (where to start)
 
 For new development:
-- No PRD: /create-prd
-- PRD exists but no Epic: /create-epic
+- No PRD: /research prd -> /create-prd
+- PRD exists but no Epic: /research epic -> /create-epic
 - Epic exists but no Issues / not split: /create-issues
-- Issues exist: ask the user to choose /impl vs /tdd (do not choose on your own)
+- Issues exist: the agent selects /impl or /tdd via deterministic heuristics (see `.agent/rules/impl-gate.md` Gate 0)
+  - Default: /impl (normal). Use /tdd when the Issue is a bug fix with a reproducible failing test,
+    or when the Issue AC explicitly requires TDD.
+  - Record mode, source, and reason in the approval record.
   - Then run: /impl <issue-id> or /tdd <issue-id>
 
 For bug fix / refactoring:
 - Small (1-2 Issues): Create Issue directly -> /impl or /tdd
-- Medium (3-5 Issues): /create-epic (reference existing PRD) -> /create-issues
-- Large (6+ Issues): /create-prd -> /create-epic -> /create-issues
+- Medium (3-5 Issues): /research epic (reference existing PRD) -> /create-epic -> /create-issues
+- Large (6+ Issues): /research prd -> /create-prd -> /research epic -> /create-epic -> /create-issues
 
 Note: Even for direct Issue creation, include PRD/Epic links for traceability.
 Bug fix Issues require Priority (P0-P4). See `.agent/rules/issue.md` for details.
 
 2) Complete one Issue (iterate)
 - /impl or /tdd: pass the implementation gates (.agent/rules/impl-gate.md)
-  - Full estimate (11 sections) -> user approval -> implement -> add/run tests
+  - Full estimate (11 sections) -> agent mode selection -> user approval -> implement -> add/run tests
   - Worktree is required for Issue branches (see `.agent/rules/impl-gate.md` Gate -1)
-- /review-cycle: run locally before committing (fix -> re-run)
+- /test-review: run fail-fast test review before /review-cycle
+- /review-cycle: run locally via `codex exec` before committing (fix -> re-run)
+- If `codex exec` is unavailable (e.g. quota limits or temporary service issues), run `/review-cycle` and `/test-review` via Claude tooling instead; do not skip any gates.
 - /final-review: always run /sync-docs; if there is a diff, follow SoT and re-check
+- Before /create-pr: re-run /test-review on committed `HEAD` with `TEST_REVIEW_DIFF_MODE=range`
 
 3) PR / merge
 - Create a PR only after /final-review passes (do not change anything outside the Issue scope)
@@ -79,8 +89,9 @@ When using `git worktree` to implement multiple Issues in parallel:
 
 - One Issue = one branch = one worktree (never mix changes)
 - If multiple related Issues overlap heavily, create a single "parent" Issue as the implementation unit and keep the related Issues as tracking-only children (no branches/worktrees for children).
+  Treat this as the standard mode for large refactoring/migration work, not an exception path.
 - Do not edit PRD/Epic across parallel branches; serialize SoT changes
-- Apply `parallel-ok` only when declared change-target file sets are disjoint (validate via `./scripts/worktree.sh check`)
+- Apply `parallel-ok` only when declared change-target file sets are disjoint (validate via `./scripts/agentic-sdd/worktree.sh check`)
 - Before high-impact operations (`/review-cycle`, `/create-pr`, `/pr-bots-review`, manual conflict resolution), run a Scope Lock check and stop on mismatch:
   - `git branch --show-current`
   - `gh issue develop --list <issue-number>` (Issue-scoped work)
@@ -133,7 +144,6 @@ A workflow template to help non-engineers run AI-driven development while preven
 - `docs/epics/_template.md`: Epic template (Japanese output)
 - `docs/glossary.md`: glossary
 - `templates/project-config/`: templates for `/generate-project-config`
-- MCP (OpenCode): `cocoindex-code` (semantic code search via `search(...)`)
 
 ---
 
@@ -144,14 +154,14 @@ A workflow template to help non-engineers run AI-driven development while preven
 - `/research`: create reusable research artifacts for PRD/Epic/estimation
 - `/create-epic`: create an Epic (requires 3 lists: external services / components / new tech)
 - `/generate-project-config`: generate project-specific skills/rules from Epic
-- `/create-issues`: create Issues (granularity rules)
+- `/create-issues`: create Issues (Epic batch or general: granularity rules)
 - `/debug`: create a structured debugging/investigation note (Issue comment or a new Investigation Issue)
 - `/estimation`: create a Full estimate (11 sections) and get approval
 - `/impl`: implement an Issue (Full estimate required)
 - `/tdd`: implement via TDD (Red -> Green -> Refactor)
 - `/ui-iterate`: iterate UI redesign in short loops (capture -> patch -> verify)
 - `/test-review`: run fail-fast test review checks before review/PR gates
-- `/review-cycle`: local review loop (codex exec -> review.json)
+- `/review-cycle`: local review loop (default: codex exec -> review.json, fallback: Claude)
 - `/final-review`: review (DoD check)
 - `/create-pr`: push branch and create a PR (gh)
 - `/pr-bots-review`: request a PR review-bot check on a PR and iterate until feedback is resolved

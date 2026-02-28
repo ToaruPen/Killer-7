@@ -47,13 +47,38 @@ Required:
       - `diff_mode` must be `range`
       - if `base_sha` is present, the same `base_ref` still points to that `base_sha`
       - if `base_sha` is present, the PR target base (`--base` or default base) must match the reviewed base branch
+6. Decision Index validation: `python3 scripts/validate-decision-index.py` must pass.
+   - This validates: required sections in `docs/decisions/_template.md`, index/body 1:1 correspondence, and Supersedes reference integrity.
+   - If the script fails, stop and fix the reported errors before proceeding.
+   - The helper script `create-pr.sh` runs this check automatically.
+
+#### Hybrid review-cycle compatibility criteria
+
+When advisory lane is enabled (`REVIEW_CYCLE_ADVISORY_LANE=1`), the contract
+between `/review-cycle` and `/create-pr` remains unchanged:
+
+1. **Schema v3 compliance**: `review.json` passes `validate-review-json.py`
+   regardless of advisory lane state. `schema_version` must be `3` with all
+   required top-level keys (`scope_id`, `status`, `findings`, `questions`,
+   `overall_explanation`).
+2. **Metadata hard checks**: `/create-pr` hard-checks `head_sha` and
+   `diff_source=range`; this contract is unchanged by advisory lane state.
+   Current `/review-cycle` always generates `base_sha` as well (required when
+   `diff_source=range`). `advisory_lane_enabled` is informational only and is
+   not validated by `/create-pr`.
+3. **Fail-fast preservation**: Engine failures (`no-output`, `engine-exit`)
+   still cause the main review flow to fail with `review_completed=false`
+   even when advisory lane is enabled. Advisory lane failures are tolerated
+   (non-fatal), but main lane failures are never masked.
+
+Integration tests: `scripts/tests/test-review-cycle.sh` (AC1–AC3 blocks).
 
 ### Phase 1: Push
 
 Preferred: use the helper script (does preflight checks and is idempotent):
 
 ```bash
-./scripts/create-pr.sh --issue <issue-number> --body-file <path>
+./scripts/agentic-sdd/create-pr.sh --issue <issue-number> --body-file <path>
 ```
 
 Alternatively, push manually:
@@ -72,6 +97,12 @@ Guidelines:
 - Title: reuse the Issue title (or a minimal, accurate title).
 - Body must include `Closes #<issue-number>`.
 - Keep the body short (1-3 bullets) and focused on "why".
+
+Parent-unit exception:
+
+- When the Issue is a parent implementation unit that must stay open until child tracking Issues are complete,
+  use `Refs #<parent-issue-number>` and avoid `Closes/Fixes #<parent-issue-number>`.
+- Override the default body via `--body` or `--body-file` (the helper script default is `Closes #<issue-number>`).
 
 ### Phase 3: Output
 

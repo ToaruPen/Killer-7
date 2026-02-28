@@ -23,7 +23,7 @@ Review taxonomy (status/priority) and output rules are defined in:
 Underlying script:
 
 ```bash
-./scripts/review-cycle.sh <scope-id> [run-id] [--dry-run] [--model MODEL] [--claude-model MODEL]
+./scripts/agentic-sdd/review-cycle.sh <scope-id> [run-id] [--dry-run] [--model MODEL] [--claude-model MODEL]
 ```
 
 ## Flow
@@ -98,13 +98,20 @@ Before collecting diffs, verify the scope matches the current branch context.
 - `BASE_REF`: base ref for `range` mode (default: `origin/main`; fallback to `main`)
 - `CONSTRAINTS`: additional constraints (default: `none`)
 - `REVIEW_CYCLE_INCREMENTAL`: `1` enables conditional reuse of the latest `review.json` when strict fingerprints match; default `1`
+- `REVIEW_CYCLE_CACHE_POLICY`: `strict` | `balanced` | `off` (default: `balanced`)
+  - `strict`: reuse only when latest status is `Approved` or `Approved with nits` (backward compatible)
+  - `balanced`: reuse any latest status (`Approved`/`Approved with nits`/`Blocked`/`Question`) when strict fingerprints match
+  - `off`: disable reuse and force full execution even when fingerprints match
   - Reuse is fail-closed. Any missing/mismatched metadata field forces full execution.
-  - Reuse is allowed only when latest status is `Approved` or `Approved with nits`.
   - Internal compatibility token `script_semantics_version` is included in reuse metadata checks.
     Bump it when prompt composition or reuse eligibility semantics change.
   - Recommended operation:
-    - Keep `REVIEW_CYCLE_INCREMENTAL=1` as the default baseline.
-    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` when base/HEAD context changed materially (for example rebase/base update) or right before `/final-review`.
+    - Keep `REVIEW_CYCLE_INCREMENTAL=1` + `REVIEW_CYCLE_CACHE_POLICY=balanced` as the default baseline.
+    - Use `REVIEW_CYCLE_CACHE_POLICY=strict` when you want to avoid reusing non-Approved results.
+    - Force a fresh full run with `REVIEW_CYCLE_INCREMENTAL=0` (or `REVIEW_CYCLE_CACHE_POLICY=off`) when base/HEAD context changed materially (for example rebase/base update) and right before `/final-review`.
+- `REVIEW_CYCLE_ADVISORY_LANE`: `0` | `1` (default: `0`)
+  - `1` のとき、最終ゲート出力とは分離された advisory 出力 (`advisory.txt`) を同一 run ディレクトリへ保存する。
+  - `review.json` schema v3 判定には影響させず、探索メモ用途のみで扱う。
 
 ### Timeout (review engine execution)
 
@@ -120,6 +127,11 @@ Before collecting diffs, verify the scope matches the current branch context.
   - Default: unset/`0` (disabled)
   - Enabled value must be an integer `>= 1`.
   - Exceeding budget fails fast before engine execution.
+- `MAX_ADVISORY_PROMPT_BYTES`: hard byte budget for generated `advisory-prompt.txt`.
+  - Default: unset (falls back to `MAX_PROMPT_BYTES` behavior)
+  - `0` disables advisory-specific budget (does not fallback when explicitly set)
+  - Enabled value must be an integer `>= 1`.
+  - Exceeding budget skips advisory lane only and keeps main review flow.
 
 ### Engine selection
 
@@ -134,7 +146,7 @@ Before collecting diffs, verify the scope matches the current branch context.
 ### Claude options (when `REVIEW_ENGINE=claude`)
 
 - `CLAUDE_BIN`: claude binary (default: `claude`)
-- `CLAUDE_MODEL`: Claude model (default: `claude-opus-4-5-20250929`)
+- `CLAUDE_MODEL`: Claude model (default: `opus`)
 
 ## Outputs
 
@@ -146,11 +158,21 @@ Before collecting diffs, verify the scope matches the current branch context.
     - `engine_fingerprint`, `sot_fingerprint`, `tests_fingerprint`
   - Includes budget/latency observability keys:
     - `diff_bytes`, `sot_bytes`, `prompt_bytes`, `engine_runtime_ms`
+  - Includes engine execution observability keys:
+    - `engine_exit_code`, `exec_timeout_sec`, `timeout_applied`, `timeout_bin`
+    - `engine_stderr_summary`, `engine_stderr_sha256`, `engine_stderr_bytes`
+    - `advisory_lane_enabled`
   - Includes reuse observability fields:
     - `incremental_enabled`, `reuse_eligible`, `reused`, `reuse_reason`, `non_reuse_reason`, `reused_from_run`
+  - On engine/output failure, metadata is still written with:
+    - `review_completed=false`, `failure_reason`, `failure_message`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/diff.patch`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/tests.txt`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/tests.stderr`
+- `.agentic-sdd/reviews/<scope-id>/<run-id>/engine.stderr`
+- `.agentic-sdd/reviews/<scope-id>/<run-id>/advisory.txt`（`REVIEW_CYCLE_ADVISORY_LANE=1` のとき）
+- `.agentic-sdd/reviews/<scope-id>/<run-id>/advisory.stderr`（`REVIEW_CYCLE_ADVISORY_LANE=1` のとき）
+- `.agentic-sdd/reviews/<scope-id>/<run-id>/advisory-prompt.txt`（`REVIEW_CYCLE_ADVISORY_LANE=1` のとき）
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/sot.txt`
 - `.agentic-sdd/reviews/<scope-id>/<run-id>/prompt.txt`
 
@@ -169,7 +191,7 @@ Using Codex (default):
 SOT="docs/prd/example.md docs/epics/example.md" \
 TEST_COMMAND="npm test" \
 REASONING_EFFORT=high \
-./scripts/review-cycle.sh issue-123 --model gpt-5.3-codex
+./scripts/agentic-sdd/review-cycle.sh issue-123 --model gpt-5.3-codex
 ```
 
 Auto-build SoT from a GitHub Issue:
@@ -177,7 +199,7 @@ Auto-build SoT from a GitHub Issue:
 ```bash
 GH_ISSUE=123 \
 TESTS="not run: reason" \
-./scripts/review-cycle.sh issue-123
+./scripts/agentic-sdd/review-cycle.sh issue-123
 ```
 
 Using Claude as fallback:
@@ -186,7 +208,7 @@ Using Claude as fallback:
 GH_ISSUE=123 \
 TESTS="not run: reason" \
 REVIEW_ENGINE=claude \
-./scripts/review-cycle.sh issue-123
+./scripts/agentic-sdd/review-cycle.sh issue-123
 ```
 
 ## Notes on Claude engine

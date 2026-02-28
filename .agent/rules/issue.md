@@ -163,6 +163,25 @@ Labels:
 - `blocked`
 - `parallel-ok`
 
+---
+
+## Minimum traceability fields (when Epic/PRD are not available)
+
+For generic improvement, bugfix, or ops Issues that are not directly derived from Epic,
+the following fields are mandatory in the body:
+
+- `根拠リンク`: source context (Issue/PR/discussion/runbook/incident URL or repo path)
+- `起票目的`: what should become better/possible after completion
+- `検証条件`: observable completion criteria
+
+Fail-fast rule:
+
+- If any of the three fields is missing, do not create the Issue.
+
+Note:
+
+- `Epic` / `PRD` fields should still be present; use `N/A (reason)` when unavailable.
+
 ### `parallel-ok` (deterministic rules)
 
 Use `parallel-ok` only when it is safe to work in parallel.
@@ -174,9 +193,27 @@ Required:
 
 Validation:
 
-- Use `./scripts/worktree.sh check ...` to detect overlaps before starting.
+- Use `./scripts/agentic-sdd/worktree.sh check ...` to detect overlaps before starting.
 
 If file targets are unknown or overlaps exist, do NOT use `parallel-ok`; mark as `blocked` and serialize.
+
+---
+
+### Tracking-only child completion criteria (parent implementation unit)
+
+When using a parent Issue as the implementation unit, child Issues are tracking-only and must stay branch-less.
+
+Required for each child Issue before closing:
+
+- Parent linkage is explicit in the child body (Issue number + reason).
+- Child AC is checked with concrete evidence (parent PR link, checklist items, or review notes).
+- Closure reference is explicit in the parent PR body or parent commit message: use `Refs #<child>` while child AC is in progress, and switch to `Fixes #<child>` only when all child AC is satisfied by the parent PR. Child issue comments may be used for notification only and are not the canonical closure reference.
+
+Parent closure rule:
+
+- Close the parent Issue only after all linked tracking-only child Issues are completed and final integration checks pass.
+- To keep the parent Issue open, the parent PR should use `Refs #<parent>` (not `Fixes/Closes #<parent>`).
+  `/create-pr` defaults to `Closes #<issue-number>`, so override the body (`--body`/`--body-file`) when creating a parent-unit PR.
 
 ---
 
@@ -198,8 +235,11 @@ If file targets are unknown or overlaps exist, do NOT use `parallel-ok`; mark as
 
 ## 背景
 
-- Epic: [Epicファイルへのリンク]
-- PRD: [PRDファイルへのリンク]
+- Epic: [Epicファイルへのリンク or N/A (reason)]
+- PRD: [PRDファイルへのリンク or N/A (reason)]
+- 根拠リンク: [必須: URLまたはrepo内パス]
+- 起票目的: [必須: 完了で何が可能/改善されるか]
+- 検証条件: [必須: 観測可能な完了条件]
 
 ## 受け入れ条件（AC）
 

@@ -4,11 +4,6 @@ Request a review-bot check on a GitHub Pull Request and iterate until resolved.
 
 User-facing output remains in Japanese.
 
-## Project migration note
-
-- This repository previously used `/codex-pr-review`.
-- For Codex bot review, set `AGENTIC_SDD_PR_REVIEW_MENTION='@codex review'` and use `/pr-bots-review`.
-
 ## Usage
 
 ```text
@@ -68,8 +63,8 @@ Notes:
 ### Phase 2: Fetch review-bot feedback
 
 If your repository has `.github/workflows/codex-review-events.yml`, prefer that event-driven
-workflow for notification/observability. The local polling script
-`scripts/watch-codex-review.sh` remains available as fallback.
+workflow for notification/observability. For CI-based autofix loops, use
+`templates/ci/github-actions/.github/workflows/agentic-sdd-pr-autofix.yml`.
 
 Review bot may post:
 
@@ -119,7 +114,7 @@ If `gh pr view <PR> --comments` is available and sufficient, you can use it for 
 ### Phase 4: Push and re-request review
 
 When using the CI template `agentic-sdd-pr-autofix.yml`, this step can be automated by
-the installed target-repo script `scripts/agentic-sdd-pr-autofix.sh`
+the installed target-repo script `scripts/agentic-sdd/agentic-sdd-pr-autofix.sh`
 (source template: `templates/ci/github-actions/scripts/agentic-sdd-pr-autofix.sh`) after successful autofix push.
 
 After pushing fixes, re-request review (again include the current head SHA):
