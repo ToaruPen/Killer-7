@@ -47,6 +47,10 @@ Required:
       - `diff_mode` must be `range`
       - if `base_sha` is present, the same `base_ref` still points to that `base_sha`
       - if `base_sha` is present, the PR target base (`--base` or default base) must match the reviewed base branch
+6. Decision Index validation: `python3 scripts/validate-decision-index.py` must pass.
+   - This validates: required sections in `docs/decisions/_template.md`, index/body 1:1 correspondence, and Supersedes reference integrity.
+   - If the script fails, stop and fix the reported errors before proceeding.
+   - The helper script `create-pr.sh` runs this check automatically.
 
 #### Hybrid review-cycle compatibility criteria
 
@@ -93,6 +97,12 @@ Guidelines:
 - Title: reuse the Issue title (or a minimal, accurate title).
 - Body must include `Closes #<issue-number>`.
 - Keep the body short (1-3 bullets) and focused on "why".
+
+Parent-unit exception:
+
+- When the Issue is a parent implementation unit that must stay open until child tracking Issues are complete,
+  use `Refs #<parent-issue-number>` and avoid `Closes/Fixes #<parent-issue-number>`.
+- Override the default body via `--body` or `--body-file` (the helper script default is `Closes #<issue-number>`).
 
 ### Phase 3: Output
 
