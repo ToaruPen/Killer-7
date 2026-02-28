@@ -63,6 +63,8 @@ Guardrails:
 
 - Each Issue must declare `### 変更対象ファイル（推定）` (used as the conflict-check input)
 - Only mark Issues as `parallel-ok` when declared file sets are disjoint
+- For overlap-heavy large refactor/migration work, use a parent Issue as the single implementation unit and keep child Issues tracking-only (no child branches/worktrees)
+  (see the closing rule note below for how to keep the parent Issue open)
 - Before high-impact actions (`/review-cycle`, `/create-pr`, `/pr-bots-review`, manual conflict resolution), run a Scope Lock check and stop on mismatch (`git branch --show-current` + `gh issue develop --list <issue>` + `gh pr view <pr> --json headRefName`).
 
 Helper script:
@@ -80,6 +82,8 @@ Note: `worktree.sh new` uses `gh issue develop` to create a linked branch on the
 ```
 
 Note: worktrees share the same `.git` database. Merge incrementally (finish one, merge one) to reduce conflicts.
+
+When using the parent-unit model, close child Issues only after their AC is satisfied with evidence from the parent PR, and close the parent Issue after all children are complete. To keep the parent Issue open, use `Refs #<parent>` in the parent PR body (not `Closes/Fixes #<parent>`).
 
 ---
 
@@ -126,19 +130,19 @@ use `git subtree` with a fixed prefix (for example `.agentic-sdd-upstream`).
 One-time setup in each target repository:
 
 ```bash
-git subtree add --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.15 --squash
+git subtree add --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.4.0.0 --squash
 ```
 
 Then update by tag/branch:
 
 ```bash
-git subtree pull --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.3.15 --squash
+git subtree pull --prefix=.agentic-sdd-upstream https://github.com/ToaruPen/Agentic-SDD.git v0.4.0.0 --squash
 ```
 
 This repository also includes a helper script for the pull step:
 
 ```bash
-./.agentic-sdd-upstream/scripts/update-agentic-sdd.sh --ref v0.3.15
+./.agentic-sdd-upstream/scripts/update-agentic-sdd.sh --ref v0.4.0.0
 ```
 
 Notes:
@@ -191,7 +195,19 @@ If you want project-tailored rules/skills generated from the Epic:
 /create-issues [epic-file]
 ```
 
-Create Issues following the granularity rules (50-300 LOC).
+Backward-compatible Epic split path:
+
+- `/create-issues [epic-file]`
+
+General Issue creation paths:
+
+```text
+/create-issues --mode generic   # single improvement/chore
+/create-issues --mode bugfix    # bug/urgent response
+/create-issues --mode ops       # operations/runbook/process work
+```
+
+All modes use the same granularity rules (50-300 LOC) and fail-fast required fields.
 
 ### 4) Implement
 
@@ -204,6 +220,7 @@ Create a worktree for the Issue (required):
 Then run implementation inside that worktree.
 
 Implementation requires a Full estimate + explicit user approval gate.
+The agent selects the implementation mode (`/impl` or `/tdd`) using deterministic heuristics during `/estimation`.
 If an approved estimate does not exist yet, `/impl` and `/tdd` will run `/estimation` first and stop for approval.
 
 ```
@@ -220,13 +237,9 @@ If estimate assumptions are still unclear, run estimation research first:
 /impl [issue-number]
 ```
 
-`/impl` is the normal implementation flow. `/tdd` is the strict TDD flow.
-
-To run strict TDD directly:
-
-```
-/tdd [issue-number]
-```
+`/impl` is the normal implementation flow (default). `/tdd` is the strict TDD flow.
+The agent selects the mode automatically based on Issue characteristics (see `.agent/rules/impl-gate.md` Gate 0).
+The mode, selection source, and reason are recorded in the approval record.
 
 Both `/impl` and `/tdd` require the same Full estimate + user approval gate (via `/estimation`).
 
@@ -333,42 +346,24 @@ It also validates `/test-review` metadata for the current branch state
 
 If you enable CI (optional), wait for CI checks and fix failures before merging.
 
-Recommended: use event-driven monitoring via `.github/workflows/codex-review-events.yml`.
-It triggers on `issue_comment` / `pull_request_review` / `pull_request_review_comment`,
-filters to configured bot accounts (`CODEX_BOT_LOGINS`, required), and logs PR number/URL/type/snippet
-in a consistent format.
+For review-bot monitoring, use event-driven workflows:
 
-Fallback: watch review-bot feedback locally and trigger a local hook on new comments/reviews.
+- **Observability**: `.github/workflows/codex-review-events.yml` — triggers on `issue_comment` / `pull_request_review` / `pull_request_review_comment`, filters to configured bot accounts (`CODEX_BOT_LOGINS`, required), and logs PR number/URL/type/snippet in a consistent format.
+- **Autofix**: `templates/ci/github-actions/.github/workflows/agentic-sdd-pr-autofix.yml` — handles the same events, passes comment body + PR number + normalized event type (`issue_comment`/`review`/`inline`) to `AGENTIC_SDD_AUTOFIX_CMD`, executes autofix only on the target PR's HEAD branch, and re-requests the configured review mention (`AGENTIC_SDD_PR_REVIEW_MENTION`) after successful push.
 
-For CI-based autofix loops, use `templates/ci/github-actions/.github/workflows/agentic-sdd-pr-autofix.yml`.
-It handles `issue_comment` / `pull_request_review` / `pull_request_review_comment`, passes
-comment body + PR number + normalized event type (`issue_comment`/`review`/`inline`) to
-`AGENTIC_SDD_AUTOFIX_CMD`, executes autofix only on the target PR's HEAD branch,
-and re-requests the configured review mention (`AGENTIC_SDD_PR_REVIEW_MENTION`) after successful push.
+Configuration:
 
 ```bash
-CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
-scripts/agentic-sdd/watch-codex-review.sh --pr 96
-```
+# Required (observability): bot accounts to filter events
+CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]'
 
-To integrate with your own notifier, pass `--notify-cmd` (or `CODEX_REVIEW_HOOK`):
+# Required (autofix): bot accounts whose comments trigger autofix
+AGENTIC_SDD_AUTOFIX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]'
 
-```bash
-CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
-CODEX_REVIEW_HOOK='osascript -e "display notification \"$CODEX_EVENT_TYPE\" with title \"PR Review Bot\""' \
-scripts/agentic-sdd/watch-codex-review.sh --pr 96
-```
+# Required (autofix): repo-relative path to the autofix script invoked by the workflow
+AGENTIC_SDD_AUTOFIX_CMD='./scripts/my-autofix.sh'
 
-To watch additional bot accounts, set `CODEX_BOT_LOGINS` as a comma-separated list:
-
-```bash
-CODEX_BOT_LOGINS='chatgpt-codex-connector[bot],coderabbitai[bot]' \
-scripts/agentic-sdd/watch-codex-review.sh --pr 96
-```
-
-For autofix re-review requests, set the mention string explicitly:
-
-```bash
+# Required (autofix): mention string posted after successful autofix push
 AGENTIC_SDD_PR_REVIEW_MENTION='@pr-bots review'
 ```
 
@@ -503,7 +498,6 @@ scripts/
 ├── sot_refs.py
 ├── sync-agent-config.sh
 ├── test-review.sh
-├── watch-codex-review.sh
 ├── update-agentic-sdd.sh
 ├── ui-iterate.sh
 ├── validate-approval.py
@@ -512,22 +506,24 @@ scripts/
 ├── worktree.sh
 └── tests/                   # test scripts
     ├── test-agentic-sdd-latest.sh
+    ├── test-agentic-sdd-pr-autofix-gate.sh
     ├── test-approval-gate.sh
+    ├── test-cleanup.sh
     ├── test-codex-review-event.sh
     ├── test-create-pr.sh
     ├── test-install-agentic-sdd.sh
     ├── test-lint-sot.sh
+    ├── test-pr-autofix-template.sh
+    ├── test-pre-push-validator-discovery.sh
+    ├── test-review-cycle.sh
     ├── test-ruff-format-gate.sh
     ├── test-ruff-gate.sh
     ├── test-ruff-prepush-new-branch-no-new-commits.sh
-    ├── test-test-review.sh
-    ├── test-cleanup.sh
-    ├── test-review-cycle.sh
     ├── test-setup-global-agentic-sdd.sh
     ├── test-sync-docs-inputs.sh
-    ├── test-update-agentic-sdd.sh
+    ├── test-test-review.sh
     ├── test-ui-iterate.sh
-    ├── test-watch-codex-review.sh
+    ├── test-update-agentic-sdd.sh
     └── test-worktree.sh
 
 templates/
@@ -701,8 +697,13 @@ Approvals are stored locally (gitignored) under:
 After Phase 2.5 is approved, create the record:
 
 ```bash
-python3 scripts/agentic-sdd/create-approval.py --issue <n> --mode <impl|tdd|custom>
+# Installed project path
+python3 scripts/agentic-sdd/create-approval.py --issue <n> --mode <impl|tdd|custom> --mode-source <agent-heuristic|user-choice|operator-override> --mode-reason '<reason>'
 python3 scripts/agentic-sdd/validate-approval.py
+
+# This repository checkout path
+python3 scripts/create-approval.py --issue <n> --mode <impl|tdd|custom> --mode-source <agent-heuristic|user-choice|operator-override> --mode-reason '<reason>'
+python3 scripts/validate-approval.py
 ```
 
 Repository quality baseline (this repo itself):
@@ -712,6 +713,36 @@ Repository quality baseline (this repo itself):
 - `mypy`
 - `pytest -q tests/python --cov=scripts --cov-report=term-missing`  
   (threshold is managed in `pyproject.toml` via `tool.coverage.report.fail_under`)
+
+### Docs lint (SoT contract checks)
+
+Agentic-SDD includes a docs linter (`scripts/lint-sot.py`) that checks Markdown documents for SoT contract violations:
+
+- Placeholder HTML comments in Approved PRD/Epic
+- Missing or malformed research candidate fields
+- Broken relative links
+- Missing `参照PRD:` in Approved Epics
+
+**Local execution:**
+
+```bash
+python3 scripts/lint-sot.py docs
+```
+
+Pass additional root paths to lint specific directories:
+
+```bash
+python3 scripts/lint-sot.py docs templates
+```
+
+**CI execution (GC template):**
+
+A scheduled GitHub Actions workflow template is provided at `templates/ci/github-actions/.github/workflows/agentic-sdd-gc.yml`.
+Copy it into your repo's `.github/workflows/` directory. By default it runs weekly (Monday 03:17 UTC) and on `workflow_dispatch`.
+
+On failure, the workflow writes a structured error summary (check name, failed file, failure reason) to the GitHub Actions Job Summary.
+
+To customize the schedule, edit the `cron` expression in the workflow file.
 
 ---
 

@@ -54,7 +54,10 @@ For new development:
 - No PRD: /research prd -> /create-prd
 - PRD exists but no Epic: /research epic -> /create-epic
 - Epic exists but no Issues / not split: /create-issues
-- Issues exist: ask the user to choose /impl vs /tdd (do not choose on your own)
+- Issues exist: the agent selects /impl or /tdd via deterministic heuristics (see `.agent/rules/impl-gate.md` Gate 0)
+  - Default: /impl (normal). Use /tdd when the Issue is a bug fix with a reproducible failing test,
+    or when the Issue AC explicitly requires TDD.
+  - Record mode, source, and reason in the approval record.
   - Then run: /impl <issue-id> or /tdd <issue-id>
 
 For bug fix / refactoring:
@@ -67,7 +70,7 @@ Bug fix Issues require Priority (P0-P4). See `.agent/rules/issue.md` for details
 
 2) Complete one Issue (iterate)
 - /impl or /tdd: pass the implementation gates (.agent/rules/impl-gate.md)
-  - Full estimate (11 sections) -> user approval -> implement -> add/run tests
+  - Full estimate (11 sections) -> agent mode selection -> user approval -> implement -> add/run tests
   - Worktree is required for Issue branches (see `.agent/rules/impl-gate.md` Gate -1)
 - /test-review: run fail-fast test review before /review-cycle
 - /review-cycle: run locally via `codex exec` before committing (fix -> re-run)
@@ -86,6 +89,7 @@ When using `git worktree` to implement multiple Issues in parallel:
 
 - One Issue = one branch = one worktree (never mix changes)
 - If multiple related Issues overlap heavily, create a single "parent" Issue as the implementation unit and keep the related Issues as tracking-only children (no branches/worktrees for children).
+  Treat this as the standard mode for large refactoring/migration work, not an exception path.
 - Do not edit PRD/Epic across parallel branches; serialize SoT changes
 - Apply `parallel-ok` only when declared change-target file sets are disjoint (validate via `./scripts/agentic-sdd/worktree.sh check`)
 - Before high-impact operations (`/review-cycle`, `/create-pr`, `/pr-bots-review`, manual conflict resolution), run a Scope Lock check and stop on mismatch:
@@ -150,7 +154,7 @@ A workflow template to help non-engineers run AI-driven development while preven
 - `/research`: create reusable research artifacts for PRD/Epic/estimation
 - `/create-epic`: create an Epic (requires 3 lists: external services / components / new tech)
 - `/generate-project-config`: generate project-specific skills/rules from Epic
-- `/create-issues`: create Issues (granularity rules)
+- `/create-issues`: create Issues (Epic batch or general: granularity rules)
 - `/debug`: create a structured debugging/investigation note (Issue comment or a new Investigation Issue)
 - `/estimation`: create a Full estimate (11 sections) and get approval
 - `/impl`: implement an Issue (Full estimate required)
