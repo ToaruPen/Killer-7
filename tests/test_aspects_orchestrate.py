@@ -64,7 +64,7 @@ class TestOrchestrate(unittest.TestCase):
                 context_bundle="CTX",
                 sot="SOT",
                 runner_factory=lambda: _FakeRunner(
-                    payload_by_viewpoint={a: payload for a in ASPECTS_V1}
+                    payload_by_viewpoint=dict.fromkeys(ASPECTS_V1, payload)
                 ),
             )
 
@@ -100,7 +100,7 @@ class TestOrchestrate(unittest.TestCase):
             # overall_explanation is required
         }
 
-        payloads: dict[str, object] = {a: good for a in ASPECTS_V1}
+        payloads: dict[str, object] = dict.fromkeys(ASPECTS_V1, good)
         payloads["security"] = bad
 
         with tempfile.TemporaryDirectory() as td:
@@ -141,7 +141,7 @@ class TestOrchestrate(unittest.TestCase):
         runners: list[_FakeRunner] = []
 
         def make_runner() -> _FakeRunner:
-            r = _FakeRunner(payload_by_viewpoint={a: payload for a in ASPECTS_V1})
+            r = _FakeRunner(payload_by_viewpoint=dict.fromkeys(ASPECTS_V1, payload))
             runners.append(r)
             return r
 

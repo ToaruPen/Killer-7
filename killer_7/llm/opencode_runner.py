@@ -370,7 +370,7 @@ def _explore_limits(env: dict[str, str] | None) -> tuple[int, int, int, int, int
     )
 
 
-def _explore_validate_and_trace(
+def _explore_validate_and_trace(  # noqa: C901
     *,
     artifacts_dir: str,
     cmd: list[str],
@@ -1000,7 +1000,7 @@ class OpenCodeRunner:
     def _artifact_dir(self, out_dir: str, viewpoint: str) -> str:
         return opencode_artifacts_dir(out_dir, viewpoint)
 
-    def run_viewpoint(
+    def run_viewpoint(  # noqa: C901
         self,
         *,
         out_dir: str,

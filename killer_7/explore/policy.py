@@ -39,7 +39,7 @@ _ALLOWED_GIT_SUBCOMMANDS = {
 }
 
 
-def validate_git_readonly_bash_command(command: str) -> None:
+def validate_git_readonly_bash_command(command: str) -> None:  # noqa: C901
     cmd = (command or "").strip()
     if not cmd:
         raise BlockedError("Explore policy violation: empty bash command")

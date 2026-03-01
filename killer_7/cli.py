@@ -958,7 +958,7 @@ def _raise_invalid_review_args(message: str) -> NoReturn:
     raise ParserExit(2, full)
 
 
-def handle_review(args: argparse.Namespace) -> JsonMap:
+def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
     review_args = _parse_review_args(args)
     selected_aspects: tuple[str, ...] = ASPECTS_V1
     default_preset, merged_presets = _load_user_presets_config()
@@ -1038,7 +1038,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
         not isinstance(a, str) or not a.strip() for a in prev_selected_aspects_list
     ):
         incremental_reason = "invalid_previous_selected_aspects"
-    elif set(str(a) for a in prev_selected_aspects_list) != set(selected_aspects):
+    elif {str(a) for a in prev_selected_aspects_list} != set(selected_aspects):
         incremental_reason = "previous_aspects_mismatch"
     elif prev_no_sot_aspects_list is None:
         incremental_reason = "invalid_previous_no_sot_aspects"
@@ -1191,7 +1191,7 @@ def handle_review(args: argparse.Namespace) -> JsonMap:
     tool_bundle_files: list[str] = []
     tool_bundle_index: dict[str, set[int]] = {}
 
-    def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:
+    def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:  # noqa: C901
         tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
         if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
             dir_warning_lines: list[str] = [

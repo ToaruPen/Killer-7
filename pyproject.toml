@@ -1,5 +1,6 @@
 [tool.ruff]
 target-version = "py311"
+extend-exclude = [".agentic-sdd-upstream", "scripts/agentic-sdd"]
 
 [tool.ruff.lint]
 select = [
@@ -9,11 +10,16 @@ select = [
   "F",
   "I",
   "S",
+  "C4",
+  "C901",
 ]
 
 ignore = [
   "E501",
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
 
 [tool.basedpyright]
 pythonVersion = "3.11"

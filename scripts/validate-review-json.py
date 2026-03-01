@@ -31,7 +31,7 @@ def is_repo_relative_path(path: str) -> bool:
     return ".." not in parts
 
 
-def validate_review(
+def validate_review(  # noqa: C901
     obj: Dict[str, Any],
     expected_scope_id: Optional[str],
 ) -> List[str]:
