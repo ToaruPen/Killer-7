@@ -8,7 +8,7 @@ from pathlib import Path
 
 from killer_7.artifacts import ensure_artifacts_dir
 from killer_7.errors import BlockedError, ExecFailureError
-from killer_7.llm.opencode_runner import OpenCodeRunner
+from killer_7.llm.opencode_runner import OpenCodeRunner, _expand_brace_glob_once
 from killer_7.validate.evidence import parse_context_bundle_index
 from tests._git_helpers import _git_add, _git_init
 
@@ -1028,6 +1028,96 @@ class TestOpenCodeRunner(unittest.TestCase):
             self.assertTrue(matches)
             err = matches[0]
             self.assertTrue(err.is_file())
+
+
+class TestExpandBraceGlobOnce(unittest.TestCase):
+    """AC1: _expand_brace_glob_once must not leak ValueError."""
+
+    def test_reversed_braces_raises_blocked_error(self) -> None:
+        """When } appears before {, BlockedError is raised (not ValueError)."""
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(BlockedError):
+                _expand_brace_glob_once(
+                    artifacts_dir=td,
+                    cmd=["git", "--no-pager", "log"],
+                    tool="read",
+                    pattern="a}b{c",
+                )
+
+    def test_valid_brace_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = _expand_brace_glob_once(
+                artifacts_dir=td,
+                cmd=["git", "--no-pager", "log"],
+                tool="read",
+                pattern="src/{a,b}.py",
+            )
+            self.assertEqual(result, ["src/a.py", "src/b.py"])
+
+    def test_no_braces_returns_pattern_as_is(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = _expand_brace_glob_once(
+                artifacts_dir=td,
+                cmd=["git", "--no-pager", "log"],
+                tool="read",
+                pattern="src/foo.py",
+            )
+            self.assertEqual(result, ["src/foo.py"])
+
+
+class TestHandleSubprocessTimeoutOSError(unittest.TestCase):
+    """AC2: _handle_subprocess_timeout must write error.json even if stdio read fails."""
+
+    def test_timeout_writes_error_json_even_when_stdout_path_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            artifacts_dir = os.path.join(td, "artifacts")
+            runner = OpenCodeRunner(bin_path="/nonexistent", timeout_s=10)
+            runner._handle_subprocess_timeout(
+                Exception("timeout"),
+                artifacts_dir=artifacts_dir,
+                cmd=["opencode", "run"],
+                effective_timeout=10,
+                explore_enabled=False,
+                stdout_path=os.path.join(td, "nonexistent-stdout"),
+                stderr_path=os.path.join(td, "nonexistent-stderr"),
+                persist_redacted_fn=lambda: None,
+            )
+            error_json = os.path.join(artifacts_dir, "error.json")
+            self.assertTrue(os.path.isfile(error_json))
+            import json
+
+            with open(error_json) as f:
+                data = json.load(f)
+            self.assertEqual(data["kind"], "timeout")
+            # stdout.txt should exist with placeholder
+            stdout_txt = os.path.join(artifacts_dir, "stdout.txt")
+            self.assertTrue(os.path.isfile(stdout_txt))
+            with open(stdout_txt) as f:
+                self.assertIn("failed to read", f.read())
+
+
+class TestExploreMaxStdoutJsonlBytesValidation(unittest.TestCase):
+    """AC3: Invalid KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES must raise, not silently fallback."""
+
+    def test_invalid_max_jsonl_bytes_raises_exec_failure_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _git_init(td)
+            fake = Path(td) / "fake-opencode"
+            _write_fake_opencode_ok(fake, payload={"ok": True})
+
+            out_dir = ensure_artifacts_dir(td)
+            runner = OpenCodeRunner(bin_path=str(fake), timeout_s=10)
+            with self.assertRaises(ExecFailureError) as ctx:
+                runner.run_viewpoint(
+                    out_dir=out_dir,
+                    viewpoint="Security",
+                    message="hello",
+                    env={
+                        "KILLER7_EXPLORE": "1",
+                        "KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES": "not-a-number",
+                    },
+                )
+            self.assertIn("KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES", str(ctx.exception))
 
 
 if __name__ == "__main__":
