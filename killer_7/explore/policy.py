@@ -39,7 +39,112 @@ _ALLOWED_GIT_SUBCOMMANDS = {
 }
 
 
-def validate_git_readonly_bash_command(command: str) -> None:  # noqa: C901
+def is_abs_like_path(value: str) -> bool:
+    if not value:
+        return False
+    norm = value.replace("\\", "/")
+    if norm.startswith("/"):
+        return True
+    if norm.startswith("~"):
+        return True
+    if re.match(r"^[A-Za-z]:/", norm):
+        return True
+    return False
+
+
+def has_dotdot_segment(value: str) -> bool:
+    if not value:
+        return False
+    norm = value.replace("\\", "/")
+    segs = [s for s in norm.split("/") if s]
+    return ".." in segs
+
+
+def is_forbidden_relpath(value: str) -> bool:
+    norm = value.replace("\\", "/")
+    if norm.startswith(":(") or norm.startswith(":!") or norm.startswith(":^"):
+        return True
+    segs = [s for s in norm.split("/") if s]
+    while segs and segs[0] == ".":
+        segs = segs[1:]
+    if not segs:
+        return False
+    if segs[0] in {".git", ".ai-review", ".agentic-sdd"}:
+        return True
+    if any(s.startswith(".env") for s in segs):
+        return True
+    return False
+
+
+def show_rev_path_rhs(sub: str, arg: str) -> str | None:
+    if sub != "show" or (":" not in arg):
+        return None
+    depth = 0
+    sep = -1
+    for idx, ch in enumerate(arg):
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            if depth > 0:
+                depth -= 1
+            continue
+        if ch == ":" and depth == 0:
+            sep = idx
+            break
+
+    if sep <= 0 or sep >= (len(arg) - 1):
+        return None
+    return arg[sep + 1 :]
+
+
+def candidate_paths_from_arg(sub: str, arg: str) -> list[str]:
+    if not arg or arg.startswith("-") or arg == "--":
+        return []
+    rhs = show_rev_path_rhs(sub, arg)
+    if rhs is not None:
+        return [rhs]
+    return [arg]
+
+
+def emits_patch_output(*, args_list: list[str], default: bool) -> bool:
+    emits_patch = default
+    for a in args_list:
+        if a == "--no-patch":
+            emits_patch = False
+            continue
+        if a == "--patch" or a.startswith("--patch-") or a.startswith("--patch="):
+            emits_patch = True
+            continue
+        if a == "--unified" or a.startswith("--unified="):
+            emits_patch = True
+            continue
+        if a.startswith("--"):
+            continue
+
+        if a.startswith("-") and len(a) > 1:
+            short = a[1:]
+            if short.startswith("U"):
+                emits_patch = True
+            for ch in short:
+                if ch in {"p", "u"}:
+                    emits_patch = True
+                if ch == "s":
+                    emits_patch = False
+    return emits_patch
+
+
+def is_broad_scope_path(value: str) -> bool:
+    norm = (value or "").replace("\\", "/").strip()
+    if norm in {".", "./"}:
+        return True
+    segs = [s for s in norm.split("/") if s]
+    while segs and segs[0] == ".":
+        segs = segs[1:]
+    return not segs
+
+
+def _parse_git_command_tokens(command: str) -> list[str]:
     cmd = (command or "").strip()
     if not cmd:
         raise BlockedError("Explore policy violation: empty bash command")
@@ -56,7 +161,10 @@ def validate_git_readonly_bash_command(command: str) -> None:  # noqa: C901
 
     if not tokens or tokens[0] != "git":
         raise BlockedError("Explore policy violation: bash must be a git command")
+    return tokens
 
+
+def _parse_global_options(tokens: list[str]) -> tuple[list[str], int]:
     i = 1
     global_opts: list[str] = []
     while i < len(tokens) and tokens[i].startswith("-"):
@@ -73,115 +181,21 @@ def validate_git_readonly_bash_command(command: str) -> None:  # noqa: C901
 
     if "--no-pager" not in global_opts:
         raise BlockedError("Explore policy violation: missing git --no-pager")
+    return global_opts, i
 
-    if i >= len(tokens):
+
+def _extract_subcommand(tokens: list[str], start: int) -> tuple[str, list[str]]:
+    if start >= len(tokens):
         raise BlockedError("Explore policy violation: missing git subcommand")
 
-    sub = tokens[i]
-    i += 1
+    sub = tokens[start]
     if sub not in _ALLOWED_GIT_SUBCOMMANDS:
         raise BlockedError("Explore policy violation: forbidden git subcommand")
 
-    args = tokens[i:]
+    return sub, tokens[start + 1 :]
 
-    def is_abs_like_path(value: str) -> bool:
-        if not value:
-            return False
-        norm = value.replace("\\", "/")
-        if norm.startswith("/"):
-            return True
-        if norm.startswith("~"):
-            return True
-        if re.match(r"^[A-Za-z]:/", norm):
-            return True
-        return False
 
-    def has_dotdot_segment(value: str) -> bool:
-        if not value:
-            return False
-        norm = value.replace("\\", "/")
-        segs = [s for s in norm.split("/") if s]
-        return ".." in segs
-
-    def is_forbidden_relpath(value: str) -> bool:
-        norm = value.replace("\\", "/")
-        if norm.startswith(":(") or norm.startswith(":!") or norm.startswith(":^"):
-            return True
-        segs = [s for s in norm.split("/") if s]
-        while segs and segs[0] == ".":
-            segs = segs[1:]
-        if not segs:
-            return False
-        if segs[0] in {".git", ".ai-review", ".agentic-sdd"}:
-            return True
-        if any(s.startswith(".env") for s in segs):
-            return True
-        return False
-
-    def show_rev_path_rhs(arg: str) -> str | None:
-        if sub != "show" or (":" not in arg):
-            return None
-        depth = 0
-        sep = -1
-        for idx, ch in enumerate(arg):
-            if ch == "{":
-                depth += 1
-                continue
-            if ch == "}":
-                if depth > 0:
-                    depth -= 1
-                continue
-            if ch == ":" and depth == 0:
-                sep = idx
-                break
-
-        if sep <= 0 or sep >= (len(arg) - 1):
-            return None
-        return arg[sep + 1 :]
-
-    def candidate_paths_from_arg(arg: str) -> list[str]:
-        if not arg or arg.startswith("-") or arg == "--":
-            return []
-        rhs = show_rev_path_rhs(arg)
-        if rhs is not None:
-            return [rhs]
-        return [arg]
-
-    def emits_patch_output(*, args_list: list[str], default: bool) -> bool:
-        emits_patch = default
-        for a in args_list:
-            if a == "--no-patch":
-                emits_patch = False
-                continue
-            if a == "--patch" or a.startswith("--patch-") or a.startswith("--patch="):
-                emits_patch = True
-                continue
-            if a == "--unified" or a.startswith("--unified="):
-                emits_patch = True
-                continue
-            if a.startswith("--"):
-                continue
-
-            if a.startswith("-") and len(a) > 1:
-                short = a[1:]
-                if short.startswith("U"):
-                    emits_patch = True
-                for ch in short:
-                    if ch in {"p", "u"}:
-                        emits_patch = True
-                    if ch == "s":
-                        emits_patch = False
-        return emits_patch
-
-    def is_broad_scope_path(value: str) -> bool:
-        norm = (value or "").replace("\\", "/").strip()
-        if norm in {".", "./"}:
-            return True
-        segs = [s for s in norm.split("/") if s]
-        while segs and segs[0] == ".":
-            segs = segs[1:]
-        return not segs
-
+def _validate_common_args(sub: str, args: list[str]) -> None:
     for arg in args:
         if arg == "--output" or arg.startswith("--output="):
             raise BlockedError(
@@ -200,85 +214,95 @@ def validate_git_readonly_bash_command(command: str) -> None:  # noqa: C901
                 "Explore policy violation: git args must not use --contents"
             )
 
-    if sub == "diff":
-        if "--no-index" in args:
+
+def _validate_diff_args(args: list[str]) -> None:
+    if "--no-index" in args:
+        raise BlockedError("Explore policy violation: git diff must not use --no-index")
+    if "--no-ext-diff" not in args:
+        raise BlockedError("Explore policy violation: git diff missing --no-ext-diff")
+    if "--ext-diff" in args:
+        raise BlockedError("Explore policy violation: git diff must not use --ext-diff")
+
+    for arg in args:
+        if not arg or arg.startswith("-"):
+            continue
+        if (
+            is_abs_like_path(arg)
+            or has_dotdot_segment(arg)
+            or is_forbidden_relpath(arg)
+        ):
             raise BlockedError(
-                "Explore policy violation: git diff must not use --no-index"
-            )
-        if "--no-ext-diff" not in args:
-            raise BlockedError(
-                "Explore policy violation: git diff missing --no-ext-diff"
-            )
-        if "--ext-diff" in args:
-            raise BlockedError(
-                "Explore policy violation: git diff must not use --ext-diff"
+                "Explore policy violation: git diff must not use outside paths"
             )
 
+
+def _validate_non_diff_args(sub: str, args: list[str]) -> None:
+    paths: list[str] = []
+    if "--" in args:
+        j = args.index("--")
+        paths.extend([p for p in args[j + 1 :] if p and (not p.startswith("-"))])
+    for arg in args:
+        paths.extend(candidate_paths_from_arg(sub, arg))
+
+    scope_paths: list[str] = []
+    if "--" in args:
+        j = args.index("--")
+        scope_paths.extend([p for p in args[j + 1 :] if p])
+    if sub == "show":
         for arg in args:
-            if not arg or arg.startswith("-"):
+            if not arg or arg.startswith("-") or arg == "--":
                 continue
-            if (
-                is_abs_like_path(arg)
-                or has_dotdot_segment(arg)
-                or is_forbidden_relpath(arg)
-            ):
-                raise BlockedError(
-                    "Explore policy violation: git diff must not use outside paths"
-                )
-    else:
-        paths: list[str] = []
-        if "--" in args:
-            j = args.index("--")
-            paths.extend([p for p in args[j + 1 :] if p and (not p.startswith("-"))])
-        for arg in args:
-            paths.extend(candidate_paths_from_arg(arg))
+            rhs = show_rev_path_rhs(sub, arg)
+            if rhs:
+                scope_paths.append(rhs)
 
-        scope_paths: list[str] = []
-        if "--" in args:
-            j = args.index("--")
-            scope_paths.extend([p for p in args[j + 1 :] if p])
-        if sub == "show":
-            for arg in args:
-                if not arg or arg.startswith("-") or arg == "--":
-                    continue
-                rhs = show_rev_path_rhs(arg)
-                if rhs:
-                    scope_paths.append(rhs)
-
-        for p in scope_paths:
-            if p.startswith("-"):
-                raise BlockedError(
-                    "Explore policy violation: git pathspec must not start with '-'"
-                )
-            if is_broad_scope_path(p):
-                raise BlockedError(
-                    "Explore policy violation: git pathspec scope is too broad"
-                )
-            if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
-                raise BlockedError(
-                    "Explore policy violation: git args must not use forbidden paths"
-                )
-
-        if (
-            sub == "show"
-            and not scope_paths
-            and emits_patch_output(args_list=args, default=True)
-        ):
+    for p in scope_paths:
+        if p.startswith("-"):
             raise BlockedError(
-                "Explore policy violation: git show with patch output must be scoped with '-- <path>'"
+                "Explore policy violation: git pathspec must not start with '-'"
+            )
+        if is_broad_scope_path(p):
+            raise BlockedError(
+                "Explore policy violation: git pathspec scope is too broad"
+            )
+        if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
+            raise BlockedError(
+                "Explore policy violation: git args must not use forbidden paths"
             )
 
-        if (
-            sub == "log"
-            and not scope_paths
-            and emits_patch_output(args_list=args, default=False)
-        ):
+    if (
+        sub == "show"
+        and not scope_paths
+        and emits_patch_output(args_list=args, default=True)
+    ):
+        raise BlockedError(
+            "Explore policy violation: git show with patch output must be scoped with '-- <path>'"
+        )
+
+    if (
+        sub == "log"
+        and not scope_paths
+        and emits_patch_output(args_list=args, default=False)
+    ):
+        raise BlockedError(
+            "Explore policy violation: git log with patch output must be scoped with '-- <path>'"
+        )
+
+    for p in paths:
+        if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
             raise BlockedError(
-                "Explore policy violation: git log with patch output must be scoped with '-- <path>'"
+                "Explore policy violation: git args must not use forbidden paths"
             )
 
-        for p in paths:
-            if is_abs_like_path(p) or has_dotdot_segment(p) or is_forbidden_relpath(p):
-                raise BlockedError(
-                    "Explore policy violation: git args must not use forbidden paths"
-                )
+
+def validate_git_readonly_bash_command(command: str) -> None:
+    tokens = _parse_git_command_tokens(command)
+    _, i = _parse_global_options(tokens)
+    sub, args = _extract_subcommand(tokens, i)
+    _validate_common_args(sub, args)
+
+    if sub == "diff":
+        _validate_diff_args(args)
+        return
+
+    _validate_non_diff_args(sub, args)

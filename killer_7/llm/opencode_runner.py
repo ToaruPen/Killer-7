@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any, Callable, NoReturn
 
 from ..artifacts import atomic_write_text_secure
 from ..errors import BlockedError, ExecFailureError
@@ -370,7 +370,498 @@ def _explore_limits(env: dict[str, str] | None) -> tuple[int, int, int, int, int
     )
 
 
-def _explore_validate_and_trace(  # noqa: C901
+def _expand_brace_glob_once(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    tool: str,
+    pattern: str,
+) -> list[str]:
+    p = (pattern or "").strip()
+    if not p:
+        return []
+    if "{" not in p and "}" not in p:
+        return [p]
+    if p.count("{") != 1 or p.count("}") != 1:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool} pattern must not contain nested brace expansions",
+        )
+    start = p.index("{")
+    end = p.index("}", start + 1)
+    inner = p[start + 1 : end]
+    alts = [a.strip() for a in inner.split(",") if a.strip()]
+    if not alts:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool} pattern brace expansion is empty",
+        )
+    return [p[:start] + a + p[end + 1 :] for a in alts]
+
+
+def _enforce_git_tracked_glob_targets(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    repo_root: str,
+    tracked: set[str] | None,
+    tool: str,
+    base_dir: str,
+    pattern: str,
+) -> None:
+    pats = _expand_brace_glob_once(
+        artifacts_dir=artifacts_dir,
+        cmd=cmd,
+        tool=tool,
+        pattern=pattern,
+    )
+    if not pats:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool} pattern must not be empty",
+        )
+
+    matched: set[str] = set()
+    for pat in pats:
+        for raw in glob.glob(os.path.join(base_dir, pat), recursive=True):
+            if raw:
+                matched.add(raw)
+
+    for raw in sorted(matched):
+        if not os.path.isfile(raw):
+            continue
+        real = os.path.realpath(raw)
+        if not (real == repo_root or real.startswith(repo_root + os.sep)):
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} matched file must stay within repo root",
+            )
+        rel = os.path.relpath(real, repo_root).replace(os.sep, "/")
+        if _is_denied_explore_relpath(rel):
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} must not access forbidden paths: {rel}",
+            )
+        if tracked is not None and rel not in tracked:
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=f"{tool} must not access untracked files: {rel}",
+            )
+
+
+def _extract_tool_use_event_parts(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    event: dict[str, Any],
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    part_obj = event.get("part")
+    if not isinstance(part_obj, dict):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="Malformed tool_use event: missing part",
+        )
+    part = part_obj
+
+    tool_name_obj = part.get("tool")
+    tool_name = tool_name_obj if isinstance(tool_name_obj, str) else ""
+    if not tool_name.strip():
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="Malformed tool_use event: missing tool",
+        )
+
+    state_obj = part.get("state")
+    if not isinstance(state_obj, dict):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"Malformed tool_use event: {tool_name}.state must be an object",
+        )
+    inp_obj = state_obj.get("input")
+    if not isinstance(inp_obj, dict):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"Malformed tool_use event: {tool_name}.state.input must be an object",
+        )
+    return part, tool_name, inp_obj
+
+
+def _explore_tool_trace_line(
+    *,
+    event: dict[str, Any],
+    part: dict[str, Any],
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> str:
+    return (
+        json.dumps(
+            {
+                "type": "tool_use",
+                "timestamp": event.get("timestamp"),
+                "sessionID": event.get("sessionID"),
+                "tool": tool_name,
+                "callID": part.get("callID"),
+                "input": tool_input,
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+
+
+def _validate_bash_tool_use(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    inp_obj: dict[str, Any],
+    bash_calls: int,
+    max_bash_calls: int,
+) -> tuple[int, str]:
+    bash_calls += 1
+    if bash_calls > max_bash_calls:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"Too many bash calls (count={bash_calls})",
+        )
+    raw_cmd = inp_obj.get("command")
+    bash_cmd = raw_cmd if isinstance(raw_cmd, str) else ""
+    try:
+        validate_git_readonly_bash_command(bash_cmd)
+    except BlockedError as exc:
+        msg = str(exc)
+        prefix = "Explore policy violation: "
+        if msg.startswith(prefix):
+            msg = msg[len(prefix) :]
+        _explore_policy_violation(artifacts_dir=artifacts_dir, cmd=cmd, message=msg)
+    return bash_calls, bash_cmd
+
+
+def _resolve_explore_base_path(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    repo_root: str,
+    tool_name: str,
+    inp_obj: dict[str, Any],
+) -> tuple[str, str]:
+    base_obj = inp_obj.get("path")
+    base = base_obj if isinstance(base_obj, str) else ""
+    if not base.strip():
+        base = "."
+    abs_base = base if os.path.isabs(base) else os.path.join(repo_root, base)
+    real_base = os.path.realpath(abs_base)
+    if not (real_base == repo_root or real_base.startswith(repo_root + os.sep)):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool_name}.path must stay within repo root",
+        )
+    rel_base = os.path.relpath(real_base, repo_root).replace(os.sep, "/")
+    if rel_base == ".":
+        rel_base = ""
+    if rel_base and _is_denied_explore_relpath(rel_base):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool_name}.path is forbidden in explore mode: {rel_base}",
+        )
+    return real_base, rel_base
+
+
+def _validate_glob_pattern(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    pat: str,
+) -> None:
+    if not pat.strip():
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern is required",
+        )
+    if os.path.isabs(pat):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must be repo-relative",
+        )
+    norm = pat.replace("\\", "/")
+    if ".." in norm.split("/"):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must not contain '..'",
+        )
+    if norm.startswith(".git") or "/.git/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must not target .git",
+        )
+    if norm.startswith(".ai-review") or "/.ai-review/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must not target .ai-review",
+        )
+    if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must not target .agentic-sdd",
+        )
+    segs = [s for s in norm.split("/") if s]
+    if any(s.startswith(".env") for s in segs):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must not target .env",
+        )
+    base = segs[-1] if segs else norm
+    if base in {"*", "**", "**/*"}:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern is too broad",
+        )
+    if "." not in base:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="glob.pattern must include a file extension",
+        )
+
+
+def _validate_grep_include(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    inc: str,
+) -> None:
+    if not inc.strip():
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include is required in explore mode",
+        )
+    if os.path.isabs(inc):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must be repo-relative",
+        )
+    norm = inc.replace("\\", "/")
+    if ".." in norm.split("/"):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must not contain '..'",
+        )
+    if norm in {"*", "**", "**/*"}:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include is too broad",
+        )
+    segs = [s for s in norm.split("/") if s]
+    if any(s.startswith(".env") for s in segs):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must not target .env",
+        )
+    if norm.startswith(".git") or "/.git/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must not target .git",
+        )
+    if norm.startswith(".ai-review") or "/.ai-review/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must not target .ai-review",
+        )
+    if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must not target .agentic-sdd",
+        )
+    base_inc = segs[-1] if segs else norm
+    if "." not in base_inc:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="grep.include must include a file extension",
+        )
+
+
+def _validate_grep_or_glob_tool_use(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    repo_root: str,
+    tracked: set[str] | None,
+    tool_name: str,
+    inp_obj: dict[str, Any],
+) -> dict[str, Any]:
+    real_base, rel_base = _resolve_explore_base_path(
+        artifacts_dir=artifacts_dir,
+        cmd=cmd,
+        repo_root=repo_root,
+        tool_name=tool_name,
+        inp_obj=inp_obj,
+    )
+
+    if tool_name == "glob":
+        pat_obj = inp_obj.get("pattern")
+        pat = pat_obj if isinstance(pat_obj, str) else ""
+        _validate_glob_pattern(artifacts_dir=artifacts_dir, cmd=cmd, pat=pat)
+        _enforce_git_tracked_glob_targets(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            repo_root=repo_root,
+            tracked=tracked,
+            tool="glob",
+            base_dir=real_base,
+            pattern=pat,
+        )
+    if tool_name == "grep":
+        pat_obj = inp_obj.get("pattern")
+        pat = pat_obj if isinstance(pat_obj, str) else ""
+        if not pat.strip():
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message="grep.pattern is required",
+            )
+        inc_obj = inp_obj.get("include")
+        inc = inc_obj if isinstance(inc_obj, str) else ""
+        _validate_grep_include(artifacts_dir=artifacts_dir, cmd=cmd, inc=inc)
+        _enforce_git_tracked_glob_targets(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            repo_root=repo_root,
+            tracked=tracked,
+            tool="grep",
+            base_dir=real_base,
+            pattern=inc,
+        )
+
+    new_input = dict(inp_obj)
+    new_input["path"] = rel_base or "."
+    return new_input
+
+
+def _validate_read_tool_use(
+    *,
+    artifacts_dir: str,
+    cmd: list[str],
+    repo_root: str,
+    tracked: set[str] | None,
+    inp_obj: dict[str, Any],
+    max_read_lines: int,
+    read_lines_by_path: dict[str, set[int]],
+    total_unique_read_lines: int,
+) -> tuple[dict[str, Any], int]:
+    fp_obj = inp_obj.get("filePath")
+    fp = fp_obj if isinstance(fp_obj, str) else ""
+    if not fp.strip():
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="read.filePath is required",
+        )
+
+    abs_path = fp if os.path.isabs(fp) else os.path.join(repo_root, fp)
+    real = os.path.realpath(abs_path)
+    if not (real == repo_root or real.startswith(repo_root + os.sep)):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="read.filePath must stay within repo root",
+        )
+
+    rel = os.path.relpath(real, repo_root).replace(os.sep, "/")
+    if _is_denied_explore_relpath(rel):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"read.filePath is forbidden in explore mode: {rel}",
+        )
+    if os.path.isdir(real):
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message="read.filePath must be a file (directory reads are not allowed)",
+        )
+    if tracked is not None and rel not in tracked:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"read.filePath must be a git-tracked file: {rel}",
+        )
+
+    off_obj = inp_obj.get("offset")
+    lim_obj = inp_obj.get("limit")
+    offset = off_obj if isinstance(off_obj, int) else 1
+    limit = lim_obj if isinstance(lim_obj, int) else 200
+    if offset < 1:
+        offset = 1
+    if limit < 1:
+        limit = 1
+    if limit > max_read_lines:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"read limit too large (limit={limit}, max={max_read_lines})",
+        )
+
+    selected = read_lines_by_path.setdefault(rel, set())
+    for n in range(offset, offset + limit):
+        if n in selected:
+            continue
+        selected.add(n)
+        total_unique_read_lines += 1
+        if total_unique_read_lines > max_read_lines:
+            _explore_policy_violation(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                message=(
+                    f"Too many total read lines (count={total_unique_read_lines}, max={max_read_lines})"
+                ),
+            )
+
+    new_input = dict(inp_obj)
+    new_input["filePath"] = rel
+    new_input["offset"] = offset
+    new_input["limit"] = limit
+    return new_input, total_unique_read_lines
+
+
+def _redact_trace_tool_input(inp_obj: dict[str, Any]) -> dict[str, Any]:
+    safe_inp = dict(inp_obj)
+    for k in ("pattern", "include"):
+        v = safe_inp.get(k)
+        if isinstance(v, str) and v:
+            safe_inp[k] = _redact_secrets(v)
+    return safe_inp
+
+
+def _explore_validate_and_trace(
     *,
     artifacts_dir: str,
     cmd: list[str],
@@ -397,94 +888,18 @@ def _explore_validate_and_trace(  # noqa: C901
             cmd=cmd,
             message="Failed to resolve git-tracked files (git ls-files failed)",
         )
+
     read_lines_by_path: dict[str, set[int]] = {}
     trace_lines: list[str] = []
     bash_calls = 0
     total_unique_read_lines = 0
 
-    def expand_brace_glob_once(*, tool: str, pattern: str) -> list[str]:
-        p = (pattern or "").strip()
-        if not p:
-            return []
-        if "{" not in p and "}" not in p:
-            return [p]
-        if p.count("{") != 1 or p.count("}") != 1:
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message=f"{tool} pattern must not contain nested brace expansions",
-            )
-        start = p.index("{")
-        end = p.index("}", start + 1)
-        inner = p[start + 1 : end]
-        alts = [a.strip() for a in inner.split(",") if a.strip()]
-        if not alts:
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message=f"{tool} pattern brace expansion is empty",
-            )
-        return [p[:start] + a + p[end + 1 :] for a in alts]
-
-    def enforce_git_tracked_glob_targets(
-        *, tool: str, base_dir: str, pattern: str
-    ) -> None:
-        pats = expand_brace_glob_once(tool=tool, pattern=pattern)
-        if not pats:
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message=f"{tool} pattern must not be empty",
-            )
-
-        matched: set[str] = set()
-        for pat in pats:
-            for raw in glob.glob(os.path.join(base_dir, pat), recursive=True):
-                if raw:
-                    matched.add(raw)
-
-        for raw in sorted(matched):
-            if not os.path.isfile(raw):
-                continue
-            real = os.path.realpath(raw)
-            if not (real == repo_root or real.startswith(repo_root + os.sep)):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"{tool} matched file must stay within repo root",
-                )
-            rel = os.path.relpath(real, repo_root).replace(os.sep, "/")
-            if _is_denied_explore_relpath(rel):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"{tool} must not access forbidden paths: {rel}",
-                )
-            if tracked is not None and rel not in tracked:
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"{tool} must not access untracked files: {rel}",
-                )
-
-    for e in tool_uses:
-        part_obj = e.get("part")
-        if not isinstance(part_obj, dict):
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message="Malformed tool_use event: missing part",
-            )
-        part = part_obj
-
-        tool_name_obj = part.get("tool")
-        tool_name = tool_name_obj if isinstance(tool_name_obj, str) else ""
-        if not isinstance(tool_name, str) or not tool_name.strip():
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message="Malformed tool_use event: missing tool",
-            )
+    for event in tool_uses:
+        part, tool_name, inp_obj = _extract_tool_use_event_parts(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            event=event,
+        )
         if tool_name not in allowed_tools:
             _explore_policy_violation(
                 artifacts_dir=artifacts_dir,
@@ -492,323 +907,52 @@ def _explore_validate_and_trace(  # noqa: C901
                 message=f"Forbidden tool: {tool_name}",
             )
 
-        state_obj = part.get("state")
-        if not isinstance(state_obj, dict):
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message=f"Malformed tool_use event: {tool_name}.state must be an object",
-            )
-        inp_obj2 = state_obj.get("input")
-        if not isinstance(inp_obj2, dict):
-            _explore_policy_violation(
-                artifacts_dir=artifacts_dir,
-                cmd=cmd,
-                message=f"Malformed tool_use event: {tool_name}.state.input must be an object",
-            )
-        inp_obj = inp_obj2
-
         if tool_name == "bash":
-            bash_calls += 1
-            if bash_calls > max_bash_calls:
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"Too many bash calls (count={bash_calls})",
-                )
-            raw_cmd = inp_obj.get("command")
-            bash_cmd = raw_cmd if isinstance(raw_cmd, str) else ""
-            try:
-                validate_git_readonly_bash_command(bash_cmd)
-            except BlockedError as exc:
-                msg = str(exc)
-                prefix = "Explore policy violation: "
-                if msg.startswith(prefix):
-                    msg = msg[len(prefix) :]
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir, cmd=cmd, message=msg
-                )
-
+            bash_calls, bash_cmd = _validate_bash_tool_use(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                inp_obj=inp_obj,
+                bash_calls=bash_calls,
+                max_bash_calls=max_bash_calls,
+            )
             trace_lines.append(
-                json.dumps(
-                    {
-                        "type": "tool_use",
-                        "timestamp": e.get("timestamp"),
-                        "sessionID": e.get("sessionID"),
-                        "tool": "bash",
-                        "callID": part.get("callID"),
-                        "input": {"command": _redact_secrets(bash_cmd)},
-                    },
-                    ensure_ascii=False,
+                _explore_tool_trace_line(
+                    event=event,
+                    part=part,
+                    tool_name="bash",
+                    tool_input={"command": _redact_secrets(bash_cmd)},
                 )
-                + "\n"
             )
             continue
 
         if tool_name in {"grep", "glob"}:
-            base_obj = inp_obj.get("path")
-            base = base_obj if isinstance(base_obj, str) else ""
-            if not base.strip():
-                base = "."
-            abs_base = base if os.path.isabs(base) else os.path.join(repo_root, base)
-            real_base = os.path.realpath(abs_base)
-            if not (real_base == repo_root or real_base.startswith(repo_root + os.sep)):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"{tool_name}.path must stay within repo root",
-                )
-            rel_base = os.path.relpath(real_base, repo_root).replace(os.sep, "/")
-            if rel_base == ".":
-                rel_base = ""
-            if rel_base and _is_denied_explore_relpath(rel_base):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"{tool_name}.path is forbidden in explore mode: {rel_base}",
-                )
-
-            if tool_name == "glob":
-                pat_obj = inp_obj.get("pattern")
-                pat = pat_obj if isinstance(pat_obj, str) else ""
-                if not pat.strip():
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern is required",
-                    )
-                if os.path.isabs(pat):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must be repo-relative",
-                    )
-                norm = pat.replace("\\", "/")
-                if ".." in norm.split("/"):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must not contain '..'",
-                    )
-                if norm.startswith(".git") or "/.git/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must not target .git",
-                    )
-                if norm.startswith(".ai-review") or "/.ai-review/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must not target .ai-review",
-                    )
-                if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must not target .agentic-sdd",
-                    )
-
-                segs = [s for s in norm.split("/") if s]
-                if any(s.startswith(".env") for s in segs):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must not target .env",
-                    )
-
-                base = segs[-1] if segs else norm
-                if base in {"*", "**", "**/*"}:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern is too broad",
-                    )
-                if "." not in base:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="glob.pattern must include a file extension",
-                    )
-
-                enforce_git_tracked_glob_targets(
-                    tool="glob",
-                    base_dir=real_base,
-                    pattern=pat,
-                )
-
-            if tool_name == "grep":
-                pat_obj = inp_obj.get("pattern")
-                pat = pat_obj if isinstance(pat_obj, str) else ""
-                if not pat.strip():
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.pattern is required",
-                    )
-                inc_obj = inp_obj.get("include")
-                inc = inc_obj if isinstance(inc_obj, str) else ""
-                if not inc.strip():
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include is required in explore mode",
-                    )
-                if os.path.isabs(inc):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must be repo-relative",
-                    )
-                norm = inc.replace("\\", "/")
-                if ".." in norm.split("/"):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must not contain '..'",
-                    )
-                if norm in {"*", "**", "**/*"}:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include is too broad",
-                    )
-                segs = [s for s in norm.split("/") if s]
-                if any(s.startswith(".env") for s in segs):
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must not target .env",
-                    )
-                if norm.startswith(".git") or "/.git/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must not target .git",
-                    )
-                if norm.startswith(".ai-review") or "/.ai-review/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must not target .ai-review",
-                    )
-                if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must not target .agentic-sdd",
-                    )
-
-                base_inc = segs[-1] if segs else norm
-                if "." not in base_inc:
-                    _explore_policy_violation(
-                        artifacts_dir=artifacts_dir,
-                        cmd=cmd,
-                        message="grep.include must include a file extension",
-                    )
-
-                enforce_git_tracked_glob_targets(
-                    tool="grep",
-                    base_dir=real_base,
-                    pattern=inc,
-                )
-
-            inp_obj = dict(inp_obj)
-            inp_obj["path"] = rel_base or "."
-
-        if tool_name == "read":
-            fp_obj = inp_obj.get("filePath")
-            fp = fp_obj if isinstance(fp_obj, str) else ""
-            if not fp.strip():
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message="read.filePath is required",
-                )
-
-            abs_path = fp if os.path.isabs(fp) else os.path.join(repo_root, fp)
-            real = os.path.realpath(abs_path)
-            if not (real == repo_root or real.startswith(repo_root + os.sep)):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message="read.filePath must stay within repo root",
-                )
-
-            rel = os.path.relpath(real, repo_root).replace(os.sep, "/")
-            if _is_denied_explore_relpath(rel):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"read.filePath is forbidden in explore mode: {rel}",
-                )
-            if os.path.isdir(real):
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message="read.filePath must be a file (directory reads are not allowed)",
-                )
-            if tracked is not None and rel not in tracked:
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=f"read.filePath must be a git-tracked file: {rel}",
-                )
-
-            off_obj = inp_obj.get("offset")
-            lim_obj = inp_obj.get("limit")
-            offset = off_obj if isinstance(off_obj, int) else 1
-            limit = lim_obj if isinstance(lim_obj, int) else 200
-            if offset < 1:
-                offset = 1
-            if limit < 1:
-                limit = 1
-            s = read_lines_by_path.setdefault(rel, set())
-            if limit > max_read_lines:
-                _explore_policy_violation(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    message=(
-                        f"read limit too large (limit={limit}, max={max_read_lines})"
-                    ),
-                )
-            for n in range(offset, offset + limit):
-                if n not in s:
-                    s.add(n)
-                    total_unique_read_lines += 1
-                    if total_unique_read_lines > max_read_lines:
-                        _explore_policy_violation(
-                            artifacts_dir=artifacts_dir,
-                            cmd=cmd,
-                            message=(
-                                f"Too many total read lines (count={total_unique_read_lines}, max={max_read_lines})"
-                            ),
-                        )
-
-            inp_obj = dict(inp_obj)
-            inp_obj["filePath"] = rel
-            inp_obj["offset"] = offset
-            inp_obj["limit"] = limit
-
-        safe_inp = dict(inp_obj)
-        for k in ("pattern", "include"):
-            v = safe_inp.get(k)
-            if isinstance(v, str) and v:
-                safe_inp[k] = _redact_secrets(v)
+            inp_obj = _validate_grep_or_glob_tool_use(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                repo_root=repo_root,
+                tracked=tracked,
+                tool_name=tool_name,
+                inp_obj=inp_obj,
+            )
+        elif tool_name == "read":
+            inp_obj, total_unique_read_lines = _validate_read_tool_use(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                repo_root=repo_root,
+                tracked=tracked,
+                inp_obj=inp_obj,
+                max_read_lines=max_read_lines,
+                read_lines_by_path=read_lines_by_path,
+                total_unique_read_lines=total_unique_read_lines,
+            )
 
         trace_lines.append(
-            json.dumps(
-                {
-                    "type": "tool_use",
-                    "timestamp": e.get("timestamp"),
-                    "sessionID": e.get("sessionID"),
-                    "tool": tool_name,
-                    "callID": part.get("callID"),
-                    "input": safe_inp,
-                },
-                ensure_ascii=False,
+            _explore_tool_trace_line(
+                event=event,
+                part=part,
+                tool_name=tool_name,
+                tool_input=_redact_trace_tool_input(inp_obj),
             )
-            + "\n"
         )
 
     return ("".join(trace_lines).rstrip("\n"), read_lines_by_path)
@@ -1000,25 +1144,19 @@ class OpenCodeRunner:
     def _artifact_dir(self, out_dir: str, viewpoint: str) -> str:
         return opencode_artifacts_dir(out_dir, viewpoint)
 
-    def run_viewpoint(  # noqa: C901
+    def _validate_run_viewpoint_params(
         self,
         *,
         out_dir: str,
         viewpoint: str,
-        message: str,
-        timeout_s: int | None = None,
-        env: dict[str, str] | None = None,
-    ) -> dict[str, object]:
-        """Run OpenCode for a single viewpoint and write artifacts.
+        timeout_s: int | None,
+        env: dict[str, str] | None,
+    ) -> tuple[str, list[str], int, dict[str, str], bool]:
+        """Validate run_viewpoint parameters and prepare environment.
 
-        Success:
-        - writes `review-<viewpoint_slug>.json` under out_dir
-
-        Failure:
-        - writes error artifacts under `out_dir/opencode/<viewpoint_slug>/`
-        - raises BlockedError (missing binary) or ExecFailureError (exec failure)
+        Returns (artifacts_dir, cmd, effective_timeout, merged_env, explore_enabled).
+        Raises ExecFailureError on validation failure.
         """
-
         if not out_dir:
             raise ExecFailureError("out_dir is required")
 
@@ -1030,16 +1168,9 @@ class OpenCodeRunner:
         artifacts_dir = self._artifact_dir(out_dir, viewpoint)
         cmd = self._build_cmd()
 
-        def ensure_artifacts_dir() -> None:
-            os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
-            try:
-                os.chmod(artifacts_dir, 0o700)
-            except OSError:
-                pass
-
         effective_timeout = self.timeout_s if timeout_s is None else timeout_s
         if not isinstance(effective_timeout, int) or effective_timeout <= 0:
-            ensure_artifacts_dir()
+            os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
             _atomic_write_json(
                 os.path.join(artifacts_dir, "error.json"),
                 {
@@ -1073,7 +1204,7 @@ class OpenCodeRunner:
             if not isinstance(k, str) or not isinstance(v, str):
                 bad_env.append(str(k))
         if bad_env:
-            ensure_artifacts_dir()
+            os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
             _atomic_write_json(
                 os.path.join(artifacts_dir, "error.json"),
                 {
@@ -1086,9 +1217,292 @@ class OpenCodeRunner:
             )
             raise ExecFailureError("Environment variables must be strings")
 
+        return (artifacts_dir, cmd, effective_timeout, merged_env, explore_enabled)
+
+    def _handle_subprocess_timeout(
+        self,
+        exc: "subprocess.TimeoutExpired",
+        *,
+        artifacts_dir: str,
+        cmd: list[str],
+        effective_timeout: int,
+        explore_enabled: bool,
+        stdout_path: str,
+        stderr_path: str,
+        persist_redacted_fn: Callable[[], None],
+    ) -> None:
+        """Handle subprocess timeout — write artifacts (caller must cleanup and raise)."""
+        os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+        if explore_enabled:
+            persist_redacted_fn()
+        else:
+            if stdout_path:
+                _stdout = _redact_secrets(
+                    _read_file_truncated(
+                        stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                    )
+                )
+                _atomic_write_text(os.path.join(artifacts_dir, "stdout.txt"), _stdout)
+            if stderr_path:
+                _stderr = _redact_secrets(
+                    _read_file_truncated(
+                        stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                    )
+                )
+                _atomic_write_text(os.path.join(artifacts_dir, "stderr.txt"), _stderr)
+
+        _atomic_write_json(
+            os.path.join(artifacts_dir, "error.json"),
+            {
+                "schema_version": 1,
+                "kind": "timeout",
+                "message": f"OpenCode timed out after {effective_timeout}s",
+                "cmd": cmd,
+            },
+        )
+
+    def _handle_nonzero_exit(
+        self,
+        *,
+        returncode: int,
+        artifacts_dir: str,
+        cmd: list[str],
+        explore_enabled: bool,
+        persist_redacted_fn: Callable[[], None],
+        stdout_text: str,
+        stderr_text: str,
+    ) -> str:
+        """Handle nonzero subprocess exit — write artifacts, return error message."""
+        os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+        self._persist_stdio_for_failure(
+            artifacts_dir,
+            explore_enabled,
+            persist_redacted_fn,
+            stdout_text,
+            stderr_text,
+        )
+        msg_src = (stderr_text or "").strip()
+        msg = msg_src or f"OpenCode failed (exit={returncode})"
+        msg = _truncate_tail(_redact_secrets(msg))
+        _atomic_write_json(
+            os.path.join(artifacts_dir, "error.json"),
+            {
+                "schema_version": 1,
+                "kind": "nonzero_exit",
+                "message": msg,
+                "exit_code": returncode,
+                "cmd": cmd,
+            },
+        )
+        return msg
+
+    def _persist_stdio_for_failure(
+        self,
+        artifacts_dir: str,
+        explore_enabled: bool,
+        persist_redacted_fn: Callable[[], None],
+        stdout_text: str,
+        stderr_text: str,
+    ) -> None:
+        """Write stdout/stderr artifacts for failure cases."""
+        if explore_enabled:
+            persist_redacted_fn()
+        else:
+            _atomic_write_text(
+                os.path.join(artifacts_dir, "stdout.txt"),
+                stdout_text,
+            )
+            _atomic_write_text(
+                os.path.join(artifacts_dir, "stderr.txt"),
+                stderr_text,
+            )
+
+    def _read_subprocess_stdio(
+        self,
+        stdout_path: str,
+        stderr_path: str,
+        artifacts_dir: str,
+        cmd: list[str],
+    ) -> tuple[str, str]:
+        """Read and redact stdout/stderr from subprocess temp files.
+
+        Returns (stdout_text, stderr_text).
+        """
+        stdout_text = ""
+        stderr_text = ""
+        if stdout_path:
+            try:
+                stdout_text = _read_file_truncated(
+                    stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                )
+            except OSError as exc:
+                os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+                msg = _truncate(
+                    f"Failed to read OpenCode stdout: {type(exc).__name__}: {exc}"
+                )
+                _atomic_write_json(
+                    os.path.join(artifacts_dir, "error.json"),
+                    {
+                        "schema_version": 1,
+                        "kind": "subprocess_error",
+                        "message": msg,
+                        "cmd": cmd,
+                    },
+                )
+                raise ExecFailureError(msg) from exc
+        if stderr_path:
+            try:
+                stderr_text = _read_file_truncated(
+                    stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                )
+            except OSError as exc:
+                os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+                msg = _truncate(
+                    f"Failed to read OpenCode stderr: {type(exc).__name__}: {exc}"
+                )
+                _atomic_write_json(
+                    os.path.join(artifacts_dir, "error.json"),
+                    {
+                        "schema_version": 1,
+                        "kind": "subprocess_error",
+                        "message": msg,
+                        "cmd": cmd,
+                    },
+                )
+                raise ExecFailureError(msg) from exc
+        return (_redact_secrets(stdout_text), _redact_secrets(stderr_text))
+
+    def _process_opencode_output(
+        self,
+        *,
+        stdout_path: str,
+        artifacts_dir: str,
+        out_dir: str,
+        cmd: list[str],
+        explore_enabled: bool,
+        merged_env: dict[str, str],
+    ) -> dict[str, object]:
+        """Parse OpenCode output and write explore artifacts.
+
+        Returns the parsed JSON payload.
+        """
+
+        def ensure_dir() -> None:
+            os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+
+        stdout_jsonl_path = ""
+        if explore_enabled and stdout_path:
+            ensure_dir()
+            stdout_jsonl_path = os.path.join(artifacts_dir, "stdout.jsonl")
+            max_jsonl_bytes = 2_000_000
+            mjb = (
+                merged_env.get("KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES") or ""
+            ).strip()
+            if mjb:
+                try:
+                    max_jsonl_bytes = int(mjb)
+                except ValueError:
+                    pass
+            if max_jsonl_bytes < 1:
+                raise ExecFailureError("Invalid explore limits")
+            try:
+                size = os.path.getsize(stdout_path)
+            except OSError:
+                size = 0
+            if size > max_jsonl_bytes:
+                _atomic_write_json(
+                    os.path.join(artifacts_dir, "error.json"),
+                    {
+                        "schema_version": 1,
+                        "kind": "explore_policy_violation",
+                        "message": f"OpenCode JSONL too large (bytes={size})",
+                        "cmd": cmd,
+                    },
+                )
+                raise BlockedError("Explore policy violation: OpenCode JSONL too large")
+
+        if not stdout_path:
+            raise ExecFailureError("Missing OpenCode stdout capture")
+        with open(stdout_path, "r", encoding="utf-8", errors="replace") as fh:
+            tool_uses: list[dict[str, Any]] = []
+            if explore_enabled:
+                payload, tool_uses = extract_json_and_tool_uses_from_jsonl_lines(fh)
+            else:
+                payload = extract_json_from_jsonl_lines(fh)
+
+        if explore_enabled:
+            ensure_dir()
+            _write_explore_trace_and_bundle(
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                out_dir=out_dir,
+                tool_uses=tool_uses,
+                env=merged_env,
+            )
+
+            if stdout_jsonl_path:
+                try:
+                    repo_root = _repo_root_from_out_dir(out_dir)
+                    _write_redacted_opencode_jsonl(
+                        stdout_path,
+                        stdout_jsonl_path,
+                        repo_root=repo_root,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _atomic_write_json(
+                        os.path.join(artifacts_dir, "error.json"),
+                        {
+                            "schema_version": 1,
+                            "kind": "explore_trace_write_failed",
+                            "message": _truncate(
+                                f"Failed to persist OpenCode JSONL: {type(exc).__name__}: {exc}"
+                            ),
+                            "cmd": cmd,
+                        },
+                    )
+                    raise ExecFailureError(
+                        _truncate(f"Failed to persist OpenCode JSONL: {exc}")
+                    ) from exc
+
+        return payload
+
+    def run_viewpoint(
+        self,
+        *,
+        out_dir: str,
+        viewpoint: str,
+        message: str,
+        timeout_s: int | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Run OpenCode for a single viewpoint and write artifacts.
+
+        Success:
+        - writes `review-<viewpoint_slug>.json` under out_dir
+
+        Failure:
+        - writes error artifacts under `out_dir/opencode/<viewpoint_slug>/`
+        - raises BlockedError (missing binary) or ExecFailureError (exec failure)
+        """
+
+        artifacts_dir, cmd, effective_timeout, merged_env, explore_enabled = (
+            self._validate_run_viewpoint_params(
+                out_dir=out_dir,
+                viewpoint=viewpoint,
+                timeout_s=timeout_s,
+                env=env,
+            )
+        )
+
+        def ensure_artifacts_dir() -> None:
+            os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(artifacts_dir, 0o700)
+            except OSError:
+                pass
+
         stdout_path = ""
         stderr_path = ""
-        stdout_jsonl_path = ""
         stdout_text = ""
         stderr_text = ""
 
@@ -1177,36 +1591,15 @@ class OpenCodeRunner:
                 "`opencode` is required. Install OpenCode and ensure it is on PATH."
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            ensure_artifacts_dir()
-
-            if explore_enabled:
-                persist_redacted_stdout_jsonl_for_failure()
-            else:
-                if stdout_path:
-                    stdout_text = _read_file_truncated(
-                        stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
-                    )
-                    stdout_text = _redact_secrets(stdout_text)
-                    _atomic_write_text(
-                        os.path.join(artifacts_dir, "stdout.txt"), stdout_text
-                    )
-                if stderr_path:
-                    stderr_text = _read_file_truncated(
-                        stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
-                    )
-                    stderr_text = _redact_secrets(stderr_text)
-                    _atomic_write_text(
-                        os.path.join(artifacts_dir, "stderr.txt"), stderr_text
-                    )
-
-            _atomic_write_json(
-                os.path.join(artifacts_dir, "error.json"),
-                {
-                    "schema_version": 1,
-                    "kind": "timeout",
-                    "message": f"OpenCode timed out after {effective_timeout}s",
-                    "cmd": cmd,
-                },
+            self._handle_subprocess_timeout(
+                exc,
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                effective_timeout=effective_timeout,
+                explore_enabled=explore_enabled,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                persist_redacted_fn=persist_redacted_stdout_jsonl_for_failure,
             )
             cleanup_tmp()
             raise ExecFailureError(
@@ -1227,162 +1620,39 @@ class OpenCodeRunner:
             cleanup_tmp()
             raise ExecFailureError(msg) from exc
 
-        if stdout_path:
-            try:
-                stdout_text = _read_file_truncated(
-                    stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
-                )
-            except OSError as exc:
-                ensure_artifacts_dir()
-                msg = _truncate(
-                    f"Failed to read OpenCode stdout: {type(exc).__name__}: {exc}"
-                )
-                _atomic_write_json(
-                    os.path.join(artifacts_dir, "error.json"),
-                    {
-                        "schema_version": 1,
-                        "kind": "subprocess_error",
-                        "message": msg,
-                        "cmd": cmd,
-                    },
-                )
-                cleanup_tmp()
-                raise ExecFailureError(msg) from exc
-        if stderr_path:
-            try:
-                stderr_text = _read_file_truncated(
-                    stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
-                )
-            except OSError as exc:
-                ensure_artifacts_dir()
-                msg = _truncate(
-                    f"Failed to read OpenCode stderr: {type(exc).__name__}: {exc}"
-                )
-                _atomic_write_json(
-                    os.path.join(artifacts_dir, "error.json"),
-                    {
-                        "schema_version": 1,
-                        "kind": "subprocess_error",
-                        "message": msg,
-                        "cmd": cmd,
-                    },
-                )
-                cleanup_tmp()
-                raise ExecFailureError(msg) from exc
-
-        stdout_text = _redact_secrets(stdout_text)
-        stderr_text = _redact_secrets(stderr_text)
+        try:
+            stdout_text, stderr_text = self._read_subprocess_stdio(
+                stdout_path,
+                stderr_path,
+                artifacts_dir,
+                cmd,
+            )
+        except ExecFailureError:
+            cleanup_tmp()
+            raise
 
         if p.returncode != 0:
-            ensure_artifacts_dir()
-            if explore_enabled:
-                persist_redacted_stdout_jsonl_for_failure()
-            else:
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stdout.txt"),
-                    stdout_text,
-                )
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stderr.txt"),
-                    stderr_text,
-                )
-            msg_src = (stderr_text or "").strip()
-            msg = msg_src or f"OpenCode failed (exit={p.returncode})"
-            msg = _truncate_tail(_redact_secrets(msg))
-            _atomic_write_json(
-                os.path.join(artifacts_dir, "error.json"),
-                {
-                    "schema_version": 1,
-                    "kind": "nonzero_exit",
-                    "message": msg,
-                    "exit_code": p.returncode,
-                    "cmd": cmd,
-                },
+            msg = self._handle_nonzero_exit(
+                returncode=p.returncode,
+                artifacts_dir=artifacts_dir,
+                cmd=cmd,
+                explore_enabled=explore_enabled,
+                persist_redacted_fn=persist_redacted_stdout_jsonl_for_failure,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
             )
             cleanup_tmp()
             raise ExecFailureError(msg)
 
         try:
-            stdout_jsonl_path = ""
-            if explore_enabled and stdout_path:
-                ensure_artifacts_dir()
-                stdout_jsonl_path = os.path.join(artifacts_dir, "stdout.jsonl")
-                max_jsonl_bytes = 2_000_000
-                mjb = (
-                    merged_env.get("KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES") or ""
-                ).strip()
-                if mjb:
-                    try:
-                        max_jsonl_bytes = int(mjb)
-                    except ValueError:
-                        pass
-                if max_jsonl_bytes < 1:
-                    raise ExecFailureError("Invalid explore limits")
-                try:
-                    size = os.path.getsize(stdout_path)
-                except OSError:
-                    size = 0
-                if size > max_jsonl_bytes:
-                    _atomic_write_json(
-                        os.path.join(artifacts_dir, "error.json"),
-                        {
-                            "schema_version": 1,
-                            "kind": "explore_policy_violation",
-                            "message": f"OpenCode JSONL too large (bytes={size})",
-                            "cmd": cmd,
-                        },
-                    )
-                    raise BlockedError(
-                        "Explore policy violation: OpenCode JSONL too large"
-                    )
-
-            if not stdout_path:
-                raise ExecFailureError("Missing OpenCode stdout capture")
-            with open(stdout_path, "r", encoding="utf-8", errors="replace") as fh:
-                tool_uses: list[dict[str, Any]] = []
-                if explore_enabled:
-                    payload, tool_uses = extract_json_and_tool_uses_from_jsonl_lines(fh)
-                else:
-                    payload = extract_json_from_jsonl_lines(fh)
-
-            if explore_enabled:
-                ensure_artifacts_dir()
-                _write_explore_trace_and_bundle(
-                    artifacts_dir=artifacts_dir,
-                    cmd=cmd,
-                    out_dir=out_dir,
-                    tool_uses=tool_uses,
-                    env=merged_env,
-                )
-
-                if stdout_jsonl_path:
-                    try:
-                        repo_root = _repo_root_from_out_dir(out_dir)
-                        _write_redacted_opencode_jsonl(
-                            stdout_path,
-                            stdout_jsonl_path,
-                            repo_root=repo_root,
-                        )
-                        try:
-                            os.remove(stdout_path)
-                        except OSError:
-                            pass
-                        stdout_path = ""
-                    except Exception as exc:  # noqa: BLE001
-                        _atomic_write_json(
-                            os.path.join(artifacts_dir, "error.json"),
-                            {
-                                "schema_version": 1,
-                                "kind": "explore_trace_write_failed",
-                                "message": _truncate(
-                                    f"Failed to persist OpenCode JSONL: {type(exc).__name__}: {exc}"
-                                ),
-                                "cmd": cmd,
-                            },
-                        )
-                        raise ExecFailureError(
-                            _truncate(f"Failed to persist OpenCode JSONL: {exc}")
-                        ) from exc
+            payload = self._process_opencode_output(
+                stdout_path=stdout_path,
+                artifacts_dir=artifacts_dir,
+                out_dir=out_dir,
+                cmd=cmd,
+                explore_enabled=explore_enabled,
+                merged_env=merged_env,
+            )
         except BlockedError as exc:
             ensure_artifacts_dir()
             if not explore_enabled:
@@ -1409,17 +1679,13 @@ class OpenCodeRunner:
             raise
         except ExecFailureError as exc:
             ensure_artifacts_dir()
-            if explore_enabled:
-                persist_redacted_stdout_jsonl_for_failure()
-            else:
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stdout.txt"),
-                    stdout_text,
-                )
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stderr.txt"),
-                    stderr_text,
-                )
+            self._persist_stdio_for_failure(
+                artifacts_dir,
+                explore_enabled,
+                persist_redacted_stdout_jsonl_for_failure,
+                stdout_text,
+                stderr_text,
+            )
             _atomic_write_json(
                 os.path.join(artifacts_dir, "error.json"),
                 {
@@ -1432,17 +1698,13 @@ class OpenCodeRunner:
             raise
         except OSError as exc:
             ensure_artifacts_dir()
-            if explore_enabled:
-                persist_redacted_stdout_jsonl_for_failure()
-            else:
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stdout.txt"),
-                    stdout_text,
-                )
-                _atomic_write_text(
-                    os.path.join(artifacts_dir, "stderr.txt"),
-                    stderr_text,
-                )
+            self._persist_stdio_for_failure(
+                artifacts_dir,
+                explore_enabled,
+                persist_redacted_stdout_jsonl_for_failure,
+                stdout_text,
+                stderr_text,
+            )
             msg = _truncate(
                 f"OpenCode output processing failed: {type(exc).__name__}: {exc}"
             )

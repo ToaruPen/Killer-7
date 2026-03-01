@@ -234,7 +234,7 @@ log_info "Default ref: $default_ref"
 home="$HOME"
 
 # 1) Helper CLI
-copy_with_backup "$SOURCE_ROOT/scripts/agentic-sdd" "$home/.local/bin/agentic-sdd" "$DRY_RUN"
+copy_with_backup "$SOURCE_ROOT/scripts/agentic-sdd/agentic-sdd" "$home/.local/bin/agentic-sdd" "$DRY_RUN"
 ensure_executable "$home/.local/bin/agentic-sdd" "$DRY_RUN"
 
 # 2) Pinned defaults

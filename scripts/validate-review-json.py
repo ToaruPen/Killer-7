@@ -31,7 +31,128 @@ def is_repo_relative_path(path: str) -> bool:
     return ".." not in parts
 
 
-def validate_review(  # noqa: C901
+def _validate_finding(idx: int, item: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    if not isinstance(item, dict):
+        errors.append(f"findings[{idx}] is not an object")
+        return errors
+    required_finding_keys = {"title", "body", "priority", "code_location"}
+    for k in sorted(required_finding_keys):
+        if k not in item:
+            errors.append(f"findings[{idx}] missing key: {k}")
+
+    extra_finding = set(item.keys()) - required_finding_keys
+    if extra_finding:
+        errors.append(f"findings[{idx}] unexpected keys: {sorted(extra_finding)}")
+
+    title = item.get("title")
+    if not isinstance(title, str) or not title:
+        errors.append(f"findings[{idx}].title must be a non-empty string")
+    elif len(title) > 120:
+        errors.append(f"findings[{idx}].title must be <= 120 chars")
+
+    body = item.get("body")
+    if not isinstance(body, str) or not body:
+        errors.append(f"findings[{idx}].body must be a non-empty string")
+
+    priority = item.get("priority")
+    if not isinstance(priority, str) or priority not in PRIORITY_ALLOWED:
+        errors.append(
+            f"findings[{idx}].priority must be one of {sorted(PRIORITY_ALLOWED)}"
+        )
+
+    code_location = item.get("code_location")
+    if not isinstance(code_location, dict):
+        errors.append(f"findings[{idx}].code_location must be an object")
+        return errors
+
+    required_code_location_keys = {"repo_relative_path", "line_range"}
+    missing_code_location = required_code_location_keys - set(code_location.keys())
+    if missing_code_location:
+        errors.append(
+            f"findings[{idx}].code_location missing keys: {sorted(missing_code_location)}"
+        )
+    extra_code_location = set(code_location.keys()) - required_code_location_keys
+    if extra_code_location:
+        errors.append(
+            f"findings[{idx}].code_location unexpected keys: {sorted(extra_code_location)}"
+        )
+
+    repo_relative_path = code_location.get("repo_relative_path")
+    if not isinstance(repo_relative_path, str) or not is_repo_relative_path(
+        repo_relative_path
+    ):
+        errors.append(
+            f"findings[{idx}].code_location.repo_relative_path must be repo-relative (no '..', not absolute)"
+        )
+
+    line_range = code_location.get("line_range")
+    if not isinstance(line_range, dict):
+        errors.append(f"findings[{idx}].code_location.line_range must be an object")
+        return errors
+
+    required_line_range_keys = {"start", "end"}
+    missing_line_range = required_line_range_keys - set(line_range.keys())
+    if missing_line_range:
+        errors.append(
+            f"findings[{idx}].code_location.line_range missing keys: {sorted(missing_line_range)}"
+        )
+    extra_line_range = set(line_range.keys()) - required_line_range_keys
+    if extra_line_range:
+        errors.append(
+            f"findings[{idx}].code_location.line_range unexpected keys: {sorted(extra_line_range)}"
+        )
+
+    start = line_range.get("start")
+    end = line_range.get("end")
+    if not isinstance(start, int) or start < 1:
+        errors.append(
+            f"findings[{idx}].code_location.line_range.start must be int >= 1"
+        )
+    if not isinstance(end, int) or end < 1:
+        errors.append(f"findings[{idx}].code_location.line_range.end must be int >= 1")
+    if isinstance(start, int) and isinstance(end, int) and end < start:
+        errors.append(f"findings[{idx}].code_location.line_range.end must be >= start")
+    return errors
+
+
+def _validate_cross_field_constraints(
+    status: Any, findings: List[Any], questions: List[Any]
+) -> List[str]:
+    errors: List[str] = []
+    if status == "Approved":
+        if len(findings) != 0:
+            errors.append("Approved must have findings=[]")
+        if len(questions) != 0:
+            errors.append("Approved must have questions=[]")
+
+    if status == "Approved with nits":
+        blocking = [
+            f
+            for f in findings
+            if isinstance(f, dict) and f.get("priority") in ("P0", "P1")
+        ]
+        if blocking:
+            errors.append("Approved with nits must not include P0/P1 findings")
+        if len(questions) != 0:
+            errors.append("Approved with nits must have questions=[]")
+
+    if status == "Blocked":
+        blocking = [
+            f
+            for f in findings
+            if isinstance(f, dict) and f.get("priority") in ("P0", "P1")
+        ]
+        if not blocking:
+            errors.append("Blocked must include at least one P0/P1 finding")
+
+    if status == "Question":
+        if len(questions) == 0:
+            errors.append("Question must include at least one question")
+    return errors
+
+
+def validate_review(
     obj: Dict[str, Any],
     expected_scope_id: Optional[str],
 ) -> List[str]:
@@ -88,121 +209,10 @@ def validate_review(  # noqa: C901
 
     # Validate findings
     for idx, item in enumerate(findings):
-        if not isinstance(item, dict):
-            errors.append(f"findings[{idx}] is not an object")
-            continue
-        required_finding_keys = {"title", "body", "priority", "code_location"}
-        for k in sorted(required_finding_keys):
-            if k not in item:
-                errors.append(f"findings[{idx}] missing key: {k}")
-
-        extra_finding = set(item.keys()) - required_finding_keys
-        if extra_finding:
-            errors.append(f"findings[{idx}] unexpected keys: {sorted(extra_finding)}")
-
-        title = item.get("title")
-        if not isinstance(title, str) or not title:
-            errors.append(f"findings[{idx}].title must be a non-empty string")
-        elif len(title) > 120:
-            errors.append(f"findings[{idx}].title must be <= 120 chars")
-
-        body = item.get("body")
-        if not isinstance(body, str) or not body:
-            errors.append(f"findings[{idx}].body must be a non-empty string")
-
-        priority = item.get("priority")
-        if not isinstance(priority, str) or priority not in PRIORITY_ALLOWED:
-            errors.append(
-                f"findings[{idx}].priority must be one of {sorted(PRIORITY_ALLOWED)}"
-            )
-
-        code_location = item.get("code_location")
-        if not isinstance(code_location, dict):
-            errors.append(f"findings[{idx}].code_location must be an object")
-            continue
-
-        required_code_location_keys = {"repo_relative_path", "line_range"}
-        missing_code_location = required_code_location_keys - set(code_location.keys())
-        if missing_code_location:
-            errors.append(
-                f"findings[{idx}].code_location missing keys: {sorted(missing_code_location)}"
-            )
-        extra_code_location = set(code_location.keys()) - required_code_location_keys
-        if extra_code_location:
-            errors.append(
-                f"findings[{idx}].code_location unexpected keys: {sorted(extra_code_location)}"
-            )
-
-        repo_relative_path = code_location.get("repo_relative_path")
-        if not isinstance(repo_relative_path, str) or not is_repo_relative_path(
-            repo_relative_path
-        ):
-            errors.append(
-                f"findings[{idx}].code_location.repo_relative_path must be repo-relative (no '..', not absolute)"
-            )
-
-        line_range = code_location.get("line_range")
-        if not isinstance(line_range, dict):
-            errors.append(f"findings[{idx}].code_location.line_range must be an object")
-            continue
-
-        required_line_range_keys = {"start", "end"}
-        missing_line_range = required_line_range_keys - set(line_range.keys())
-        if missing_line_range:
-            errors.append(
-                f"findings[{idx}].code_location.line_range missing keys: {sorted(missing_line_range)}"
-            )
-        extra_line_range = set(line_range.keys()) - required_line_range_keys
-        if extra_line_range:
-            errors.append(
-                f"findings[{idx}].code_location.line_range unexpected keys: {sorted(extra_line_range)}"
-            )
-
-        start = line_range.get("start")
-        end = line_range.get("end")
-        if not isinstance(start, int) or start < 1:
-            errors.append(
-                f"findings[{idx}].code_location.line_range.start must be int >= 1"
-            )
-        if not isinstance(end, int) or end < 1:
-            errors.append(
-                f"findings[{idx}].code_location.line_range.end must be int >= 1"
-            )
-        if isinstance(start, int) and isinstance(end, int) and end < start:
-            errors.append(
-                f"findings[{idx}].code_location.line_range.end must be >= start"
-            )
+        errors.extend(_validate_finding(idx, item))
 
     # Cross-field constraints
-    if status == "Approved":
-        if len(findings) != 0:
-            errors.append("Approved must have findings=[]")
-        if len(questions) != 0:
-            errors.append("Approved must have questions=[]")
-
-    if status == "Approved with nits":
-        blocking = [
-            f
-            for f in findings
-            if isinstance(f, dict) and f.get("priority") in ("P0", "P1")
-        ]
-        if blocking:
-            errors.append("Approved with nits must not include P0/P1 findings")
-        if len(questions) != 0:
-            errors.append("Approved with nits must have questions=[]")
-
-    if status == "Blocked":
-        blocking = [
-            f
-            for f in findings
-            if isinstance(f, dict) and f.get("priority") in ("P0", "P1")
-        ]
-        if not blocking:
-            errors.append("Blocked must include at least one P0/P1 finding")
-
-    if status == "Question":
-        if len(questions) == 0:
-            errors.append("Question must include at least one question")
+    errors.extend(_validate_cross_field_constraints(status, findings, questions))
 
     return errors
 

@@ -958,7 +958,1409 @@ def _raise_invalid_review_args(message: str) -> NoReturn:
     raise ParserExit(2, full)
 
 
-def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
+def _one_line(value: object) -> str:
+    s = "" if value is None else str(value)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.replace("\n", "\\n")
+    s = s.replace("\t", "\\t")
+    out: list[str] = []
+    for ch in s:
+        cat = unicodedata.category(ch)
+        if cat in {"Cc", "Cf"} or (not ch.isprintable()):
+            o = ord(ch)
+            if o <= 0xFF:
+                out.append(f"\\x{o:02x}")
+            elif o <= 0xFFFF:
+                out.append(f"\\u{o:04x}")
+            else:
+                out.append(f"\\U{o:08x}")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _load_tool_bundle_manifest(
+    manifest_path: str,
+    cwd: str,
+    max_manifest_bytes: int = 64 * 1024,
+) -> tuple[dict[str, object], bool, list[str]]:
+    """Load and validate the tool-bundle manifest.json.
+
+    Returns (manifest_dict, manifest_present, warning_lines).
+    """
+    warnings: list[str] = []
+    manifest: dict[str, object] = {}
+    if not os.path.isfile(manifest_path):
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=missing"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+        )
+        return (manifest, False, warnings)
+    if os.path.islink(manifest_path):
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=is_symlink"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+        )
+        return (manifest, False, warnings)
+
+    try:
+        manifest_size_bytes = os.path.getsize(manifest_path)
+    except OSError as exc:
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=stat_failed"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+            + f" message={_one_line(str(exc))}"
+        )
+        return (manifest, False, warnings)
+
+    if manifest_size_bytes > max_manifest_bytes:
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=size_limit_exceeded"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+            + f" size_bytes={manifest_size_bytes}"
+            + f" limit_bytes={max_manifest_bytes}"
+        )
+        return (manifest, False, warnings)
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, dict):
+            manifest = _coerce_str_object_dict(cast(object, loaded))
+        else:
+            warnings.append(
+                "tool_bundle_manifest_skipped kind=invalid_type"
+                + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+            )
+            return (manifest, False, warnings)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=invalid_json"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+            + f" message={_one_line(str(exc))}"
+        )
+        return (manifest, False, warnings)
+
+    return (manifest, True, warnings)
+
+
+def _extract_manifest_names(
+    manifest: dict[str, object],
+    manifest_present: bool,
+    manifest_path: str,
+    pr_head_sha: str,
+    cwd: str,
+) -> tuple[list[str], list[str]]:
+    """Extract and validate file names from the manifest.
+
+    Returns (names, warning_lines).
+    """
+    warnings: list[str] = []
+    head_obj = manifest.get("head_sha")
+    head_sha = head_obj if isinstance(head_obj, str) else ""
+    if not head_sha:
+        if manifest_present:
+            warnings.append(
+                "tool_bundle_manifest_skipped kind=missing_head_sha"
+                + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+            )
+        return ([], warnings)
+    if head_sha != pr_head_sha:
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=head_sha_mismatch"
+            + f" expected={_one_line(pr_head_sha)}"
+            + f" actual={_one_line(head_sha)}"
+        )
+        return ([], warnings)
+
+    files_obj = manifest.get("files")
+    if not isinstance(files_obj, list):
+        warnings.append(
+            "tool_bundle_manifest_skipped kind=invalid_files"
+            + f" path={_one_line(os.path.relpath(manifest_path, cwd))}"
+        )
+        return ([], warnings)
+
+    names: list[str] = []
+    max_manifest_entries = 1000
+    files_list = _coerce_object_list(cast(object, files_obj))
+    if len(files_list) > max_manifest_entries:
+        warnings.append(
+            "tool_bundle_manifest_files_truncated"
+            + f" total={len(files_list)}"
+            + f" limit={max_manifest_entries}"
+        )
+    for raw in files_list[:max_manifest_entries]:
+        if not isinstance(raw, str):
+            continue
+        n = raw.strip()
+        if not n:
+            continue
+        if "/" in n or "\\" in n:
+            continue
+        if n in {".", ".."}:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.txt", n):
+            continue
+        names.append(n)
+    return (names, warnings)
+
+
+def _process_tool_bundle_file(
+    p: str,
+    name: str,
+    tool_bundle_dir_real: str,
+    max_bytes: int,
+    cwd: str,
+) -> tuple[dict[str, set[int]] | None, str | None, list[str]]:
+    """Process a single tool-bundle file.
+
+    Returns (index_or_none, relpath_or_none, warning_lines).
+    If index_or_none is None, the file was skipped.
+    """
+    warnings: list[str] = []
+
+    if os.path.islink(p):
+        warnings.append(
+            "tool_bundle_file_skipped kind=is_symlink"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+        )
+        return (None, None, warnings)
+
+    p_real = os.path.realpath(p)
+    try:
+        under_tool_bundle = (
+            os.path.commonpath([tool_bundle_dir_real, p_real]) == tool_bundle_dir_real
+        )
+    except ValueError:
+        under_tool_bundle = False
+    if not under_tool_bundle:
+        warnings.append(
+            "tool_bundle_file_skipped kind=escapes_tool_bundle"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+        )
+        return (None, None, warnings)
+
+    if not os.path.isfile(p):
+        warnings.append(
+            "tool_bundle_file_skipped kind=missing"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+        )
+        return (None, None, warnings)
+
+    try:
+        size_bytes = os.path.getsize(p)
+    except OSError as exc:
+        warnings.append(
+            "tool_bundle_file_skipped kind=stat_failed"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+            + f" message={_one_line(str(exc))}"
+        )
+        return (None, None, warnings)
+
+    if size_bytes > max_bytes:
+        warnings.append(
+            "tool_bundle_file_skipped kind=size_limit_exceeded"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+            + f" size_bytes={size_bytes}"
+            + f" limit_bytes={max_bytes}"
+        )
+        return (None, None, warnings)
+
+    try:
+        with open(p, "rb") as fh:
+            raw = fh.read(max_bytes + 1)
+    except OSError as exc:
+        warnings.append(
+            "tool_bundle_file_skipped kind=read_failed"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+            + f" message={_one_line(str(exc))}"
+        )
+        return (None, None, warnings)
+
+    if len(raw) > max_bytes:
+        warnings.append(
+            "tool_bundle_file_skipped kind=size_limit_exceeded"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+            + f" size_bytes={len(raw)}"
+            + f" limit_bytes={max_bytes}"
+        )
+        return (None, None, warnings)
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        warnings.append(
+            "tool_bundle_file_skipped kind=decode_error"
+            + f" path={_one_line(os.path.relpath(p, cwd))}"
+            + f" size_bytes={size_bytes}"
+        )
+        return (None, None, warnings)
+
+    extra_index = parse_context_bundle_index(text)
+    result_index: dict[str, set[int]] = {}
+    for src_path, lines in extra_index.items():
+        normalized = _normalize_tool_bundle_src_path(src_path)
+        if not normalized:
+            warnings.append(
+                "tool_bundle_src_skipped kind=invalid_src"
+                + f" path={_one_line(os.path.relpath(p, cwd))}"
+            )
+            continue
+
+        aliases = {normalized, f"./{normalized}"}
+        if os.sep == "\\":
+            back = normalized.replace("/", "\\")
+            aliases.add(back)
+            aliases.add(f".\\{back}")
+        for key in sorted(aliases):
+            if key in result_index:
+                result_index[key].update(lines)
+            else:
+                result_index[key] = set(lines)
+
+    relpath = os.path.relpath(p, cwd).replace(os.sep, "/")
+    return (result_index, relpath, warnings)
+
+
+def scan_tool_bundle(
+    *,
+    out_dir: str,
+    pr_head_sha: str,
+    cwd: str,
+) -> tuple[list[str], dict[str, set[int]], list[str]]:
+    tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
+    if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
+        dir_warning_lines: list[str] = [
+            "tool_bundle_dir_skipped kind=not_a_directory"
+            + f" path={_one_line(os.path.relpath(tool_bundle_dir, cwd))}"
+        ]
+        return ([], {}, dir_warning_lines)
+    if not os.path.isdir(tool_bundle_dir):
+        return ([], {}, [])
+
+    extra_warning_lines: list[str] = []
+    tool_bundle_files: list[str] = []
+    tool_bundle_index: dict[str, set[int]] = {}
+
+    out_dir_real = os.path.realpath(out_dir)
+    if os.path.islink(tool_bundle_dir):
+        extra_warning_lines.append(
+            "tool_bundle_dir_skipped kind=is_symlink"
+            + f" path={_one_line(os.path.relpath(tool_bundle_dir, cwd))}"
+        )
+        return ([], {}, extra_warning_lines)
+    tool_bundle_dir_real = os.path.realpath(tool_bundle_dir)
+    try:
+        under_artifacts = (
+            os.path.commonpath([out_dir_real, tool_bundle_dir_real]) == out_dir_real
+        )
+    except ValueError:
+        under_artifacts = False
+    if not under_artifacts:
+        extra_warning_lines.append(
+            "tool_bundle_dir_skipped kind=escapes_artifacts"
+            + f" path={_one_line(os.path.relpath(tool_bundle_dir, cwd))}"
+        )
+        return ([], {}, extra_warning_lines)
+
+    max_bytes = 100 * 1024
+    manifest_path = os.path.join(tool_bundle_dir, "manifest.json")
+    manifest: dict[str, object] = {}
+    manifest_path = os.path.join(tool_bundle_dir, "manifest.json")
+    manifest, manifest_present, manifest_warnings = _load_tool_bundle_manifest(
+        manifest_path,
+        cwd,
+    )
+    extra_warning_lines.extend(manifest_warnings)
+
+    names, names_warnings = _extract_manifest_names(
+        manifest,
+        manifest_present,
+        manifest_path,
+        pr_head_sha,
+        cwd,
+    )
+    extra_warning_lines.extend(names_warnings)
+
+    max_files = 200
+    max_total_bytes = 1 * 1024 * 1024
+    seen_names: set[str] = set()
+    processed_files = 0
+    processed_total_bytes = 0
+
+    for name in names:
+        if not name.endswith(".txt"):
+            continue
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+
+        if processed_files >= max_files:
+            extra_warning_lines.append(
+                "tool_bundle_processing_stopped kind=max_files_exceeded"
+                + f" max_files={max_files}"
+            )
+            break
+
+        processed_files += 1
+
+        p = os.path.join(tool_bundle_dir, name)
+
+        try:
+            file_size = os.path.getsize(p)
+        except OSError:
+            file_size = 0
+        if processed_total_bytes + file_size > max_total_bytes:
+            extra_warning_lines.append(
+                "tool_bundle_processing_stopped kind=max_total_bytes_exceeded"
+                + f" max_total_bytes={max_total_bytes}"
+                + f" next_file_size_bytes={file_size}"
+            )
+            break
+
+        file_index, file_relpath, file_warnings = _process_tool_bundle_file(
+            p,
+            name,
+            tool_bundle_dir_real,
+            max_bytes,
+            cwd,
+        )
+        extra_warning_lines.extend(file_warnings)
+
+        if file_index is None:
+            continue
+
+        processed_total_bytes += file_size
+
+        for key, lines_set in file_index.items():
+            if key in tool_bundle_index:
+                tool_bundle_index[key].update(lines_set)
+            else:
+                tool_bundle_index[key] = set(lines_set)
+
+        if file_relpath is not None:
+            tool_bundle_files.append(file_relpath)
+
+    return (tool_bundle_files, tool_bundle_index, extra_warning_lines)
+
+
+def _determine_incremental_mode(
+    state_payload: dict[str, object],
+    review_args: object,
+    selected_aspects: tuple[str, ...],
+    no_sot_aspects: set[str],
+) -> tuple[bool, str, str, str | None, object, object]:
+    """Determine whether incremental review mode should be applied.
+
+    Returns (incremental_applied, incremental_reason, incremental_base_head_sha,
+            prev_head_for_incremental, prev_repo, prev_pr).
+    """
+    prev_repo = state_payload.get("repo")
+    prev_pr = state_payload.get("pr")
+    has_prev_incremental_base = "incremental_base_head_sha" in state_payload
+    prev_head = state_payload.get("head_sha")
+    prev_incremental_base_head = state_payload.get("incremental_base_head_sha")
+    prev_selected_aspects_obj = state_payload.get("selected_aspects")
+    prev_selected_aspects_list: list[object] | None
+    if isinstance(prev_selected_aspects_obj, list):
+        prev_selected_aspects_list = cast(list[object], prev_selected_aspects_obj)
+    else:
+        prev_selected_aspects_list = None
+    prev_no_sot_aspects = state_payload.get("no_sot_aspects")
+    prev_no_sot_aspects_list: list[object] | None
+    if prev_no_sot_aspects is None:
+        prev_no_sot_aspects_list = []
+    elif isinstance(prev_no_sot_aspects, list):
+        prev_no_sot_aspects_list = cast(list[object], prev_no_sot_aspects)
+    else:
+        prev_no_sot_aspects_list = None
+
+    incremental_requested = not review_args.full  # type: ignore[attr-defined]
+    incremental_applied = False
+    incremental_reason = ""
+    incremental_base_head_sha = ""
+
+    prev_head_for_incremental: str | None
+    if (
+        isinstance(prev_incremental_base_head, str)
+        and prev_incremental_base_head.strip()
+    ):
+        prev_head_for_incremental = prev_incremental_base_head
+    elif has_prev_incremental_base:
+        prev_head_for_incremental = None
+    elif isinstance(prev_head, str) and prev_head.strip():
+        prev_head_for_incremental = prev_head
+    else:
+        prev_head_for_incremental = None
+
+    if not incremental_requested:
+        incremental_reason = "forced_full"
+    elif (
+        not isinstance(prev_head_for_incremental, str)
+        or not prev_head_for_incremental.strip()
+    ):
+        incremental_reason = "missing_previous_head"
+    elif prev_repo != review_args.repo or prev_pr != review_args.pr:  # type: ignore[attr-defined]
+        incremental_reason = "previous_scope_mismatch"
+    elif prev_selected_aspects_list is None or not prev_selected_aspects_list:
+        incremental_reason = "missing_previous_selected_aspects"
+    elif any(
+        not isinstance(a, str) or not a.strip() for a in prev_selected_aspects_list
+    ):
+        incremental_reason = "invalid_previous_selected_aspects"
+    elif {str(a) for a in prev_selected_aspects_list} != set(selected_aspects):
+        incremental_reason = "previous_aspects_mismatch"
+    elif prev_no_sot_aspects_list is None:
+        incremental_reason = "invalid_previous_no_sot_aspects"
+    elif any(not isinstance(a, str) or not a.strip() for a in prev_no_sot_aspects_list):
+        incremental_reason = "invalid_previous_no_sot_aspects"
+    elif set(prev_no_sot_aspects_list) != set(no_sot_aspects):
+        incremental_reason = "previous_no_sot_aspects_mismatch"
+    else:
+        base_head = prev_head_for_incremental.strip()
+        incremental_base_head_sha = base_head
+        incremental_applied = True
+        incremental_reason = "head_based_incremental"
+
+    return (
+        incremental_applied,
+        incremental_reason,
+        incremental_base_head_sha,
+        prev_head_for_incremental,
+        prev_repo,
+        prev_pr,
+    )
+
+
+def _fetch_pr_input_with_incremental(
+    review_args: object,
+    incremental_applied: bool,
+    incremental_base_head_sha: str,
+    out_dir: str,
+) -> tuple[object, bool, str]:
+    """Fetch PR input, handling incremental mode with fallback.
+
+    Returns (pr_input, incremental_applied, incremental_reason).
+    """
+    incremental_reason = ""
+    if incremental_applied:
+        try:
+            pr_input = fetch_pr_input(
+                repo=review_args.repo,  # type: ignore[attr-defined]
+                pr=review_args.pr,  # type: ignore[attr-defined]
+                base_head_sha=incremental_base_head_sha,
+            )
+        except ExecFailureError as exc:
+            if "PR head changed during input fetch" in str(exc):
+                clear_stale_review_summary(out_dir)
+                raise
+            incremental_applied = False
+            incremental_reason = f"incremental_fallback_full: {exc}"
+            pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)  # type: ignore[attr-defined]
+    else:
+        pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)  # type: ignore[attr-defined]
+
+    if incremental_applied and pr_input.diff_mode != "incremental":
+        incremental_applied = False
+        if not incremental_reason:
+            incremental_reason = "full_diff"
+
+    return (pr_input, incremental_applied, incremental_reason)
+
+
+def _collect_explore_artifacts(
+    review_args: object,
+    selected_aspects: tuple[str, ...],
+    out_dir: str,
+    pr_input: object,
+) -> tuple[str, str, list[str]]:
+    """Collect explore-mode tool traces and bundles.
+
+    Returns (tool_trace_txt, tool_bundle_txt, tool_bundle_files_from_scan_warning_lines).
+    """
+    tool_trace_txt = ""
+    tool_bundle_txt = ""
+
+    if not review_args.explore:  # type: ignore[attr-defined]
+        return (tool_trace_txt, tool_bundle_txt, [])
+
+    def _join_capped(chunks: list[str], *, max_bytes: int) -> str:
+        if max_bytes < 1:
+            return ""
+        buf = bytearray()
+        first = True
+        truncated = False
+
+        for raw in chunks:
+            s = (raw or "").rstrip("\n")
+            if not s.strip():
+                continue
+            if not first:
+                s = "\n" + s
+            b = s.encode("utf-8")
+            if len(buf) + len(b) > max_bytes:
+                remaining = max_bytes - len(buf)
+                if remaining > 0:
+                    buf.extend(b[:remaining])
+                truncated = True
+                break
+            buf.extend(b)
+            first = False
+
+        if not buf:
+            return ""
+        if truncated:
+            last_nl = buf.rfind(b"\n")
+            if last_nl >= 0:
+                buf = buf[:last_nl]
+        return buf.decode("utf-8", errors="replace").rstrip("\n")
+
+    trace_chunks: list[str] = []
+    bundle_chunks: list[str] = []
+    for aspect in selected_aspects:
+        aspect_dir = opencode_artifacts_dir(out_dir, aspect)
+
+        p_trace = os.path.join(aspect_dir, "tool-trace.jsonl")
+        p_bundle = os.path.join(aspect_dir, "tool-bundle.txt")
+        if os.path.isfile(p_trace):
+            try:
+                with open(p_trace, "r", encoding="utf-8", errors="replace") as fh:
+                    trace_chunks.append(fh.read() or "")
+            except OSError:
+                raise ExecFailureError(f"Failed to read explore tool trace: {p_trace}")
+        if os.path.isfile(p_bundle):
+            try:
+                with open(p_bundle, "r", encoding="utf-8", errors="replace") as fh:
+                    bundle_chunks.append(fh.read() or "")
+            except OSError:
+                raise ExecFailureError(
+                    f"Failed to read explore tool bundle: {p_bundle}"
+                )
+
+    max_trace_bytes = 1_000_000
+    tool_trace_txt = _join_capped(trace_chunks, max_bytes=max_trace_bytes)
+    max_bundle_bytes = 300_000
+    raw = (os.environ.get("KILLER7_EXPLORE_MAX_BUNDLE_BYTES") or "").strip()
+    if raw:
+        try:
+            max_bundle_bytes = int(raw)
+        except ValueError:
+            max_bundle_bytes = 300_000
+    tool_bundle_txt = _join_capped(bundle_chunks, max_bytes=max_bundle_bytes)
+
+    # `scan_tool_bundle()` only ingests files up to 100KiB.
+    scan_bundle_max_bytes = 100 * 1024
+    tool_bundle_txt_for_scan = _join_capped(
+        [tool_bundle_txt], max_bytes=scan_bundle_max_bytes
+    )
+
+    _ = write_tool_trace_jsonl(out_dir, tool_trace_txt)
+    _ = write_tool_bundle_txt(out_dir, tool_bundle_txt)
+
+    tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
+    try:
+        os.makedirs(tool_bundle_dir, mode=0o700, exist_ok=True)
+    except OSError as exc:
+        raise ExecFailureError(
+            f"Failed to create tool bundle dir: {tool_bundle_dir}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    explore_bundle_name = "explore.txt"
+    explore_bundle_path = os.path.join(tool_bundle_dir, explore_bundle_name)
+    atomic_write_text_secure(explore_bundle_path, tool_bundle_txt_for_scan)
+    atomic_write_json_secure(
+        os.path.join(tool_bundle_dir, "manifest.json"),
+        {
+            "schema_version": 1,
+            "head_sha": pr_input.head_sha,  # type: ignore[attr-defined]
+            "files": [explore_bundle_name],
+        },
+    )
+
+    return (tool_trace_txt, tool_bundle_txt, [])
+
+
+def _process_aspect_results(
+    index_path: str,
+    out_dir: str,
+    scope_id: str,
+    context_index: dict[str, set[int]],
+    deferred_exc: object | None,
+) -> tuple[
+    dict[str, object],
+    dict[str, dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, int],
+    list[object],
+]:
+    """Process aspect results from index.json.
+
+    Returns (per_aspect, summary_reviews, evidence_index_aspects,
+            policy_index_aspects, totals, aspects_list).
+    """
+
+    def require_int(v: object, *, key: str, aspect: str) -> int:
+        if type(v) is not int:
+            raise ExecFailureError(
+                f"Invalid evidence stats: {aspect}.{key} must be int"
+            )
+        return v
+
+    per_aspect: dict[str, object] = {}
+    summary_reviews: dict[str, dict[str, object]] = {}
+    evidence_index_aspects: list[dict[str, object]] = []
+    policy_index_aspects: list[dict[str, object]] = []
+    totals: dict[str, int] = {
+        "aspects_total": 0,
+        "aspects_ok": 0,
+        "aspects_failed": 0,
+        "total_in": 0,
+        "total_out": 0,
+        "excluded_count": 0,
+        "downgraded_count": 0,
+        "verified_true_count": 0,
+        "verified_false_count": 0,
+    }
+
+    if not index_path:
+        raise ExecFailureError("Missing aspects index_path")
+
+    if deferred_exc is not None and not os.path.isfile(index_path):
+        raise cast(Exception, deferred_exc)
+    if not os.path.isfile(index_path):
+        raise ExecFailureError("Missing aspects index.json artifact")
+
+    out_dir_real = os.path.realpath(out_dir)
+    index_path_real = os.path.realpath(index_path)
+    if not (
+        index_path_real == out_dir_real
+        or index_path_real.startswith(out_dir_real + os.sep)
+    ):
+        raise ExecFailureError(
+            "Invalid aspects index_path: must stay within artifacts dir"
+        )
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            index_payload = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        raise ExecFailureError(f"Failed to read aspects index JSON: {exc}") from exc
+
+    if not isinstance(index_payload, dict):
+        raise ExecFailureError("Invalid aspects index JSON: root must be object")
+    index_payload_dict = _coerce_str_object_dict(cast(object, index_payload))
+
+    aspects_list_obj = index_payload_dict.get("aspects")
+    if not isinstance(aspects_list_obj, list):
+        raise ExecFailureError("Invalid aspects index JSON: 'aspects' must be an array")
+    aspects_list = _coerce_object_list(cast(object, aspects_list_obj))
+
+    for i, entry_obj in enumerate(aspects_list):
+        _process_single_aspect(
+            i=i,
+            entry_obj=entry_obj,
+            out_dir=out_dir,
+            out_dir_real=out_dir_real,
+            scope_id=scope_id,
+            context_index=context_index,
+            per_aspect=per_aspect,
+            summary_reviews=summary_reviews,
+            evidence_index_aspects=evidence_index_aspects,
+            policy_index_aspects=policy_index_aspects,
+            totals=totals,
+            require_int=require_int,
+        )
+
+    return (
+        per_aspect,
+        summary_reviews,
+        evidence_index_aspects,
+        policy_index_aspects,
+        totals,
+        aspects_list,
+    )
+
+
+def _process_single_aspect(
+    *,
+    i: int,
+    entry_obj: object,
+    out_dir: str,
+    out_dir_real: str,
+    scope_id: str,
+    context_index: dict[str, set[int]],
+    per_aspect: dict[str, object],
+    summary_reviews: dict[str, dict[str, object]],
+    evidence_index_aspects: list[dict[str, object]],
+    policy_index_aspects: list[dict[str, object]],
+    totals: dict[str, int],
+    require_int: object,
+) -> None:
+    """Process a single aspect entry from the aspects index."""
+    totals["aspects_total"] += 1
+    if not isinstance(entry_obj, dict):
+        raise ExecFailureError(
+            f"Invalid aspects index JSON: aspects[{i}] must be an object"
+        )
+    entry = _coerce_str_object_dict(cast(object, entry_obj))
+
+    aspect_name = entry.get("aspect")
+    ok = entry.get("ok")
+    rel_path = entry.get("result_path")
+
+    if not isinstance(aspect_name, str) or not aspect_name:
+        raise ExecFailureError(
+            f"Invalid aspects index JSON: aspects[{i}].aspect must be a non-empty string"
+        )
+    if not isinstance(ok, bool):
+        raise ExecFailureError(
+            f"Invalid aspects index JSON: aspects[{i}].ok must be boolean"
+        )
+    if ok is not True:
+        _process_failed_aspect(
+            entry=entry,
+            aspect_name=aspect_name,
+            rel_path=rel_path,
+            out_dir=out_dir,
+            out_dir_real=out_dir_real,
+            per_aspect=per_aspect,
+            evidence_index_aspects=evidence_index_aspects,
+            policy_index_aspects=policy_index_aspects,
+            totals=totals,
+        )
+        return
+    if not isinstance(rel_path, str) or not rel_path:
+        raise ExecFailureError(
+            f"Invalid aspects index JSON: ok=true but result_path missing for aspect={aspect_name!r}"
+        )
+
+    totals["aspects_ok"] += 1
+    _process_ok_aspect(
+        aspect_name=aspect_name,
+        rel_path=rel_path,
+        out_dir=out_dir,
+        out_dir_real=out_dir_real,
+        scope_id=scope_id,
+        context_index=context_index,
+        per_aspect=per_aspect,
+        summary_reviews=summary_reviews,
+        evidence_index_aspects=evidence_index_aspects,
+        policy_index_aspects=policy_index_aspects,
+        totals=totals,
+        require_int=require_int,
+    )
+
+
+def _process_failed_aspect(
+    *,
+    entry: dict[str, object],
+    aspect_name: str,
+    rel_path: object,
+    out_dir: str,
+    out_dir_real: str,
+    per_aspect: dict[str, object],
+    evidence_index_aspects: list[dict[str, object]],
+    policy_index_aspects: list[dict[str, object]],
+    totals: dict[str, int],
+) -> None:
+    """Handle a failed aspect entry."""
+    totals["aspects_failed"] += 1
+    aspect_info: dict[str, object] = {
+        "ok": False,
+    }
+
+    raw_input = rel_path if isinstance(rel_path, str) else ""
+    raw_input = raw_input.replace("\\", "/")
+    result_path = ""
+    if raw_input:
+        candidate = os.path.join(out_dir, raw_input)
+        candidate_real = os.path.realpath(candidate)
+        if candidate_real == out_dir_real or candidate_real.startswith(
+            out_dir_real + os.sep
+        ):
+            result_path = raw_input
+
+    error_kind = entry.get("error_kind")
+    error_message = entry.get("error_message")
+    if isinstance(error_kind, str) and error_kind:
+        aspect_info["error_kind"] = error_kind
+    if isinstance(error_message, str) and error_message:
+        aspect_info["error_message"] = error_message
+    if result_path:
+        aspect_info["result_path"] = result_path
+
+    per_aspect[aspect_name] = aspect_info
+
+    evidence_index_aspects.append(
+        {
+            "aspect": aspect_name,
+            "ok": False,
+            "result_path": result_path,
+            "evidence_path": "",
+        }
+    )
+    policy_index_aspects.append(
+        {
+            "aspect": aspect_name,
+            "ok": False,
+            "result_path": result_path,
+            "policy_path": "",
+        }
+    )
+
+
+def _process_ok_aspect(
+    *,
+    aspect_name: str,
+    rel_path: str,
+    out_dir: str,
+    out_dir_real: str,
+    scope_id: str,
+    context_index: dict[str, set[int]],
+    per_aspect: dict[str, object],
+    summary_reviews: dict[str, dict[str, object]],
+    evidence_index_aspects: list[dict[str, object]],
+    policy_index_aspects: list[dict[str, object]],
+    totals: dict[str, int],
+    require_int: object,
+) -> None:
+    """Handle an ok=true aspect entry."""
+    # Guard against path traversal in index.json.
+    src_path = os.path.join(out_dir, rel_path)
+    src_path_real = os.path.realpath(src_path)
+    if not (
+        src_path_real == out_dir_real or src_path_real.startswith(out_dir_real + os.sep)
+    ):
+        raise ExecFailureError(
+            f"Invalid aspect result_path: must stay within artifacts dir: {rel_path!r}"
+        )
+    try:
+        with open(src_path, "r", encoding="utf-8") as fh:
+            review_payload = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        raise ExecFailureError(
+            f"Failed to read aspect JSON: {src_path}: {exc}"
+        ) from exc
+
+    if not isinstance(review_payload, dict):
+        raise ExecFailureError(f"Aspect JSON must be an object: {src_path}")
+    review_payload_dict = _coerce_str_object_dict(cast(object, review_payload))
+
+    findings_obj = review_payload_dict.get("findings")
+    if not isinstance(findings_obj, list):
+        raise ExecFailureError(f"Aspect JSON findings must be an array: {src_path}")
+    findings_list = _coerce_object_list(cast(object, findings_obj))
+    if any(not isinstance(x, dict) for x in findings_list):
+        raise ExecFailureError(
+            f"Aspect JSON findings entries must be objects: {src_path}"
+        )
+    questions_obj = review_payload_dict.get("questions")
+    if not isinstance(questions_obj, list):
+        raise ExecFailureError(f"Aspect JSON questions must be an array: {src_path}")
+    questions = _coerce_object_list(cast(object, questions_obj))
+
+    out_findings, stats = apply_evidence_policy_to_findings(
+        findings_list, context_index
+    )
+
+    updated_review: dict[str, object] = dict(review_payload_dict)
+    updated_review["findings"] = out_findings
+    updated_review["status"] = recompute_review_status(out_findings, questions)
+
+    policy_review: dict[str, object] = dict(review_payload_dict)
+    policy_findings = _strip_machine_fields_from_findings(out_findings)
+    policy_review["findings"] = policy_findings
+    policy_review["status"] = recompute_review_status(policy_findings, questions)
+
+    # Preserve the raw (pre-policy) review for debugging/auditing.
+    raw_path = f"{os.path.splitext(src_path)[0]}.raw.json"
+    atomic_write_json_secure(raw_path, review_payload_dict)
+
+    raw_rel_path = os.path.relpath(raw_path, out_dir).replace(os.sep, "/")
+    canonical_rel_path = rel_path.replace(os.sep, "/")
+
+    # Make the policy-applied review canonical for any downstream consumers
+    # that still read `.ai-review/aspects/<aspect>.json`.
+    atomic_write_json_secure(src_path, policy_review)
+
+    aspect_evidence_payload: dict[str, object] = {
+        "schema_version": 1,
+        "kind": "aspect_evidence",
+        "generated_at": now_utc_z(),
+        "scope_id": scope_id,
+        "aspect": aspect_name,
+        "input_path": raw_rel_path,
+        "canonical_path": canonical_rel_path,
+        "review": updated_review,
+        "stats": stats,
+    }
+
+    evidence_path = write_aspect_evidence_json(
+        out_dir, aspect=aspect_name, payload=aspect_evidence_payload
+    )
+
+    policy_path = write_aspect_policy_json(
+        out_dir, aspect=aspect_name, payload=policy_review
+    )
+
+    # Use the evidence/policy-applied review with machine fields preserved for
+    # aggregated report generation (review-summary.json).
+    summary_reviews[aspect_name] = dict(updated_review)
+
+    per_aspect[aspect_name] = {
+        "ok": True,
+        "input_path": raw_rel_path,
+        "canonical_path": canonical_rel_path,
+        "evidence_path": os.path.relpath(evidence_path, out_dir).replace(os.sep, "/"),
+        "policy_path": os.path.relpath(policy_path, out_dir).replace(os.sep, "/"),
+        "stats": stats,
+    }
+
+    evidence_index_aspects.append(
+        {
+            "aspect": aspect_name,
+            "ok": True,
+            "result_path": canonical_rel_path,
+            "input_path": raw_rel_path,
+            "evidence_path": os.path.relpath(evidence_path, out_dir).replace(
+                os.sep, "/"
+            ),
+        }
+    )
+    policy_index_aspects.append(
+        {
+            "aspect": aspect_name,
+            "ok": True,
+            "result_path": rel_path.replace(os.sep, "/"),
+            "policy_path": os.path.relpath(policy_path, out_dir).replace(os.sep, "/"),
+        }
+    )
+
+    if not isinstance(stats, dict):
+        raise ExecFailureError(
+            f"Invalid evidence stats: {aspect_name}.stats must be an object"
+        )
+
+    total_in = require_int(stats.get("total_in"), key="total_in", aspect=aspect_name)
+    total_out = require_int(stats.get("total_out"), key="total_out", aspect=aspect_name)
+    excluded_count = require_int(
+        stats.get("excluded_count"), key="excluded_count", aspect=aspect_name
+    )
+    downgraded_count = require_int(
+        stats.get("downgraded_count"), key="downgraded_count", aspect=aspect_name
+    )
+    verified_true_count = require_int(
+        stats.get("verified_true_count"),
+        key="verified_true_count",
+        aspect=aspect_name,
+    )
+    if verified_true_count > total_in:
+        raise ExecFailureError(
+            f"Invalid evidence stats: {aspect_name}.verified_true_count must be <= total_in"
+        )
+
+    totals["total_in"] += total_in
+    totals["total_out"] += total_out
+    totals["excluded_count"] += excluded_count
+    totals["downgraded_count"] += downgraded_count
+    totals["verified_true_count"] += verified_true_count
+    totals["verified_false_count"] += total_in - verified_true_count
+
+
+def _format_content_warnings(content_warning_objs: list[object]) -> list[str]:
+    """Format content warning objects into warning lines."""
+    result: list[str] = []
+    for w in content_warning_objs:
+        extra: list[str] = []
+        if w.size_bytes is not None:  # type: ignore[attr-defined]
+            extra.append(f"size_bytes={w.size_bytes}")  # type: ignore[attr-defined]
+        if w.limit_bytes is not None:  # type: ignore[attr-defined]
+            extra.append(f"limit_bytes={w.limit_bytes}")  # type: ignore[attr-defined]
+        tail = (" " + " ".join(extra)) if extra else ""
+        result.append(
+            "content_warning"
+            + f" kind={_one_line(w.kind)}"  # type: ignore[attr-defined]
+            + f" path={_one_line(w.path)}"  # type: ignore[attr-defined]
+            + f" message={_one_line(w.message)}{tail}"  # type: ignore[attr-defined]
+        )
+    return result
+
+
+def _generate_summary_and_sarif(
+    *,
+    review_args: object,
+    scope_id: str,
+    summary_reviews: dict[str, dict[str, object]],
+    aspects_list: list[object],
+    out_dir: str,
+    deferred_exc: BlockedError | ExecFailureError | None,
+    pr_input: object,
+    hybrid_policy: object,
+    warning_lines: list[str],
+    warnings_txt_path: str,
+) -> tuple[
+    str,
+    str,
+    str,
+    dict[str, object] | None,
+    str,
+    BlockedError | ExecFailureError | None,
+    str,
+]:
+    """Generate review summary, SARIF, rerun plan.
+
+    Returns (summary_json_path, summary_md_path, sarif_json_path,
+            summary_payload, rerun_plan_path, deferred_exc, warnings_txt_path).
+    """
+    summary_json_path = ""
+    summary_md_path = ""
+    sarif_json_path = ""
+    summary_payload: dict[str, object] | None = None
+    rerun_plan_path = ""
+
+    if not (deferred_exc is None or isinstance(deferred_exc, BlockedError)):
+        return (
+            summary_json_path,
+            summary_md_path,
+            sarif_json_path,
+            summary_payload,
+            rerun_plan_path,
+            deferred_exc,
+            warnings_txt_path,
+        )
+
+    summary_payload = merge_review_summary(
+        scope_id=scope_id, aspect_reviews=summary_reviews
+    )
+
+    if isinstance(deferred_exc, BlockedError):
+        summary_payload["status"] = "Blocked"
+        msg = str(deferred_exc).strip()
+        if msg:
+            summary_payload["overall_explanation"] = msg
+
+        statuses_obj = summary_payload.get("aspect_statuses")
+        statuses_dict = _coerce_str_object_dict(statuses_obj)
+        merged_statuses: dict[str, str] = {}
+        for key, value in statuses_dict.items():
+            if isinstance(value, str):
+                merged_statuses[key] = value
+        for entry_obj in aspects_list:
+            if not isinstance(entry_obj, dict):
+                continue
+            entry = _coerce_str_object_dict(cast(object, entry_obj))
+            a = entry.get("aspect")
+            ok = entry.get("ok")
+            if isinstance(a, str) and a and ok is not True:
+                merged_statuses[a] = "Blocked"
+        if merged_statuses:
+            summary_payload["aspect_statuses"] = merged_statuses
+
+    validate_review_summary_json(summary_payload, expected_scope_id=scope_id)
+    summary_json_path = write_review_summary_json(out_dir, summary_payload)
+    summary_md_path = write_review_summary_md(
+        out_dir, format_review_summary_md(summary_payload)
+    )
+
+    should_emit_sarif = review_args.sarif or review_args.reviewdog  # type: ignore[attr-defined]
+    if should_emit_sarif:
+        findings_obj = summary_payload.get("findings")
+        if not isinstance(findings_obj, list):
+            raise ValueError(
+                "Invalid review summary: summary_payload['findings'] must be a list "
+                f"(summary_payload_type={type(summary_payload).__name__}, "
+                f"summary_payload_keys={sorted(summary_payload.keys())}, "
+                f"findings_obj_type={type(findings_obj).__name__})"
+            )
+        findings_count = len(findings_obj)
+        sarif_warning = sarif_results_warning_line(findings_count=findings_count)
+        if sarif_warning:
+            warning_lines.append(sarif_warning)
+            warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
+
+        summary_json_path, summary_md_path, sarif_json_path, deferred_exc = (
+            _emit_sarif_with_head_check(
+                review_args=review_args,
+                pr_input=pr_input,
+                out_dir=out_dir,
+                summary_payload=summary_payload,
+                summary_json_path=summary_json_path,
+                summary_md_path=summary_md_path,
+                deferred_exc=deferred_exc,
+            )
+        )
+    else:
+        stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
+        try:
+            os.remove(stale_sarif_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ExecFailureError(
+                f"Failed to remove stale SARIF artifact: {stale_sarif_path}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    summary_status = summary_payload.get("status")
+
+    question_aspects: list[str] = []
+    for aspect, review in summary_reviews.items():
+        qs_obj = review.get("questions")
+        if isinstance(qs_obj, list) and any(
+            isinstance(x, str) and x.strip() for x in cast(list[object], qs_obj)
+        ):
+            question_aspects.append(aspect)
+    rerun_aspects = [
+        a
+        for a in question_aspects
+        if hybrid_policy.decision_for(aspect=a).repo_read_only  # type: ignore[attr-defined]
+    ]
+    if rerun_aspects:
+        rerun = write_questions_rerun_artifacts(
+            out_dir=out_dir,
+            repo=review_args.repo,  # type: ignore[attr-defined]
+            pr=review_args.pr,  # type: ignore[attr-defined]
+            head_sha=pr_input.head_sha,  # type: ignore[attr-defined]
+            question_aspects=rerun_aspects,
+            hybrid_allowlist=list(hybrid_policy.allowlist_paths),  # type: ignore[attr-defined]
+        )
+        rerun_plan_path = str(rerun.get("plan_path") or "")
+
+    if summary_status == "Blocked" and deferred_exc is None:
+        deferred_exc = BlockedError(
+            f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
+        )
+
+    return (
+        summary_json_path,
+        summary_md_path,
+        sarif_json_path,
+        summary_payload,
+        rerun_plan_path,
+        deferred_exc,
+        warnings_txt_path,
+    )
+
+
+def _emit_sarif_with_head_check(
+    *,
+    review_args: object,
+    pr_input: object,
+    out_dir: str,
+    summary_payload: dict[str, object],
+    summary_json_path: str,
+    summary_md_path: str,
+    deferred_exc: BlockedError | ExecFailureError | None,
+) -> tuple[str, str, str, BlockedError | ExecFailureError | None]:
+    """Emit SARIF with optional head validation.
+
+    Returns (summary_json_path, summary_md_path, sarif_json_path, deferred_exc).
+    """
+    sarif_json_path = ""
+
+    should_validate_head_for_sarif_only = (
+        not bool(review_args.post or review_args.inline)  # type: ignore[attr-defined]
+        and not review_args.reviewdog  # type: ignore[attr-defined]
+    )
+    if should_validate_head_for_sarif_only:
+        gh_client = GhClient.from_env()
+        current_head_sha = gh_client.pr_head_ref_oid(
+            repo=review_args.repo,
+            pr=review_args.pr,  # type: ignore[attr-defined]
+        )
+        if current_head_sha != pr_input.head_sha:  # type: ignore[attr-defined]
+            summary_json_path, summary_md_path, sarif_json_path = (
+                _clear_stale_review_summary_and_reset_paths(out_dir)
+            )
+            deferred_exc = ExecFailureError(
+                "PR head changed before SARIF export; rerun review on latest head"
+            )
+            return (summary_json_path, summary_md_path, sarif_json_path, deferred_exc)
+
+    try:
+        sarif_payload = review_summary_to_sarif(summary_payload)
+        sarif_json_path = write_review_summary_sarif_json(out_dir, sarif_payload)
+    except ValueError as exc:
+        summary_json_path, summary_md_path, sarif_json_path = (
+            _clear_stale_sarif_and_reset_path(
+                out_dir,
+                summary_json_path=summary_json_path,
+                summary_md_path=summary_md_path,
+            )
+        )
+        deferred_exc = ExecFailureError(f"SARIF export failed: {exc}")
+
+    return (summary_json_path, summary_md_path, sarif_json_path, deferred_exc)
+
+
+def _post_summary_and_reviewdog(
+    *,
+    review_args: object,
+    pr_input: object,
+    out_dir: str,
+    summary_payload: dict[str, object] | None,
+    summary_json_path: str,
+    summary_md_path: str,
+    sarif_json_path: str,
+    deferred_exc: BlockedError | ExecFailureError | None,
+    inline_blocked: bool,
+) -> tuple[
+    str,
+    str,
+    str,
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    bool,
+    BlockedError | ExecFailureError | None,
+]:
+    """Post summary comment, inline comments, and reviewdog.
+
+    Returns (summary_json_path, summary_md_path, sarif_json_path,
+            post_result, inline_result, reviewdog_result, inline_blocked, deferred_exc).
+    """
+    post_result: dict[str, object] = {}
+    inline_result: dict[str, object] = {}
+    reviewdog_result: dict[str, object] = {}
+
+    should_post_summary = bool(review_args.post or review_args.inline)  # type: ignore[attr-defined]
+    can_post_summary = deferred_exc is None or isinstance(deferred_exc, BlockedError)
+    if should_post_summary and can_post_summary and summary_payload is not None:
+        gh_client = GhClient.from_env()
+        try:
+            current_head_sha = gh_client.pr_head_ref_oid(
+                repo=review_args.repo,
+                pr=review_args.pr,  # type: ignore[attr-defined]
+            )
+            if current_head_sha != pr_input.head_sha:  # type: ignore[attr-defined]
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
+                post_result = {
+                    "mode": "skipped_stale_head",
+                    "expected_head_sha": pr_input.head_sha,  # type: ignore[attr-defined]
+                    "current_head_sha": current_head_sha,
+                }
+                deferred_exc = ExecFailureError(
+                    "PR head changed before summary posting; rerun review on latest head"
+                )
+            else:
+                post_result = post_summary_comment(
+                    repo=review_args.repo,  # type: ignore[attr-defined]
+                    pr=review_args.pr,  # type: ignore[attr-defined]
+                    head_sha=pr_input.head_sha,  # type: ignore[attr-defined]
+                    expected_head_sha=pr_input.head_sha,  # type: ignore[attr-defined]
+                    summary=summary_payload,
+                )
+                latest_head_sha = gh_client.pr_head_ref_oid(
+                    repo=review_args.repo,
+                    pr=review_args.pr,  # type: ignore[attr-defined]
+                )
+                if latest_head_sha != pr_input.head_sha:  # type: ignore[attr-defined]
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_review_summary_and_reset_paths(out_dir)
+                    )
+                    post_result = {
+                        "mode": "stale_head_after_post",
+                        "expected_head_sha": pr_input.head_sha,  # type: ignore[attr-defined]
+                        "current_head_sha": latest_head_sha,
+                    }
+                    deferred_exc = ExecFailureError(
+                        "PR head changed during summary posting; rerun review on latest head"
+                    )
+
+                if review_args.inline and (  # type: ignore[attr-defined]
+                    deferred_exc is None or isinstance(deferred_exc, BlockedError)
+                ):
+                    inline_diff_patch = pr_input.diff_patch  # type: ignore[attr-defined]
+                    if pr_input.diff_mode == "incremental":  # type: ignore[attr-defined]
+                        inline_diff_patch = gh_client.pr_diff_patch(
+                            repo=review_args.repo,
+                            pr=review_args.pr,  # type: ignore[attr-defined]
+                        )
+                    inline_result = post_inline_comments(
+                        repo=review_args.repo,  # type: ignore[attr-defined]
+                        pr=review_args.pr,  # type: ignore[attr-defined]
+                        head_sha=pr_input.head_sha,  # type: ignore[attr-defined]
+                        expected_head_sha=pr_input.head_sha,  # type: ignore[attr-defined]
+                        review_summary=summary_payload,
+                        diff_patch=inline_diff_patch,
+                    )
+                    try:
+                        raise_if_inline_blocked(inline_result)
+                    except BlockedError as exc:
+                        inline_blocked = True
+                        deferred_exc = exc
+        except ExecFailureError as exc:
+            if _should_clear_stale_summary_on_post_failure(exc):
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
+            deferred_exc = exc
+
+    should_run_reviewdog = review_args.reviewdog  # type: ignore[attr-defined]
+    if (
+        should_run_reviewdog
+        and summary_payload is not None
+        and sarif_json_path
+        and (
+            deferred_exc is None
+            or (isinstance(deferred_exc, BlockedError) and not inline_blocked)
+        )
+    ):
+        gh_client = GhClient.from_env()
+        try:
+            current_head_sha = gh_client.pr_head_ref_oid(
+                repo=review_args.repo,
+                pr=review_args.pr,  # type: ignore[attr-defined]
+            )
+            if current_head_sha != pr_input.head_sha:  # type: ignore[attr-defined]
+                summary_json_path, summary_md_path, sarif_json_path = (
+                    _clear_stale_review_summary_and_reset_paths(out_dir)
+                )
+                deferred_exc = ExecFailureError(
+                    "PR head changed before reviewdog posting; rerun review on latest head"
+                )
+            else:
+                reviewdog_result = run_reviewdog_from_sarif(
+                    sarif_path=sarif_json_path,
+                    reporter=review_args.reviewdog_reporter,  # type: ignore[attr-defined]
+                )
+                latest_head_sha = gh_client.pr_head_ref_oid(
+                    repo=review_args.repo,
+                    pr=review_args.pr,  # type: ignore[attr-defined]
+                )
+                if latest_head_sha != pr_input.head_sha:  # type: ignore[attr-defined]
+                    summary_json_path, summary_md_path, sarif_json_path = (
+                        _clear_stale_review_summary_and_reset_paths(out_dir)
+                    )
+                    deferred_exc = ExecFailureError(
+                        "PR head changed during reviewdog posting; rerun review on latest head"
+                    )
+        except ExecFailureError as exc:
+            summary_json_path, summary_md_path, sarif_json_path = (
+                _clear_stale_sarif_and_reset_path(
+                    out_dir,
+                    summary_json_path=summary_json_path,
+                    summary_md_path=summary_md_path,
+                )
+            )
+            deferred_exc = exc
+
+    return (
+        summary_json_path,
+        summary_md_path,
+        sarif_json_path,
+        post_result,
+        inline_result,
+        reviewdog_result,
+        inline_blocked,
+        deferred_exc,
+    )
+
+
+def handle_review(args: argparse.Namespace) -> JsonMap:
     review_args = _parse_review_args(args)
     selected_aspects: tuple[str, ...] = ASPECTS_V1
     default_preset, merged_presets = _load_user_presets_config()
@@ -985,102 +2387,40 @@ def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
     out_dir = ensure_artifacts_dir(os.getcwd())
 
     state_payload = _load_state_json(out_dir)
-    prev_repo = state_payload.get("repo")
-    prev_pr = state_payload.get("pr")
-    has_prev_incremental_base = "incremental_base_head_sha" in state_payload
-    prev_head = state_payload.get("head_sha")
-    prev_incremental_base_head = state_payload.get("incremental_base_head_sha")
-    prev_selected_aspects_obj = state_payload.get("selected_aspects")
-    prev_selected_aspects_list: list[object] | None
-    if isinstance(prev_selected_aspects_obj, list):
-        prev_selected_aspects_list = cast(list[object], prev_selected_aspects_obj)
-    else:
-        prev_selected_aspects_list = None
-    prev_no_sot_aspects = state_payload.get("no_sot_aspects")
-    prev_no_sot_aspects_list: list[object] | None
-    if prev_no_sot_aspects is None:
-        prev_no_sot_aspects_list = []
-    elif isinstance(prev_no_sot_aspects, list):
-        prev_no_sot_aspects_list = cast(list[object], prev_no_sot_aspects)
-    else:
-        prev_no_sot_aspects_list = None
-
+    (
+        incremental_applied,
+        incremental_reason,
+        incremental_base_head_sha,
+        prev_head_for_incremental,
+        prev_repo,
+        prev_pr,
+    ) = _determine_incremental_mode(
+        state_payload,
+        review_args,
+        selected_aspects,
+        no_sot_aspects,
+    )
     incremental_requested = not review_args.full
-    incremental_applied = False
-    incremental_reason = ""
-    incremental_base_head_sha = ""
-
-    prev_head_for_incremental: str | None
-    if (
-        isinstance(prev_incremental_base_head, str)
-        and prev_incremental_base_head.strip()
-    ):
-        prev_head_for_incremental = prev_incremental_base_head
-    elif has_prev_incremental_base:
-        prev_head_for_incremental = None
-    elif isinstance(prev_head, str) and prev_head.strip():
-        prev_head_for_incremental = prev_head
-    else:
-        prev_head_for_incremental = None
-
-    if not incremental_requested:
-        incremental_reason = "forced_full"
-    elif (
-        not isinstance(prev_head_for_incremental, str)
-        or not prev_head_for_incremental.strip()
-    ):
-        incremental_reason = "missing_previous_head"
-    elif prev_repo != review_args.repo or prev_pr != review_args.pr:
-        incremental_reason = "previous_scope_mismatch"
-    elif prev_selected_aspects_list is None or not prev_selected_aspects_list:
-        incremental_reason = "missing_previous_selected_aspects"
-    elif any(
-        not isinstance(a, str) or not a.strip() for a in prev_selected_aspects_list
-    ):
-        incremental_reason = "invalid_previous_selected_aspects"
-    elif {str(a) for a in prev_selected_aspects_list} != set(selected_aspects):
-        incremental_reason = "previous_aspects_mismatch"
-    elif prev_no_sot_aspects_list is None:
-        incremental_reason = "invalid_previous_no_sot_aspects"
-    elif any(not isinstance(a, str) or not a.strip() for a in prev_no_sot_aspects_list):
-        incremental_reason = "invalid_previous_no_sot_aspects"
-    elif set(prev_no_sot_aspects_list) != set(no_sot_aspects):
-        incremental_reason = "previous_no_sot_aspects_mismatch"
-    else:
-        base_head = prev_head_for_incremental.strip()
-        incremental_base_head_sha = base_head
-        incremental_applied = True
-        incremental_reason = "head_based_incremental"
 
     try:
-        if incremental_applied:
-            try:
-                pr_input = fetch_pr_input(
-                    repo=review_args.repo,
-                    pr=review_args.pr,
-                    base_head_sha=incremental_base_head_sha,
-                )
-            except ExecFailureError as exc:
-                if "PR head changed during input fetch" in str(exc):
-                    clear_stale_review_summary(out_dir)
-                    raise
-                incremental_applied = False
-                incremental_reason = f"incremental_fallback_full: {exc}"
-                pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)
-        else:
-            pr_input = fetch_pr_input(repo=review_args.repo, pr=review_args.pr)
-
-        if pr_input.diff_mode != "incremental":
-            incremental_applied = False
-            if incremental_reason == "head_based_incremental":
+        pr_input, incremental_applied, fetch_reason = _fetch_pr_input_with_incremental(
+            review_args,
+            incremental_applied,
+            incremental_base_head_sha,
+            out_dir,
+        )
+        if fetch_reason:
+            if (
+                fetch_reason == "full_diff"
+                and incremental_reason == "head_based_incremental"
+            ):
                 incremental_reason = "same_head_full_diff"
-            elif not incremental_reason:
-                incremental_reason = "full_diff"
+            else:
+                incremental_reason = fetch_reason
     except ExecFailureError:
         clear_stale_review_summary(out_dir)
         raise
     artifacts = write_pr_input_artifacts(out_dir, pr_input)
-
     # Collect SoT from PR branch (ref=head sha) using allowlist.
     allowlist = default_sot_allowlist()
     fetcher = GitHubContentFetcher()
@@ -1149,325 +2489,14 @@ def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
     context_bundle_txt = (diff_part + "\n" + sot_part) if diff_part else sot_part
     context_bundle_path = write_context_bundle_txt(out_dir, context_bundle_txt)
 
-    def one_line(value: object) -> str:
-        s = "" if value is None else str(value)
-        s = s.replace("\r\n", "\n").replace("\r", "\n")
-        s = s.replace("\n", "\\n")
-        s = s.replace("\t", "\\t")
-        out: list[str] = []
-        for ch in s:
-            cat = unicodedata.category(ch)
-            if cat in {"Cc", "Cf"} or (not ch.isprintable()):
-                o = ord(ch)
-                if o <= 0xFF:
-                    out.append(f"\\x{o:02x}")
-                elif o <= 0xFFFF:
-                    out.append(f"\\u{o:04x}")
-                else:
-                    out.append(f"\\U{o:08x}")
-                continue
-            out.append(ch)
-        return "".join(out)
-
     warning_lines: list[str] = []
     warning_lines.extend(diff_parse_warnings)
     warning_lines.extend(context_bundle_warnings)
     warning_lines.extend(sot_warnings)
-    for w in content_warning_objs:
-        extra: list[str] = []
-        if w.size_bytes is not None:
-            extra.append(f"size_bytes={w.size_bytes}")
-        if w.limit_bytes is not None:
-            extra.append(f"limit_bytes={w.limit_bytes}")
-        tail = (" " + " ".join(extra)) if extra else ""
-
-        warning_lines.append(
-            "content_warning"
-            + f" kind={one_line(w.kind)}"
-            + f" path={one_line(w.path)}"
-            + f" message={one_line(w.message)}{tail}"
-        )
+    warning_lines.extend(_format_content_warnings(content_warning_objs))
 
     tool_bundle_files: list[str] = []
     tool_bundle_index: dict[str, set[int]] = {}
-
-    def scan_tool_bundle() -> tuple[list[str], dict[str, set[int]], list[str]]:  # noqa: C901
-        tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
-        if os.path.exists(tool_bundle_dir) and (not os.path.isdir(tool_bundle_dir)):
-            dir_warning_lines: list[str] = [
-                "tool_bundle_dir_skipped kind=not_a_directory"
-                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
-            ]
-            return ([], {}, dir_warning_lines)
-        if not os.path.isdir(tool_bundle_dir):
-            return ([], {}, [])
-
-        extra_warning_lines: list[str] = []
-        tool_bundle_files: list[str] = []
-        tool_bundle_index: dict[str, set[int]] = {}
-
-        out_dir_real = os.path.realpath(out_dir)
-        if os.path.islink(tool_bundle_dir):
-            extra_warning_lines.append(
-                "tool_bundle_dir_skipped kind=is_symlink"
-                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
-            )
-            return ([], {}, extra_warning_lines)
-        tool_bundle_dir_real = os.path.realpath(tool_bundle_dir)
-        try:
-            under_artifacts = (
-                os.path.commonpath([out_dir_real, tool_bundle_dir_real]) == out_dir_real
-            )
-        except ValueError:
-            under_artifacts = False
-        if not under_artifacts:
-            extra_warning_lines.append(
-                "tool_bundle_dir_skipped kind=escapes_artifacts"
-                + f" path={one_line(os.path.relpath(tool_bundle_dir, os.getcwd()))}"
-            )
-            return ([], {}, extra_warning_lines)
-
-        max_bytes = 100 * 1024
-        manifest_path = os.path.join(tool_bundle_dir, "manifest.json")
-        manifest: dict[str, object] = {}
-        if not os.path.isfile(manifest_path):
-            manifest_present = False
-            extra_warning_lines.append(
-                "tool_bundle_manifest_skipped kind=missing"
-                + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-            )
-        elif os.path.islink(manifest_path):
-            manifest_present = False
-            extra_warning_lines.append(
-                "tool_bundle_manifest_skipped kind=is_symlink"
-                + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-            )
-        else:
-            manifest_present = True
-
-        if manifest_present:
-            max_manifest_bytes = 64 * 1024
-            try:
-                manifest_size_bytes = os.path.getsize(manifest_path)
-            except OSError as exc:
-                extra_warning_lines.append(
-                    "tool_bundle_manifest_skipped kind=stat_failed"
-                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                    + f" message={one_line(str(exc))}"
-                )
-                manifest_present = False
-            else:
-                if manifest_size_bytes > max_manifest_bytes:
-                    extra_warning_lines.append(
-                        "tool_bundle_manifest_skipped kind=size_limit_exceeded"
-                        + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                        + f" size_bytes={manifest_size_bytes}"
-                        + f" limit_bytes={max_manifest_bytes}"
-                    )
-                    manifest_present = False
-
-        if manifest_present:
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as fh:
-                    loaded = json.load(fh)
-                if isinstance(loaded, dict):
-                    manifest = _coerce_str_object_dict(cast(object, loaded))
-                else:
-                    extra_warning_lines.append(
-                        "tool_bundle_manifest_skipped kind=invalid_type"
-                        + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                    )
-                    manifest_present = False
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                extra_warning_lines.append(
-                    "tool_bundle_manifest_skipped kind=invalid_json"
-                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                    + f" message={one_line(str(exc))}"
-                )
-                manifest_present = False
-
-        head_obj = manifest.get("head_sha")
-        head_sha = head_obj if isinstance(head_obj, str) else ""
-        if not head_sha:
-            if manifest_present:
-                extra_warning_lines.append(
-                    "tool_bundle_manifest_skipped kind=missing_head_sha"
-                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                )
-            names: list[str] = []
-        elif head_sha != pr_input.head_sha:
-            extra_warning_lines.append(
-                "tool_bundle_manifest_skipped kind=head_sha_mismatch"
-                + f" expected={one_line(pr_input.head_sha)}"
-                + f" actual={one_line(head_sha)}"
-            )
-            names = []
-        else:
-            files_obj = manifest.get("files")
-            if not isinstance(files_obj, list):
-                extra_warning_lines.append(
-                    "tool_bundle_manifest_skipped kind=invalid_files"
-                    + f" path={one_line(os.path.relpath(manifest_path, os.getcwd()))}"
-                )
-                names = []
-            else:
-                names = []
-                max_manifest_entries = 1000
-                files_list = _coerce_object_list(cast(object, files_obj))
-                if len(files_list) > max_manifest_entries:
-                    extra_warning_lines.append(
-                        "tool_bundle_manifest_files_truncated"
-                        + f" total={len(files_list)}"
-                        + f" limit={max_manifest_entries}"
-                    )
-                for raw in files_list[:max_manifest_entries]:
-                    if not isinstance(raw, str):
-                        continue
-                    n = raw.strip()
-                    if not n:
-                        continue
-                    if "/" in n or "\\" in n:
-                        continue
-                    if n in {".", ".."}:
-                        continue
-                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.txt", n):
-                        continue
-                    names.append(n)
-
-        max_files = 200
-        max_total_bytes = 1 * 1024 * 1024
-        seen_names: set[str] = set()
-        processed_files = 0
-        processed_total_bytes = 0
-
-        for name in names:
-            if not name.endswith(".txt"):
-                continue
-            if name in seen_names:
-                continue
-            seen_names.add(name)
-
-            if processed_files >= max_files:
-                extra_warning_lines.append(
-                    "tool_bundle_processing_stopped kind=max_files_exceeded"
-                    + f" max_files={max_files}"
-                )
-                break
-
-            processed_files += 1
-
-            p = os.path.join(tool_bundle_dir, name)
-            if os.path.islink(p):
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=is_symlink"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                )
-                continue
-            p_real = os.path.realpath(p)
-            try:
-                under_tool_bundle = (
-                    os.path.commonpath([tool_bundle_dir_real, p_real])
-                    == tool_bundle_dir_real
-                )
-            except ValueError:
-                under_tool_bundle = False
-            if not under_tool_bundle:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=escapes_tool_bundle"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                )
-                continue
-            if not os.path.isfile(p):
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=missing"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                )
-                continue
-            try:
-                size_bytes = os.path.getsize(p)
-            except OSError as exc:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=stat_failed"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    + f" message={one_line(str(exc))}"
-                )
-                continue
-
-            if size_bytes > max_bytes:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=size_limit_exceeded"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    + f" size_bytes={size_bytes}"
-                    + f" limit_bytes={max_bytes}"
-                )
-                continue
-
-            if processed_total_bytes + size_bytes > max_total_bytes:
-                extra_warning_lines.append(
-                    "tool_bundle_processing_stopped kind=max_total_bytes_exceeded"
-                    + f" max_total_bytes={max_total_bytes}"
-                    + f" next_file_size_bytes={size_bytes}"
-                )
-                break
-
-            processed_total_bytes += size_bytes
-
-            try:
-                with open(p, "rb") as fh:
-                    raw = fh.read(max_bytes + 1)
-            except OSError as exc:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=read_failed"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    + f" message={one_line(str(exc))}"
-                )
-                continue
-
-            if len(raw) > max_bytes:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=size_limit_exceeded"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    + f" size_bytes={len(raw)}"
-                    + f" limit_bytes={max_bytes}"
-                )
-                continue
-
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                extra_warning_lines.append(
-                    "tool_bundle_file_skipped kind=decode_error"
-                    + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    + f" size_bytes={size_bytes}"
-                )
-                continue
-
-            extra_index = parse_context_bundle_index(text)
-            for src_path, lines in extra_index.items():
-                normalized = _normalize_tool_bundle_src_path(src_path)
-                if not normalized:
-                    extra_warning_lines.append(
-                        "tool_bundle_src_skipped kind=invalid_src"
-                        + f" path={one_line(os.path.relpath(p, os.getcwd()))}"
-                    )
-                    continue
-
-                aliases = {normalized, f"./{normalized}"}
-                if os.sep == "\\":
-                    back = normalized.replace("/", "\\")
-                    aliases.add(back)
-                    aliases.add(f".\\{back}")
-                for key in sorted(aliases):
-                    if key in tool_bundle_index:
-                        tool_bundle_index[key].update(lines)
-                    else:
-                        tool_bundle_index[key] = set(lines)
-
-            tool_bundle_files.append(
-                os.path.relpath(p, os.getcwd()).replace(os.sep, "/")
-            )
-
-        return (tool_bundle_files, tool_bundle_index, extra_warning_lines)
 
     warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
     # Run all review aspects (Issue #8) in parallel and write aspect artifacts.
@@ -1572,107 +2601,19 @@ def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
                 "index_path": os.path.join(out_dir, "aspects", "index.json"),
             }
 
-    tool_trace_txt = ""
-    tool_bundle_txt = ""
-    if review_args.explore:
-
-        def _join_capped(chunks: list[str], *, max_bytes: int) -> str:
-            if max_bytes < 1:
-                return ""
-            buf = bytearray()
-            first = True
-            truncated = False
-
-            for raw in chunks:
-                s = (raw or "").rstrip("\n")
-                if not s.strip():
-                    continue
-                if not first:
-                    s = "\n" + s
-                b = s.encode("utf-8")
-                if len(buf) + len(b) > max_bytes:
-                    remaining = max_bytes - len(buf)
-                    if remaining > 0:
-                        buf.extend(b[:remaining])
-                    truncated = True
-                    break
-                buf.extend(b)
-                first = False
-
-            if not buf:
-                return ""
-            if truncated:
-                last_nl = buf.rfind(b"\n")
-                if last_nl >= 0:
-                    buf = buf[:last_nl]
-            return buf.decode("utf-8", errors="replace").rstrip("\n")
-
-        trace_chunks: list[str] = []
-        bundle_chunks: list[str] = []
-        for aspect in selected_aspects:
-            aspect_dir = opencode_artifacts_dir(out_dir, aspect)
-
-            p_trace = os.path.join(aspect_dir, "tool-trace.jsonl")
-            p_bundle = os.path.join(aspect_dir, "tool-bundle.txt")
-            if os.path.isfile(p_trace):
-                try:
-                    with open(p_trace, "r", encoding="utf-8", errors="replace") as fh:
-                        trace_chunks.append(fh.read() or "")
-                except OSError:
-                    raise ExecFailureError(
-                        f"Failed to read explore tool trace: {p_trace}"
-                    )
-            if os.path.isfile(p_bundle):
-                try:
-                    with open(p_bundle, "r", encoding="utf-8", errors="replace") as fh:
-                        bundle_chunks.append(fh.read() or "")
-                except OSError:
-                    raise ExecFailureError(
-                        f"Failed to read explore tool bundle: {p_bundle}"
-                    )
-
-        max_trace_bytes = 1_000_000
-        tool_trace_txt = _join_capped(trace_chunks, max_bytes=max_trace_bytes)
-        max_bundle_bytes = 300_000
-        raw = (os.environ.get("KILLER7_EXPLORE_MAX_BUNDLE_BYTES") or "").strip()
-        if raw:
-            try:
-                max_bundle_bytes = int(raw)
-            except ValueError:
-                max_bundle_bytes = 300_000
-        tool_bundle_txt = _join_capped(bundle_chunks, max_bytes=max_bundle_bytes)
-
-        # `scan_tool_bundle()` only ingests files up to 100KiB.
-        scan_bundle_max_bytes = 100 * 1024
-        tool_bundle_txt_for_scan = _join_capped(
-            [tool_bundle_txt], max_bytes=scan_bundle_max_bytes
-        )
-
-        _ = write_tool_trace_jsonl(out_dir, tool_trace_txt)
-        _ = write_tool_bundle_txt(out_dir, tool_bundle_txt)
-
-        tool_bundle_dir = os.path.join(out_dir, "tool-bundle")
-        try:
-            os.makedirs(tool_bundle_dir, mode=0o700, exist_ok=True)
-        except OSError as exc:
-            raise ExecFailureError(
-                f"Failed to create tool bundle dir: {tool_bundle_dir}: {type(exc).__name__}: {exc}"
-            ) from exc
-
-        explore_bundle_name = "explore.txt"
-        explore_bundle_path = os.path.join(tool_bundle_dir, explore_bundle_name)
-        atomic_write_text_secure(explore_bundle_path, tool_bundle_txt_for_scan)
-        atomic_write_json_secure(
-            os.path.join(tool_bundle_dir, "manifest.json"),
-            {
-                "schema_version": 1,
-                "head_sha": pr_input.head_sha,
-                "files": [explore_bundle_name],
-            },
-        )
+    tool_trace_txt, tool_bundle_txt, _ = _collect_explore_artifacts(
+        review_args,
+        selected_aspects,
+        out_dir,
+        pr_input,
+    )
 
     # Evidence validation + policy application (Issue #10)
-    tool_bundle_files, tool_bundle_index, tool_bundle_warning_lines = scan_tool_bundle()
+    tool_bundle_files, tool_bundle_index, tool_bundle_warning_lines = scan_tool_bundle(
+        out_dir=out_dir,
+        pr_head_sha=pr_input.head_sha,
+        cwd=os.getcwd(),
+    )
     if tool_bundle_warning_lines:
         warning_lines.extend(tool_bundle_warning_lines)
         warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
@@ -1685,290 +2626,21 @@ def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
         else:
             context_index[src_path] = set(lines)
 
-    def require_int(v: object, *, key: str, aspect: str) -> int:
-        if type(v) is not int:
-            raise ExecFailureError(
-                f"Invalid evidence stats: {aspect}.{key} must be int"
-            )
-        return v
-
     index_path = str(aspects_result.get("index_path", ""))
-    per_aspect: dict[str, object] = {}
-    summary_reviews: dict[str, dict[str, object]] = {}
-    evidence_index_aspects: list[dict[str, object]] = []
-    policy_index_aspects: list[dict[str, object]] = []
-    totals = {
-        "aspects_total": 0,
-        "aspects_ok": 0,
-        "aspects_failed": 0,
-        "total_in": 0,
-        "total_out": 0,
-        "excluded_count": 0,
-        "downgraded_count": 0,
-        "verified_true_count": 0,
-        "verified_false_count": 0,
-    }
-
-    if not index_path:
-        raise ExecFailureError("Missing aspects index_path")
-
-    if deferred_exc is not None and not os.path.isfile(index_path):
-        # Some input/config failures can occur before `index.json` is written.
-        # Preserve the original error in that case.
-        raise deferred_exc
-    if not os.path.isfile(index_path):
-        raise ExecFailureError("Missing aspects index.json artifact")
-
-    out_dir_real = os.path.realpath(out_dir)
-    index_path_real = os.path.realpath(index_path)
-    if not (
-        index_path_real == out_dir_real
-        or index_path_real.startswith(out_dir_real + os.sep)
-    ):
-        raise ExecFailureError(
-            "Invalid aspects index_path: must stay within artifacts dir"
-        )
-
-    try:
-        with open(index_path, "r", encoding="utf-8") as fh:
-            index_payload = json.load(fh)
-    except Exception as exc:  # noqa: BLE001
-        raise ExecFailureError(f"Failed to read aspects index JSON: {exc}") from exc
-
-    if not isinstance(index_payload, dict):
-        raise ExecFailureError("Invalid aspects index JSON: root must be object")
-    index_payload_dict = _coerce_str_object_dict(cast(object, index_payload))
-
-    aspects_list_obj = index_payload_dict.get("aspects")
-    if not isinstance(aspects_list_obj, list):
-        raise ExecFailureError("Invalid aspects index JSON: 'aspects' must be an array")
-    aspects_list = _coerce_object_list(cast(object, aspects_list_obj))
-
-    for i, entry_obj in enumerate(aspects_list):
-        totals["aspects_total"] += 1
-        if not isinstance(entry_obj, dict):
-            raise ExecFailureError(
-                f"Invalid aspects index JSON: aspects[{i}] must be an object"
-            )
-        entry = _coerce_str_object_dict(cast(object, entry_obj))
-
-        aspect_name = entry.get("aspect")
-        ok = entry.get("ok")
-        rel_path = entry.get("result_path")
-
-        if not isinstance(aspect_name, str) or not aspect_name:
-            raise ExecFailureError(
-                f"Invalid aspects index JSON: aspects[{i}].aspect must be a non-empty string"
-            )
-        if not isinstance(ok, bool):
-            raise ExecFailureError(
-                f"Invalid aspects index JSON: aspects[{i}].ok must be boolean"
-            )
-        if ok is not True:
-            totals["aspects_failed"] += 1
-            aspect_info: dict[str, object] = {
-                "ok": False,
-            }
-
-            raw_input = rel_path if isinstance(rel_path, str) else ""
-            raw_input = raw_input.replace("\\", "/")
-            result_path = ""
-            if raw_input:
-                # Even on failure, avoid writing paths that escape the artifacts dir.
-                candidate = os.path.join(out_dir, raw_input)
-                candidate_real = os.path.realpath(candidate)
-                if candidate_real == out_dir_real or candidate_real.startswith(
-                    out_dir_real + os.sep
-                ):
-                    result_path = raw_input
-
-            error_kind = entry.get("error_kind")
-            error_message = entry.get("error_message")
-            if isinstance(error_kind, str) and error_kind:
-                aspect_info["error_kind"] = error_kind
-            if isinstance(error_message, str) and error_message:
-                aspect_info["error_message"] = error_message
-            if result_path:
-                aspect_info["result_path"] = result_path
-
-            per_aspect[aspect_name] = aspect_info
-
-            evidence_index_aspects.append(
-                {
-                    "aspect": aspect_name,
-                    "ok": False,
-                    "result_path": result_path,
-                    "evidence_path": "",
-                }
-            )
-            policy_index_aspects.append(
-                {
-                    "aspect": aspect_name,
-                    "ok": False,
-                    "result_path": result_path,
-                    "policy_path": "",
-                }
-            )
-            continue
-        if not isinstance(rel_path, str) or not rel_path:
-            raise ExecFailureError(
-                f"Invalid aspects index JSON: ok=true but result_path missing for aspect={aspect_name!r}"
-            )
-
-        totals["aspects_ok"] += 1
-
-        # Guard against path traversal in index.json.
-        out_dir_real = os.path.realpath(out_dir)
-        src_path = os.path.join(out_dir, rel_path)
-        src_path_real = os.path.realpath(src_path)
-        if not (
-            src_path_real == out_dir_real
-            or src_path_real.startswith(out_dir_real + os.sep)
-        ):
-            raise ExecFailureError(
-                f"Invalid aspect result_path: must stay within artifacts dir: {rel_path!r}"
-            )
-        try:
-            with open(src_path, "r", encoding="utf-8") as fh:
-                review_payload = json.load(fh)
-        except Exception as exc:  # noqa: BLE001
-            raise ExecFailureError(
-                f"Failed to read aspect JSON: {src_path}: {exc}"
-            ) from exc
-
-        if not isinstance(review_payload, dict):
-            raise ExecFailureError(f"Aspect JSON must be an object: {src_path}")
-        review_payload_dict = _coerce_str_object_dict(cast(object, review_payload))
-
-        findings_obj = review_payload_dict.get("findings")
-        if not isinstance(findings_obj, list):
-            raise ExecFailureError(f"Aspect JSON findings must be an array: {src_path}")
-        findings_list = _coerce_object_list(cast(object, findings_obj))
-        if any(not isinstance(x, dict) for x in findings_list):
-            raise ExecFailureError(
-                f"Aspect JSON findings entries must be objects: {src_path}"
-            )
-        questions_obj = review_payload_dict.get("questions")
-        if not isinstance(questions_obj, list):
-            raise ExecFailureError(
-                f"Aspect JSON questions must be an array: {src_path}"
-            )
-        questions = _coerce_object_list(cast(object, questions_obj))
-
-        out_findings, stats = apply_evidence_policy_to_findings(
-            findings_list, context_index
-        )
-
-        updated_review: dict[str, object] = dict(review_payload_dict)
-        updated_review["findings"] = out_findings
-        updated_review["status"] = recompute_review_status(out_findings, questions)
-
-        policy_review: dict[str, object] = dict(review_payload_dict)
-        policy_findings = _strip_machine_fields_from_findings(out_findings)
-        policy_review["findings"] = policy_findings
-        policy_review["status"] = recompute_review_status(policy_findings, questions)
-
-        # Preserve the raw (pre-policy) review for debugging/auditing.
-        raw_path = f"{os.path.splitext(src_path)[0]}.raw.json"
-        atomic_write_json_secure(raw_path, review_payload_dict)
-
-        raw_rel_path = os.path.relpath(raw_path, out_dir).replace(os.sep, "/")
-        canonical_rel_path = rel_path.replace(os.sep, "/")
-
-        # Make the policy-applied review canonical for any downstream consumers
-        # that still read `.ai-review/aspects/<aspect>.json`.
-        atomic_write_json_secure(src_path, policy_review)
-
-        aspect_evidence_payload: dict[str, object] = {
-            "schema_version": 1,
-            "kind": "aspect_evidence",
-            "generated_at": now_utc_z(),
-            "scope_id": scope_id,
-            "aspect": aspect_name,
-            "input_path": raw_rel_path,
-            "canonical_path": canonical_rel_path,
-            "review": updated_review,
-            "stats": stats,
-        }
-
-        evidence_path = write_aspect_evidence_json(
-            out_dir, aspect=aspect_name, payload=aspect_evidence_payload
-        )
-
-        policy_path = write_aspect_policy_json(
-            out_dir, aspect=aspect_name, payload=policy_review
-        )
-
-        # Use the evidence/policy-applied review with machine fields preserved for
-        # aggregated report generation (review-summary.json).
-        summary_reviews[aspect_name] = dict(updated_review)
-
-        per_aspect[aspect_name] = {
-            "ok": True,
-            "input_path": raw_rel_path,
-            "canonical_path": canonical_rel_path,
-            "evidence_path": os.path.relpath(evidence_path, out_dir).replace(
-                os.sep, "/"
-            ),
-            "policy_path": os.path.relpath(policy_path, out_dir).replace(os.sep, "/"),
-            "stats": stats,
-        }
-
-        evidence_index_aspects.append(
-            {
-                "aspect": aspect_name,
-                "ok": True,
-                "result_path": canonical_rel_path,
-                "input_path": raw_rel_path,
-                "evidence_path": os.path.relpath(evidence_path, out_dir).replace(
-                    os.sep, "/"
-                ),
-            }
-        )
-        policy_index_aspects.append(
-            {
-                "aspect": aspect_name,
-                "ok": True,
-                "result_path": rel_path.replace(os.sep, "/"),
-                "policy_path": os.path.relpath(policy_path, out_dir).replace(
-                    os.sep, "/"
-                ),
-            }
-        )
-
-        if not isinstance(stats, dict):
-            raise ExecFailureError(
-                f"Invalid evidence stats: {aspect_name}.stats must be an object"
-            )
-
-        total_in = require_int(
-            stats.get("total_in"), key="total_in", aspect=aspect_name
-        )
-        total_out = require_int(
-            stats.get("total_out"), key="total_out", aspect=aspect_name
-        )
-        excluded_count = require_int(
-            stats.get("excluded_count"), key="excluded_count", aspect=aspect_name
-        )
-        downgraded_count = require_int(
-            stats.get("downgraded_count"), key="downgraded_count", aspect=aspect_name
-        )
-        verified_true_count = require_int(
-            stats.get("verified_true_count"),
-            key="verified_true_count",
-            aspect=aspect_name,
-        )
-        if verified_true_count > total_in:
-            raise ExecFailureError(
-                f"Invalid evidence stats: {aspect_name}.verified_true_count must be <= total_in"
-            )
-
-        totals["total_in"] += total_in
-        totals["total_out"] += total_out
-        totals["excluded_count"] += excluded_count
-        totals["downgraded_count"] += downgraded_count
-        totals["verified_true_count"] += verified_true_count
-        totals["verified_false_count"] += total_in - verified_true_count
+    (
+        per_aspect,
+        summary_reviews,
+        evidence_index_aspects,
+        policy_index_aspects,
+        totals,
+        aspects_list,
+    ) = _process_aspect_results(
+        index_path=index_path,
+        out_dir=out_dir,
+        scope_id=scope_id,
+        context_index=context_index,
+        deferred_exc=deferred_exc,
+    )
 
     evidence_payload = {
         "schema_version": 1,
@@ -2003,269 +2675,51 @@ def handle_review(args: argparse.Namespace) -> JsonMap:  # noqa: C901
         },
     )
 
-    summary_json_path = ""
-    summary_md_path = ""
-    sarif_json_path = ""
-    summary_payload: dict[str, object] | None = None
-    rerun_plan_path = ""
+    (
+        summary_json_path,
+        summary_md_path,
+        sarif_json_path,
+        summary_payload,
+        rerun_plan_path,
+        deferred_exc,
+        warnings_txt_path,
+    ) = _generate_summary_and_sarif(
+        review_args=review_args,
+        scope_id=scope_id,
+        summary_reviews=summary_reviews,
+        aspects_list=aspects_list,
+        out_dir=out_dir,
+        deferred_exc=deferred_exc,
+        pr_input=pr_input,
+        hybrid_policy=hybrid_policy,
+        warning_lines=warning_lines,
+        warnings_txt_path=warnings_txt_path,
+    )
+
+    inline_blocked = False
     post_result: dict[str, object] = {}
     inline_result: dict[str, object] = {}
     reviewdog_result: dict[str, object] = {}
-    inline_blocked = False
-    if deferred_exc is None or isinstance(deferred_exc, BlockedError):
-        summary_payload = merge_review_summary(
-            scope_id=scope_id, aspect_reviews=summary_reviews
-        )
-
-        if isinstance(deferred_exc, BlockedError):
-            # If aspect execution is blocked (e.g., missing binaries/auth), do not emit an
-            # "Approved" review-summary just because no findings/questions exist.
-            summary_payload["status"] = "Blocked"
-            msg = str(deferred_exc).strip()
-            if msg:
-                summary_payload["overall_explanation"] = msg
-
-            # Best-effort: mark failed aspects as Blocked for easier debugging.
-            statuses_obj = summary_payload.get("aspect_statuses")
-            statuses_dict = _coerce_str_object_dict(statuses_obj)
-            merged_statuses: dict[str, str] = {}
-            for key, value in statuses_dict.items():
-                if isinstance(value, str):
-                    merged_statuses[key] = value
-            for entry_obj in aspects_list:
-                if not isinstance(entry_obj, dict):
-                    continue
-                entry = _coerce_str_object_dict(cast(object, entry_obj))
-                a = entry.get("aspect")
-                ok = entry.get("ok")
-                if isinstance(a, str) and a and ok is not True:
-                    merged_statuses[a] = "Blocked"
-            if merged_statuses:
-                summary_payload["aspect_statuses"] = merged_statuses
-
-        validate_review_summary_json(summary_payload, expected_scope_id=scope_id)
-        summary_json_path = write_review_summary_json(out_dir, summary_payload)
-        summary_md_path = write_review_summary_md(
-            out_dir, format_review_summary_md(summary_payload)
-        )
-
-        should_emit_sarif = review_args.sarif or review_args.reviewdog
-        if should_emit_sarif:
-            findings_obj = summary_payload.get("findings")
-            if not isinstance(findings_obj, list):
-                raise ValueError(
-                    "Invalid review summary: summary_payload['findings'] must be a list "
-                    f"(summary_payload_type={type(summary_payload).__name__}, "
-                    f"summary_payload_keys={sorted(summary_payload.keys())}, "
-                    f"findings_obj_type={type(findings_obj).__name__})"
-                )
-            findings_count = len(findings_obj)
-            sarif_warning = sarif_results_warning_line(findings_count=findings_count)
-            if sarif_warning:
-                warning_lines.append(sarif_warning)
-                warnings_txt_path = write_warnings_txt(out_dir, warning_lines)
-
-            def _emit_sarif_or_set_failure() -> None:
-                nonlocal \
-                    summary_json_path, \
-                    summary_md_path, \
-                    sarif_json_path, \
-                    deferred_exc
-                try:
-                    sarif_payload = review_summary_to_sarif(summary_payload)
-                    sarif_json_path = write_review_summary_sarif_json(
-                        out_dir, sarif_payload
-                    )
-                except ValueError as exc:
-                    summary_json_path, summary_md_path, sarif_json_path = (
-                        _clear_stale_sarif_and_reset_path(
-                            out_dir,
-                            summary_json_path=summary_json_path,
-                            summary_md_path=summary_md_path,
-                        )
-                    )
-                    deferred_exc = ExecFailureError(f"SARIF export failed: {exc}")
-
-            should_validate_head_for_sarif_only = (
-                not bool(review_args.post or review_args.inline)
-                and not review_args.reviewdog
-            )
-            if should_validate_head_for_sarif_only:
-                gh_client = GhClient.from_env()
-                current_head_sha = gh_client.pr_head_ref_oid(
-                    repo=review_args.repo, pr=review_args.pr
-                )
-                if current_head_sha != pr_input.head_sha:
-                    summary_json_path, summary_md_path, sarif_json_path = (
-                        _clear_stale_review_summary_and_reset_paths(out_dir)
-                    )
-                    deferred_exc = ExecFailureError(
-                        "PR head changed before SARIF export; rerun review on latest head"
-                    )
-                else:
-                    _emit_sarif_or_set_failure()
-            else:
-                _emit_sarif_or_set_failure()
-        else:
-            stale_sarif_path = os.path.join(out_dir, "review-summary.sarif.json")
-            try:
-                os.remove(stale_sarif_path)
-            except FileNotFoundError:
-                pass
-            except OSError as exc:
-                raise ExecFailureError(
-                    f"Failed to remove stale SARIF artifact: {stale_sarif_path}: {type(exc).__name__}: {exc}"
-                ) from exc
-
-        summary_status = summary_payload.get("status")
-
-        question_aspects: list[str] = []
-        for aspect, review in summary_reviews.items():
-            qs_obj = review.get("questions")
-            if isinstance(qs_obj, list) and any(
-                isinstance(x, str) and x.strip() for x in cast(list[object], qs_obj)
-            ):
-                question_aspects.append(aspect)
-        rerun_aspects = [
-            a
-            for a in question_aspects
-            if hybrid_policy.decision_for(aspect=a).repo_read_only
-        ]
-        if rerun_aspects:
-            rerun = write_questions_rerun_artifacts(
-                out_dir=out_dir,
-                repo=review_args.repo,
-                pr=review_args.pr,
-                head_sha=pr_input.head_sha,
-                question_aspects=rerun_aspects,
-                hybrid_allowlist=list(hybrid_policy.allowlist_paths),
-            )
-            rerun_plan_path = str(rerun.get("plan_path") or "")
-
-        if summary_status == "Blocked" and deferred_exc is None:
-            deferred_exc = BlockedError(
-                f"Review is blocked. See: {os.path.relpath(summary_json_path, os.getcwd())}"
-            )
-
-    should_post_summary = bool(review_args.post or review_args.inline)
-    can_post_summary = deferred_exc is None or isinstance(deferred_exc, BlockedError)
-    if should_post_summary and can_post_summary and summary_payload is not None:
-        gh_client = GhClient.from_env()
-        try:
-            current_head_sha = gh_client.pr_head_ref_oid(
-                repo=review_args.repo, pr=review_args.pr
-            )
-            if current_head_sha != pr_input.head_sha:
-                summary_json_path, summary_md_path, sarif_json_path = (
-                    _clear_stale_review_summary_and_reset_paths(out_dir)
-                )
-                post_result = {
-                    "mode": "skipped_stale_head",
-                    "expected_head_sha": pr_input.head_sha,
-                    "current_head_sha": current_head_sha,
-                }
-                deferred_exc = ExecFailureError(
-                    "PR head changed before summary posting; rerun review on latest head"
-                )
-            else:
-                post_result = post_summary_comment(
-                    repo=review_args.repo,
-                    pr=review_args.pr,
-                    head_sha=pr_input.head_sha,
-                    expected_head_sha=pr_input.head_sha,
-                    summary=summary_payload,
-                )
-                latest_head_sha = gh_client.pr_head_ref_oid(
-                    repo=review_args.repo, pr=review_args.pr
-                )
-                if latest_head_sha != pr_input.head_sha:
-                    summary_json_path, summary_md_path, sarif_json_path = (
-                        _clear_stale_review_summary_and_reset_paths(out_dir)
-                    )
-                    post_result = {
-                        "mode": "stale_head_after_post",
-                        "expected_head_sha": pr_input.head_sha,
-                        "current_head_sha": latest_head_sha,
-                    }
-                    deferred_exc = ExecFailureError(
-                        "PR head changed during summary posting; rerun review on latest head"
-                    )
-
-                if review_args.inline and (
-                    deferred_exc is None or isinstance(deferred_exc, BlockedError)
-                ):
-                    inline_diff_patch = pr_input.diff_patch
-                    if pr_input.diff_mode == "incremental":
-                        inline_diff_patch = gh_client.pr_diff_patch(
-                            repo=review_args.repo, pr=review_args.pr
-                        )
-                    inline_result = post_inline_comments(
-                        repo=review_args.repo,
-                        pr=review_args.pr,
-                        head_sha=pr_input.head_sha,
-                        expected_head_sha=pr_input.head_sha,
-                        review_summary=summary_payload,
-                        diff_patch=inline_diff_patch,
-                    )
-                    try:
-                        raise_if_inline_blocked(inline_result)
-                    except BlockedError as exc:
-                        inline_blocked = True
-                        deferred_exc = exc
-        except ExecFailureError as exc:
-            if _should_clear_stale_summary_on_post_failure(exc):
-                summary_json_path, summary_md_path, sarif_json_path = (
-                    _clear_stale_review_summary_and_reset_paths(out_dir)
-                )
-            deferred_exc = exc
-
-    should_run_reviewdog = review_args.reviewdog
-    if (
-        should_run_reviewdog
-        and summary_payload is not None
-        and sarif_json_path
-        and (
-            deferred_exc is None
-            or (isinstance(deferred_exc, BlockedError) and not inline_blocked)
-        )
-    ):
-        gh_client = GhClient.from_env()
-        try:
-            current_head_sha = gh_client.pr_head_ref_oid(
-                repo=review_args.repo, pr=review_args.pr
-            )
-            if current_head_sha != pr_input.head_sha:
-                summary_json_path, summary_md_path, sarif_json_path = (
-                    _clear_stale_review_summary_and_reset_paths(out_dir)
-                )
-                deferred_exc = ExecFailureError(
-                    "PR head changed before reviewdog posting; rerun review on latest head"
-                )
-            else:
-                reviewdog_result = run_reviewdog_from_sarif(
-                    sarif_path=sarif_json_path,
-                    reporter=review_args.reviewdog_reporter,
-                )
-                latest_head_sha = gh_client.pr_head_ref_oid(
-                    repo=review_args.repo, pr=review_args.pr
-                )
-                if latest_head_sha != pr_input.head_sha:
-                    summary_json_path, summary_md_path, sarif_json_path = (
-                        _clear_stale_review_summary_and_reset_paths(out_dir)
-                    )
-                    deferred_exc = ExecFailureError(
-                        "PR head changed during reviewdog posting; rerun review on latest head"
-                    )
-        except ExecFailureError as exc:
-            summary_json_path, summary_md_path, sarif_json_path = (
-                _clear_stale_sarif_and_reset_path(
-                    out_dir,
-                    summary_json_path=summary_json_path,
-                    summary_md_path=summary_md_path,
-                )
-            )
-            deferred_exc = exc
-
+    (
+        summary_json_path,
+        summary_md_path,
+        sarif_json_path,
+        post_result,
+        inline_result,
+        reviewdog_result,
+        inline_blocked,
+        deferred_exc,
+    ) = _post_summary_and_reviewdog(
+        review_args=review_args,
+        pr_input=pr_input,
+        out_dir=out_dir,
+        summary_payload=summary_payload,
+        summary_json_path=summary_json_path,
+        summary_md_path=summary_md_path,
+        sarif_json_path=sarif_json_path,
+        deferred_exc=deferred_exc,
+        inline_blocked=inline_blocked,
+    )
     next_incremental_base = pr_input.head_sha
     if deferred_exc is not None:
         if (
