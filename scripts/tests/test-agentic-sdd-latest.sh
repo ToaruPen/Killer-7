@@ -5,7 +5,7 @@ set -euo pipefail
 eprint() { printf '%s\n' "$*" >&2; }
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-cli="$repo_root/scripts/agentic-sdd"
+cli="$repo_root/scripts/agentic-sdd/agentic-sdd"
 
 if [[ ! -x "$cli" ]]; then
   eprint "Missing script or not executable: $cli"
