@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any, Callable, NoReturn
 
 from ..artifacts import atomic_write_text_secure
 from ..errors import BlockedError, ExecFailureError
@@ -1229,12 +1229,12 @@ class OpenCodeRunner:
         explore_enabled: bool,
         stdout_path: str,
         stderr_path: str,
-        persist_redacted_fn: object,
+        persist_redacted_fn: Callable[[], None],
     ) -> None:
         """Handle subprocess timeout — write artifacts (caller must cleanup and raise)."""
         os.makedirs(artifacts_dir, mode=0o700, exist_ok=True)
         if explore_enabled:
-            persist_redacted_fn()  # type: ignore[operator]
+            persist_redacted_fn()
         else:
             if stdout_path:
                 _stdout = _redact_secrets(
@@ -1268,7 +1268,7 @@ class OpenCodeRunner:
         artifacts_dir: str,
         cmd: list[str],
         explore_enabled: bool,
-        persist_redacted_fn: object,
+        persist_redacted_fn: Callable[[], None],
         stdout_text: str,
         stderr_text: str,
     ) -> str:
@@ -1300,13 +1300,13 @@ class OpenCodeRunner:
         self,
         artifacts_dir: str,
         explore_enabled: bool,
-        persist_redacted_fn: object,
+        persist_redacted_fn: Callable[[], None],
         stdout_text: str,
         stderr_text: str,
     ) -> None:
         """Write stdout/stderr artifacts for failure cases."""
         if explore_enabled:
-            persist_redacted_fn()  # type: ignore[operator]
+            persist_redacted_fn()
         else:
             _atomic_write_text(
                 os.path.join(artifacts_dir, "stdout.txt"),
