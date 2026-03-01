@@ -388,8 +388,14 @@ def _expand_brace_glob_once(
             cmd=cmd,
             message=f"{tool} pattern must not contain nested brace expansions",
         )
-    start = p.index("{")
-    end = p.index("}", start + 1)
+    start = p.find("{")
+    end = p.find("}", start + 1)
+    if start < 0 or end < 0:
+        _explore_policy_violation(
+            artifacts_dir=artifacts_dir,
+            cmd=cmd,
+            message=f"{tool} pattern has mismatched braces",
+        )
     inner = p[start + 1 : end]
     alts = [a.strip() for a in inner.split(",") if a.strip()]
     if not alts:
@@ -1237,18 +1243,24 @@ class OpenCodeRunner:
             persist_redacted_fn()
         else:
             if stdout_path:
-                _stdout = _redact_secrets(
-                    _read_file_truncated(
-                        stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                try:
+                    _stdout = _redact_secrets(
+                        _read_file_truncated(
+                            stdout_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                        )
                     )
-                )
+                except OSError:
+                    _stdout = "[failed to read stdout]"
                 _atomic_write_text(os.path.join(artifacts_dir, "stdout.txt"), _stdout)
             if stderr_path:
-                _stderr = _redact_secrets(
-                    _read_file_truncated(
-                        stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                try:
+                    _stderr = _redact_secrets(
+                        _read_file_truncated(
+                            stderr_path, max_bytes=MAX_STDIO_BYTES, tail_bytes=4096
+                        )
                     )
-                )
+                except OSError:
+                    _stderr = "[failed to read stderr]"
                 _atomic_write_text(os.path.join(artifacts_dir, "stderr.txt"), _stderr)
 
         _atomic_write_json(
@@ -1402,7 +1414,9 @@ class OpenCodeRunner:
                 try:
                     max_jsonl_bytes = int(mjb)
                 except ValueError:
-                    pass
+                    raise ExecFailureError(
+                        f"Invalid KILLER7_EXPLORE_MAX_STDOUT_JSONL_BYTES: {mjb!r}"
+                    )
             if max_jsonl_bytes < 1:
                 raise ExecFailureError("Invalid explore limits")
             try:
