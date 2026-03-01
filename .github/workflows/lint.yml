@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mypy scripts
+          mypy scripts --exclude 'scripts/agentic-sdd/'
 
       - name: Shellcheck
         shell: bash

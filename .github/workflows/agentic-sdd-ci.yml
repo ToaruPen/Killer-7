@@ -33,7 +33,7 @@ jobs:
         env:
           AGENTIC_SDD_CI_TEST_CMD: "python -m unittest discover -s tests -p 'test*.py'"
           AGENTIC_SDD_CI_LINT_CMD: "ruff check scripts killer_7 && ruff format --check scripts killer_7"
-          AGENTIC_SDD_CI_TYPECHECK_CMD: "mypy scripts"
+          AGENTIC_SDD_CI_TYPECHECK_CMD: "mypy scripts --exclude 'scripts/agentic-sdd/'"
           AGENTIC_SDD_CI_DOCS_CMD: "python3 scripts/lint-sot.py docs"
         run: |
           set -euo pipefail

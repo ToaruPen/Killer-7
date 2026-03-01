@@ -39,7 +39,7 @@ jobs:
 
       - name: Shellcheck
         run: |
-          shellcheck scripts/*.sh scripts/agentic-sdd
+          shellcheck scripts/*.sh scripts/agentic-sdd/*.sh
 
       - name: Install Python dependencies
         run: |
