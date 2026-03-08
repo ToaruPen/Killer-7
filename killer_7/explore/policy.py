@@ -69,7 +69,7 @@ def is_forbidden_relpath(value: str) -> bool:
         segs = segs[1:]
     if not segs:
         return False
-    if segs[0] in {".git", ".ai-review", ".agentic-sdd"}:
+    if segs[0] in {".git", ".ai-review"}:
         return True
     if any(s.startswith(".env") for s in segs):
         return True

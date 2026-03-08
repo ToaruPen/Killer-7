@@ -1,46 +1,45 @@
-# Killer-7 SARIF / reviewdog 連携手順
+# Killer-7 SARIF / reviewdog Integration Guide
 
-## 概要
+## Overview
 
-Issue #52 で追加した `--sarif` / `--reviewdog` を使い、
-Killer-7 の review 結果を SARIF と PR 注釈へ連携する運用手順。
+This guide explains how to use `--sarif` and `--reviewdog` with Killer-7 so review results can be consumed as SARIF and surfaced as PR annotations.
 
-設計方針:
-- 既存の native inline 投稿（`--inline`）をデフォルト経路として維持する
-- SARIF/reviewdog は補助経路としてオプトインで有効化する
+Design intent:
+- Keep native inline comments (`--inline`) as the default path
+- Treat SARIF and reviewdog as opt-in integration paths
 
-## 前提
+## Prerequisites
 
-- `killer-7 review` が実行できる
-- PR レビュー対象リポジトリで `gh` が認証済み
-- reviewdog を使う場合は `reviewdog` バイナリが実行環境にある
+- `killer-7 review` is available in the execution environment
+- `gh` is authenticated for the target repository
+- `reviewdog` is installed if you want reviewdog-based annotations
 
-## ローカル実行
+## Local Usage
 
-### SARIF だけ生成
+### Generate SARIF only
 
 ```bash
 killer-7 review --repo owner/name --pr 123 --sarif
 ```
 
-生成物:
+Generated files:
 - `.ai-review/review-summary.json`
 - `.ai-review/review-summary.md`
 - `.ai-review/review-summary.sarif.json`
 
-### reviewdog で PR 注釈を補助投稿
+### Add reviewdog annotations
 
 ```bash
 killer-7 review --repo owner/name --pr 123 --sarif --reviewdog --reviewdog-reporter github-pr-review
 ```
 
-補足:
-- `--reviewdog` 指定時は SARIF を自動生成する
-- `KILLER7_REVIEWDOG_TIMEOUT_S`（正の整数）で reviewdog 実行タイムアウトを調整できる（未指定は既定値）
+Notes:
+- `--reviewdog` automatically implies SARIF generation
+- `KILLER7_REVIEWDOG_TIMEOUT_S` can be set to a positive integer to change the reviewdog timeout
 
-## GitHub Actions 連携（例）
+## GitHub Actions Examples
 
-### 1) SARIF を Code Scanning へアップロード
+### 1. Upload SARIF to Code Scanning
 
 ```yaml
 - name: Run Killer-7 review (SARIF)
@@ -53,7 +52,7 @@ killer-7 review --repo owner/name --pr 123 --sarif --reviewdog --reviewdog-repor
     sarif_file: .ai-review/review-summary.sarif.json
 ```
 
-### 2) reviewdog で PR 注釈を補助投稿（任意）
+### 2. Add reviewdog PR annotations
 
 ```yaml
 - name: Run Killer-7 review with reviewdog
@@ -63,76 +62,63 @@ killer-7 review --repo owner/name --pr 123 --sarif --reviewdog --reviewdog-repor
     killer-7 review --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}" --sarif --reviewdog --reviewdog-reporter github-pr-review
 ```
 
-## 運用上の注意
+## Operational Notes
 
-- `--reviewdog` は補助経路。品質ゲート判定は既存の review-summary / evidence / inline 制約を優先する
-- stale head を検知した場合は fail-fast で終了し、成果物をクリアして再実行を要求する
-- `--sarif` / `--reviewdog` を使わない実行では、古い `review-summary.sarif.json` は自動削除される
+- `--reviewdog` is supplementary. Quality-gate decisions should still follow review summary, evidence validation, and inline posting rules.
+- If Killer-7 detects a stale head SHA, it fails fast, clears stale artifacts, and requires a rerun.
+- If a run does not use `--sarif` or `--reviewdog`, stale `review-summary.sarif.json` is deleted automatically.
 
-### basedpyright 段階導入
+## basedpyright Rollout
 
-- `pyproject.toml` の `[tool.basedpyright]` で `reportAny` / `reportExplicitAny` / `reportUnusedCallResult` を warning として明示する
-- SARIF/inline 経路（Issue #62）の警告是正を先行し、残件は段階的に対象を拡大して収束させる
+- `[tool.basedpyright]` in `pyproject.toml` explicitly keeps `reportAny`, `reportExplicitAny`, and `reportUnusedCallResult` at warning level for gradual adoption
+- The SARIF / inline path cleanup from Issue #62 should be expanded in later passes until warnings are reduced further
 
-## GitHub Code Scanning 制限事項（PoC #56 実測結果）
+## GitHub Code Scanning Limits (Measured in PoC #56)
 
-Issue #56 の PoC（2026-02-25 実施）で実測した GitHub Code Scanning の制限値。
-詳細: `docs/poc/issue-56-sarif-display.md`
+Measured on 2026-02-25. Details: `docs/poc/issue-56-sarif-display.md`
 
-### ファイルサイズ
+### File Size
 
-- 制限: **10 MB（gzip 圧縮後のサイズに適用される）**
-- 未圧縮 11.24 MB の SARIF が gzip 1.40 MB で正常アップロードされた
-- Killer-7 の通常運用（数十〜数百件の findings）ではサイズ制限に達する可能性は極めて低い
+- Limit: **10 MB** after compression handling by GitHub upload rules
+- An uncompressed 11.24 MB SARIF file still uploaded successfully after gzip to 1.40 MB
+- Normal Killer-7 usage with tens to hundreds of findings is very unlikely to hit the size limit
 
-### 結果数上限
+### Result Count Limits
 
-| 制限 | 値 | 超過時の動作 |
+| Limit | Value | Behavior When Exceeded |
 |---|---|---|
-| 表示上限（analysis あたり） | **5,000件** | サイレント切り捨て（severity 上位のみ処理、エラーなし） |
-| ハード上限（run あたり） | **25,000件** | 明示的なエラー拒否 |
+| Display limit per analysis | **5,000** | Silent truncation (highest severity wins) |
+| Hard limit per run | **25,000** | Explicit rejection |
 
-- 5,001件以上を送信しても `processing_status: "complete"`, `errors: null` が返る
-- severity ランク順（error > warning > note）で上位 5,000件のみが反映される
-- **ユーザーが切り捨てに気づきにくい** — Killer-7 側でガードレールを実装済み（Issue #57）
+Observed behavior:
+- Uploads with 5,001+ results still returned `processing_status: "complete"` with no API error
+- Only the highest-priority 5,000 results were retained
+- This truncation is easy to miss, so Killer-7 implements guardrails
 
-### Killer-7 側ガードレール（Issue #57）
+### Killer-7 Guardrails
 
-- findings が **5,001〜25,000件** の場合、`warnings.txt` に `sarif_result_limit_warning` を記録して注意喚起する
-- findings が **25,001件以上** の場合、SARIF出力を fail-fast で停止する
+- For **5,001 to 25,000** findings, Killer-7 writes `sarif_result_limit_warning` to `warnings.txt`
+- For **25,001+** findings, Killer-7 fails fast and does not emit SARIF
 
-### カテゴリ分割
+### Category Handling
 
-- 複数 ruleId（K7.P0, K7.P1, K7.P2, K7.P3）を含む SARIF は正常に処理される
-- severity 別フィルタリングが可能（error, warning, note）
-- `automationDetails.id` が Code Scanning の category として使用される
+- SARIF containing multiple `ruleId` values such as `K7.P0`, `K7.P1`, `K7.P2`, and `K7.P3` is processed correctly
+- Severity-based filtering works as expected (`error`, `warning`, `note`)
+- `automationDetails.id` is used as the Code Scanning category
 
-## LSP warning 是正フェーズ（Issue #59）
+## LSP Warning Cleanup Phases (Issue #59)
 
-### Phase 1 実績（今回）
+### Phase 1 Results
 
-- 対象: `killer_7/report/sarif_export.py`, `killer_7/cli.py`（SARIF/inline周辺）
+- Scope: `killer_7/report/sarif_export.py`, `killer_7/cli.py`
 - `reportImplicitStringConcatenation`: **29 -> 0**
 - `reportUnknown*`: **80 -> 10**
 - `killer_7/report/sarif_export.py`: **11 -> 0** warnings
 - `killer_7/cli.py`: **217 -> 130** warnings
 
-### Phase 2 分割方針（残課題）
+### Phase 2 Priorities
 
-優先順:
-
-1. `killer_7/cli.py` の `reportAny` / `reportExplicitAny`
-   - 残件: `reportAny` 95件, `reportExplicitAny` 8件
-   - 方針: `argparse.Namespace` の型境界を helper で明示し、`Any` 伝播を局所化する
-
-2. `killer_7/cli.py` の `reportUnusedCallResult`
-   - 残件: 21件
-   - 方針: 副作用専用呼び出しに `_ = ...` を明示し、意図を固定する
-
-3. テストファイルの warning 解消
-   - 対象: `tests/test_cli.py`, `tests/test_sarif_export.py`
-   - 方針: 本体ロジック修正と切り離し、型付け専用Issueとして段階的に処理する
-
-4. basedpyright 設定の見直し
-   - 対象: `pyproject.toml`
-   - 方針: `[tool.basedpyright]` のルールレベル設定を明示し、段階導入可能な閾値を定義する
+1. Reduce `reportAny` / `reportExplicitAny` in `killer_7/cli.py`
+2. Reduce `reportUnusedCallResult` in `killer_7/cli.py`
+3. Clean up test-only warnings in `tests/test_cli.py` and `tests/test_sarif_export.py`
+4. Refine `[tool.basedpyright]` thresholds in `pyproject.toml`
