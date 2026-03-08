@@ -42,10 +42,7 @@ def loads_jsonl_events(text: str) -> list[dict[str, Any]]:
 
 
 def extract_last_text(events: list[dict[str, Any]]) -> str:
-    """Extract the final `type=text` event's `part.text`.
-
-    This follows the extraction pattern used in `scripts/bench-sdd-docs.py`.
-    """
+    """Extract the final `type=text` event's `part.text`."""
 
     last: str | None = None
     for e in events:

@@ -386,13 +386,13 @@ if args[:1] == ["api"]:
                     "truncated": False,
                     "tree": [
                         {
-                            "path": "docs/prd/killer-7.md",
+                            "path": "README.md",
                             "type": "blob",
                             "sha": "B1",
                             "size": 10,
                         },
                         {
-                            "path": "docs/decisions.md",
+                            "path": "docs/operations/killer-7-update.md",
                             "type": "blob",
                             "sha": "B2",
                             "size": 10,
@@ -405,7 +405,7 @@ if args[:1] == ["api"]:
 
     if "/contents/" in endpoint:
         # Provide one large markdown to force SoT truncation.
-        if endpoint.endswith("/contents/docs/prd/killer-7.md?ref=0123456789abcdef"):
+        if endpoint.endswith("/contents/README.md?ref=0123456789abcdef"):
             text = ("line\\n" * 400).encode("utf-8")
             sys.stdout.write(
                 json.dumps(
@@ -413,15 +413,15 @@ if args[:1] == ["api"]:
                         "type": "file",
                         "encoding": "base64",
                         "size": len(text),
-                        "path": "docs/prd/killer-7.md",
+                        "path": "README.md",
                         "content": base64.b64encode(text).decode("ascii"),
                     }
                 )
             )
             raise SystemExit(0)
 
-        # Simulate fetch failure for decisions.md (should become a warning, not a crash).
-        if endpoint.endswith("/contents/docs/decisions.md?ref=0123456789abcdef"):
+        # Simulate fetch failure for a docs file (should become a warning, not a crash).
+        if endpoint.endswith("/contents/docs/operations/killer-7-update.md?ref=0123456789abcdef"):
             sys.stderr.write("Not Found\\n")
             raise SystemExit(1)
 
@@ -2849,7 +2849,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue(context_bundle.is_file())
 
             sot_text = sot_md.read_text(encoding="utf-8")
-            self.assertIn("# SRC: docs/prd/killer-7.md", sot_text)
+            self.assertIn("# SRC: README.md", sot_text)
             self.assertIn("L1: ", sot_text)
             self.assertLessEqual(len(sot_text.splitlines()), 250)
 
@@ -2859,7 +2859,7 @@ class TestCli(unittest.TestCase):
                 bundle_text.startswith("# SoT Bundle\n")
                 or "\n# SoT Bundle\n" in bundle_text
             )
-            self.assertIn("# SRC: docs/prd/killer-7.md", bundle_text)
+            self.assertIn("# SRC: README.md", bundle_text)
             self.assertIn("# SRC: hello.txt", bundle_text)
             self.assertIn("L1: hello", bundle_text)
             self.assertIn("# SRC: tail.txt", bundle_text)

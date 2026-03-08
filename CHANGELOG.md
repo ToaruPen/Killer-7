@@ -25,7 +25,7 @@ All notable changes to this project are documented in this file.
 - Updated inline comment posting to use full PR diff when review runs in incremental mode.
 - Extended PR input metadata (`meta.json`) with `diff_mode` and `base_head_sha`.
 - Reuse now validates scope, selected aspects, prompt hashes, and execution parameters, and fails fast when cached artifacts are missing/invalid.
-- Synced Agentic-SDD managed assets to `v0.3.08` (commands, review-cycle flow, lint-sot, and related tests).
+- Removed bundled legacy workflow assets and aligned the repository around Killer-7 specific docs, scripts, and CI.
 - Cleaned variable naming in CLI/OpenCode runner paths and aligned tests/scripts with S603-safe subprocess usage and Python executable resolution.
 - Updated `.github/workflows/release.yml` to publish Killer-7 Docker images to GHCR with version tags and `latest` on tag releases.
 - Added timeout control and explicit timeout failure handling to reviewdog execution (`KILLER7_REVIEWDOG_TIMEOUT_S`) to avoid indefinite hangs.
@@ -33,7 +33,7 @@ All notable changes to this project are documented in this file.
 ## [0.1.1] - 2026-02-11
 
 ### Changed
-- Removed the "開発状況" section from `README.md`.
+- Removed the "Development Status" section from `README.md`.
 
 ## [0.1.0] - 2026-02-11
 

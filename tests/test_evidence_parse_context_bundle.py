@@ -15,7 +15,7 @@ class TestParseContextBundle(unittest.TestCase):
                 "# SRC: b.txt\n",
                 "L10: foo\n",
                 "# SoT Bundle\n",
-                "# SRC: docs/prd/killer-7.md\n",
+                "# SRC: README.md\n",
                 "## Title\n",
             ]
         )
@@ -24,8 +24,8 @@ class TestParseContextBundle(unittest.TestCase):
         self.assertEqual(idx["a.txt"], {1, 2})
         self.assertEqual(idx["b.txt"], {10})
         # SoT content may not include L<line>: markers; we still index the SRC header.
-        self.assertIn("docs/prd/killer-7.md", idx)
-        self.assertEqual(idx["docs/prd/killer-7.md"], {1})
+        self.assertIn("README.md", idx)
+        self.assertEqual(idx["README.md"], {1})
 
     def test_ignores_lines_outside_src_blocks(self) -> None:
         from killer_7.validate.evidence import parse_context_bundle_index

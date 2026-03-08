@@ -318,11 +318,11 @@ def _is_denied_explore_relpath(rel: str) -> bool:
     if not r:
         return True
 
-    denied_exact = {".git", ".ai-review", ".agentic-sdd"}
+    denied_exact = {".git", ".ai-review"}
     if r in denied_exact:
         return True
 
-    for pref in (".git/", ".ai-review/", ".agentic-sdd/"):
+    for pref in (".git/", ".ai-review/"):
         if r.startswith(pref):
             return True
 
@@ -622,12 +622,6 @@ def _validate_glob_pattern(
             cmd=cmd,
             message="glob.pattern must not target .ai-review",
         )
-    if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
-        _explore_policy_violation(
-            artifacts_dir=artifacts_dir,
-            cmd=cmd,
-            message="glob.pattern must not target .agentic-sdd",
-        )
     segs = [s for s in norm.split("/") if s]
     if any(s.startswith(".env") for s in segs):
         _explore_policy_violation(
@@ -699,12 +693,6 @@ def _validate_grep_include(
             artifacts_dir=artifacts_dir,
             cmd=cmd,
             message="grep.include must not target .ai-review",
-        )
-    if norm.startswith(".agentic-sdd") or "/.agentic-sdd/" in norm:
-        _explore_policy_violation(
-            artifacts_dir=artifacts_dir,
-            cmd=cmd,
-            message="grep.include must not target .agentic-sdd",
         )
     base_inc = segs[-1] if segs else norm
     if "." not in base_inc:
