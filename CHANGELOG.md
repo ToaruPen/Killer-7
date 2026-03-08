@@ -10,8 +10,10 @@ All notable changes to this project are documented in this file.
 - Added persisted review state (`.ai-review/state.json`) and incremental diff mode based on previous `head_sha`.
 - Added `--full` to force full PR diff review and `--no-sot-aspect` to disable SoT injection per aspect.
 - Added `--reuse` / `--no-reuse` to `killer-7 review`, plus `.ai-review/cache.json` metadata for safe artifact reuse decisions.
+- Added `scripts/codex-watch-lint.py` and `killer_7/lint_watch.py` for save-time Ruff feedback during Codex sessions.
 - Added `scripts/killer-7-update.sh` for tag-based update operations with `stable`/`canary` channels and healthcheck rollback.
 - Added `docs/operations/killer-7-update.md` to document deployment/update/rollback procedures for managed PCs.
+- Added `docs/operations/codex-lint-watch.md` to document the repo-local save-time Ruff watcher workflow.
 - Added Decision Snapshot `D-2026-02-22-KILLER7_TAG_CHANNEL_AUTO_UPDATE` and synced PRD/Epic entries for update infrastructure.
 - Added event-driven Codex review detection via `.github/workflows/codex-review-events.yml` and `scripts/codex-review-event.sh`.
 - Added SARIF/reviewdog integration for `killer-7 review`: `--sarif`, `--reviewdog`, and `--reviewdog-reporter`.

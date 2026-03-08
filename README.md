@@ -21,6 +21,12 @@ python3.11 -m venv .venv
 .venv/bin/ruff format --check killer_7 tests scripts
 ```
 
+Save-time Ruff feedback while using Codex:
+
+```bash
+.venv/bin/python scripts/codex-watch-lint.py
+```
+
 ## Artifacts
 
 - Output root: `./.ai-review/`
@@ -102,3 +108,4 @@ Additional artifacts:
 
 - Update and rollback flow: `docs/operations/killer-7-update.md`
 - SARIF and reviewdog integration: `docs/operations/sarif-reviewdog.md`
+- Save-time Ruff watcher for Codex sessions: `docs/operations/codex-lint-watch.md`
