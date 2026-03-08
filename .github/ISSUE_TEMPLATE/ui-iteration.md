@@ -1,66 +1,66 @@
 ---
 name: UI Iteration
-about: 画面改善を短いラウンドで反復するためのテンプレート
-title: "feat(ui): <screen> のUI改善"
+about: Iterate on UI improvements in short rounds
+title: "feat(ui): improve <screen>"
 labels: ["enhancement", "ui"]
 assignees: []
 ---
 
 ## Summary
 
-<!-- 何を良くしたいかを1-2文で -->
+<!-- Describe what should improve in 1-2 sentences -->
 
-## SoT
+## Reference Docs
 
-- PRD: <!-- 例: docs/prd/<project>.md -->
-- Epic: <!-- 例: docs/epics/<project>-epic.md -->
+- Main reference: <!-- e.g. README.md or docs/operations/... -->
+- Supporting reference: <!-- optional -->
 
-## 対象画面 / ルート
+## Target Screen / Route
 
-- Screen: <!-- 例: KIOSK -->
-- Route: <!-- 例: /kiosk -->
+- Screen: <!-- e.g. KIOSK -->
+- Route: <!-- e.g. /kiosk -->
 
-## 現状の課題（優先度順）
+## Current Problems (ordered by priority)
 
-### P0 / P1（先に直す）
+### P0 / P1
 
-- [ ] <!-- 例: エラー表示中でも主ボタンが押せるように見える -->
+- [ ] <!-- e.g. The main button appears enabled during an error state -->
 
 ### P2
 
-- [ ] <!-- 例: CTAが主要コンテンツを覆っている -->
+- [ ] <!-- e.g. A CTA overlays important content -->
 
 ### P3
 
-- [ ] <!-- 例: 文言のゆれ / 細かい余白違和感 -->
+- [ ] <!-- e.g. Copy inconsistency or small spacing issue -->
 
-## 受け入れ条件（AC）
+## Acceptance Criteria
 
-- [ ] 操作可否と表示状態が矛盾しない
-- [ ] 主操作は desktop/mobile で到達しやすい
-- [ ] 主要コンテンツがCTAで隠れない
-- [ ] 通常利用時にデバッグ情報を常時表示しない
-- [ ] プロジェクト標準の品質チェックが通る（typecheck/lint/test など）
+- [ ] Interaction state and visual state do not contradict each other
+- [ ] Primary actions are easy to reach on desktop and mobile
+- [ ] CTAs do not cover key content
+- [ ] Debug-only information is not always visible in normal usage
+- [ ] Standard project quality checks pass
 
-## 非スコープ
+## Non-Scope
 
-- [ ] バックエンド仕様変更
-- [ ] 新機能追加（本IssueのUI改善に不要なもの）
+- [ ] Backend behavior changes
+- [ ] New features that are not required for this UI improvement
 
-## 反復プラン（/ui-iterate）
+## Iteration Plan
 
-- max-rounds: <!-- 例: 3 -->
+- max-rounds: <!-- e.g. 3 -->
 - viewports: desktop + mobile
 - screenshot root: `var/screenshot/issue-<n>/round-<xx>/`
 
-### Round plan
+### Round Plan
 
-- [ ] Round 00: ベースライン取得
-- [ ] Round 01: P0/P1の解消
-- [ ] Round 02: レイアウト/階層の改善
-- [ ] Round 03: 文言/微調整 + 最終確認
+- [ ] Round 00: capture the baseline
+- [ ] Round 01: resolve P0/P1 issues
+- [ ] Round 02: improve layout and hierarchy
+- [ ] Round 03: refine copy and polish
 
-## 検証コマンド
+## Verification Commands
 
 ```bash
 # project standard checks (replace with your project commands)
@@ -68,11 +68,11 @@ assignees: []
 <lint-command>
 <test-command>
 
-# runtime/e2e as needed
+# runtime / e2e as needed
 <smoke-or-e2e-command>
 ```
 
-## スクリーンショット
+## Screenshots
 
 - Round 00:
   - desktop: <!-- var/screenshot/issue-<n>/round-00/... -->
@@ -81,9 +81,8 @@ assignees: []
   - desktop:
   - mobile:
 
-## Completion checklist
+## Completion Checklist
 
-- [ ] ACを満たした
-- [ ] P0/P1が残っていない
-- [ ] `/review-cycle` を通過
-- [ ] `/final-review` でDoDを確認
+- [ ] Acceptance criteria are met
+- [ ] No P0/P1 issues remain
+- [ ] The checks listed above are complete

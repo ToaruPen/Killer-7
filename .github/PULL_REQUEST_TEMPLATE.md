@@ -1,108 +1,52 @@
-## 概要
+## Summary
 
-<!-- このPRで何を実現するか1-2文で -->
+<!-- Describe what this PR changes in 1-2 sentences -->
 
-## 関連Issue
+## Related Issue
 
-- Closes #<!-- Issue番号 -->
+- Closes #<!-- issue number -->
 
-## 変更内容
+## Changes
 
-<!-- 主な変更点を箇条書きで -->
+<!-- List the main changes -->
 
 - 
 - 
 - 
 
-## スクリーンショット（UI変更がある場合）
+## Screenshots (if UI changed)
 
-<!-- Before/Afterがあれば添付 -->
+<!-- Attach before/after images if helpful -->
 
-## テスト
+## Testing
 
-### 追加/変更したテスト
+### Added / Updated Tests
 
-- [ ] Unit テスト
-- [ ] Integration テスト
-- [ ] E2E テスト
-- [ ] テスト追加なし（理由: ）
+- [ ] Unit tests
+- [ ] Integration tests
+- [ ] E2E tests
+- [ ] No new tests (reason: )
 
-### 手動テスト
+### Manual Verification
 
-<!-- 手動で確認した内容 -->
+<!-- Describe manual checks -->
 
 - [ ] 
 - [ ] 
 
 ---
 
-## DoD チェックリスト
+## Reviewer Notes
 
-### 必須
-
-- [ ] すべてのACが達成されている
-- [ ] `/sync-docs` を実行し、差分を確認した
-  - [ ] 差分なし
-  - [ ] 差分あり → 対応: 
-- [ ] テストが追加/更新されている
-- [ ] CIが通っている
-
-### 推奨
-
-- [ ] コードが理解しやすい（命名、構造）
-- [ ] エラーハンドリングが適切
-- [ ] セキュリティ考慮がされている
-- [ ] パフォーマンスに問題がない
-
----
-
-## sync-docs 結果
-
-<!-- /sync-docs の実行結果を貼り付け -->
-
-```markdown
-## 同期結果
-
-### 差分の種類
-- [ ] 仕様変更
-- [ ] 解釈変更
-- [ ] 実装都合
-
-### 推奨アクション
-- [x] 差分なし（同期済み）
-
-### 参照
-- PRD: 
-- Epic: 
-- 該当コード: 
-```
-
----
-
-## 見積もりとの比較
-
-| 項目 | 見積もり | 実績 | 差異 |
-|-----|---------|------|------|
-| 行数 | | | |
-| ファイル数 | | | |
-| 工数 | | | |
-
-<!-- 差異が大きい場合は理由を記載 -->
-
----
-
-## レビュアーへの注意点
-
-<!-- 特に見てほしい箇所、懸念点など -->
+<!-- Areas that deserve extra attention -->
 
 - 
 
 ---
 
-## チェックリスト（PR作成者用）
+## Author Checklist
 
-- [ ] PRタイトルがConventional Commits形式
-- [ ] 関連Issueがリンクされている
-- [ ] DoDチェックリストを確認した
-- [ ] sync-docs結果を記載した
-- [ ] CIが通っている
+- [ ] The PR title follows Conventional Commits
+- [ ] The related issue is linked
+- [ ] Tests are documented above
+- [ ] CI passes

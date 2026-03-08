@@ -1,6 +1,5 @@
 [tool.ruff]
 target-version = "py311"
-extend-exclude = [".agentic-sdd-upstream", "scripts/agentic-sdd"]
 
 [tool.ruff.lint]
 select = [

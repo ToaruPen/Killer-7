@@ -1,89 +1,76 @@
 ---
 name: Feature Request
-about: 新機能の実装リクエスト
+about: Request a new feature
 title: '[Feature] '
 labels: 'feature'
 assignees: ''
 ---
 
-## 概要
+## Summary
 
-<!-- 何を実装するか1-2文で -->
+<!-- Describe the requested feature in 1-2 sentences -->
 
-## 背景
+## Background
 
-- Epic: <!-- Epicファイルへのリンク -->
-- PRD: <!-- PRDファイルへのリンク -->
+<!-- Why is this needed? -->
 
-## 受け入れ条件（AC）
+## Acceptance Criteria
 
-<!-- 
-- 観測可能な形式で記載
-- 2〜5個を目安
-- 異常系も含める
--->
+<!-- Use observable outcomes. Aim for 2-5 items, including failure paths when relevant. -->
 
-- [ ] AC1: 
-- [ ] AC2: 
-- [ ] AC3: 
+- [ ] AC1:
+- [ ] AC2:
+- [ ] AC3:
 
-## 技術メモ
+## Technical Notes
 
-### 変更対象ファイル（推定）
+### Likely Files to Change
 
-<!-- 1〜5ファイルを目安 -->
-<!-- worktree並列（parallel-ok）で運用する場合、このリストが衝突判定の入力になります -->
-<!-- リポジトリ相対パスをバッククォートで囲んで記載してください -->
+<!-- Aim for 1-5 files. Use repo-relative paths in backticks. -->
 
 - [ ] `path/to/file1.ts`
 - [ ] `path/to/file2.ts`
 
-### 推定行数
+### Estimated Size
 
-<!-- 50〜300行を目安 -->
+<!-- Rough estimate of change size -->
 
-- [ ] 50行未満（小さい）
-- [x] 50〜150行（適正）
-- [ ] 150〜300行（大きめ）
-- [ ] 300行超（要分割検討）
+- [ ] Under 50 lines
+- [x] 50-150 lines
+- [ ] 150-300 lines
+- [ ] Over 300 lines
 
-## 依存関係
+## Dependencies
 
-### Blocked by
+### Blocked By
 
-<!-- 先に完了が必要なIssue -->
+<!-- Issues that must land first -->
 
-- なし
-<!-- または -->
-<!-- - #123（理由） -->
+- None
+<!-- or -->
+<!-- - #123 (reason) -->
 
-<!-- parallel-ok を付けたい場合は、他Issueと変更対象ファイルが重ならないことを確認 -->
-<!-- 例: ./scripts/worktree.sh check --issue 123 --issue 124 -->
+### What This Unlocks
 
-### 先に終わると何が可能になるか
+<!-- What can happen after this is complete? -->
 
-<!-- このIssueが完了すると、何が次に進められるか -->
+## Exception Labels
 
-## 例外ラベル（該当する場合のみ）
+<!-- Fill this in only if the issue is intentionally larger or unusual. -->
 
-<!-- 
-粒度規約（50〜300行）を外れる場合は、以下を記入してください。
-該当しない場合は削除してOK。
--->
+### Label: `bulk-format` / `test-heavy` / `config-risk` / `refactor-scope`
 
-### ラベル: `bulk-format` / `test-heavy` / `config-risk` / `refactor-scope`
-
-| 必須項目 | 内容 |
-|---------|------|
-| 理由 | |
-| 影響/レビュー観点 | |
-| 想定リスク | |
+| Required Field | Content |
+|---|---|
+| Reason | |
+| Impact / Review Focus | |
+| Expected Risk | |
 
 ---
 
-## チェックリスト（起票者用）
+## Reporter Checklist
 
-- [ ] ACが観測可能な形式で書かれている
-- [ ] 推定行数が50〜300行の範囲内（または例外ラベルを付与）
-- [ ] 依存関係が明記されている
-- [ ] Epic/PRDへの参照がある
+- [ ] AC items are observable
+- [ ] Estimated size is reasonable, or an exception label is documented
+- [ ] Dependencies are described
+- [ ] Background is clear

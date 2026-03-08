@@ -1,83 +1,83 @@
 ---
 name: Bug Report
-about: バグの報告
+about: Report a bug
 title: '[Bug] '
 labels: 'bug'
 assignees: ''
 ---
 
-## 概要
+## Summary
 
-<!-- 何が問題か1-2文で -->
+<!-- Describe the problem in 1-2 sentences -->
 
-## 再現手順
+## Steps to Reproduce
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
-## 期待される動作
+## Expected Behavior
 
-<!-- 本来どうなるべきか -->
+<!-- What should happen -->
 
-## 実際の動作
+## Actual Behavior
 
-<!-- 現在どうなっているか -->
+<!-- What happens now -->
 
-## 環境
+## Environment
 
-- OS: 
-- ブラウザ/クライアント: 
-- バージョン: 
+- OS:
+- Browser / Client:
+- Version:
 
-## スクリーンショット/ログ
+## Screenshots / Logs
 
-<!-- 該当する場合は添付 -->
+<!-- Attach if relevant -->
 
+```text
+Paste any error logs here
 ```
-エラーログがあればここに
-```
 
-## 受け入れ条件（AC）
+## Acceptance Criteria
 
-<!-- 修正完了の判定基準 -->
+<!-- Observable checks for completion -->
 
-- [ ] AC1: [再現手順を実行しても問題が発生しない]
-- [ ] AC2: [回帰テストが追加されている]
+- [ ] AC1: [The issue no longer reproduces]
+- [ ] AC2: [A regression test is added]
 
-## 影響範囲
+## Impact
 
-- [ ] 本番環境に影響
-- [ ] 特定ユーザーのみ影響
-- [ ] 開発環境のみ
-- [ ] 軽微（見た目のみ等）
+- [ ] Affects production
+- [ ] Affects only specific users
+- [ ] Development-only
+- [ ] Minor / cosmetic only
 
-## 緊急度
+## Priority
 
-- [ ] Critical（即時対応必要）
-- [ ] High（当日中）
-- [ ] Medium（今週中）
-- [ ] Low（優先度低）
+- [ ] Critical
+- [ ] High
+- [ ] Medium
+- [ ] Low
 
-## 技術メモ（調査済みの場合）
+## Technical Notes
 
-### 原因の推測
+### Suspected Cause
 
-<!-- 調査済みであれば記載 -->
+<!-- Add findings if already investigated -->
 
-### 修正方針
+### Proposed Fix
 
-<!-- 方針が決まっていれば記載 -->
+<!-- Add the plan if known -->
 
-### 変更対象ファイル（推定）
+### Likely Files to Change
 
 - [ ] `path/to/file.ts`
 
 ---
 
-## チェックリスト（起票者用）
+## Reporter Checklist
 
-- [ ] 再現手順が具体的に書かれている
-- [ ] 期待される動作と実際の動作が明記されている
-- [ ] 環境情報が記載されている
-- [ ] 緊急度が設定されている
+- [ ] Reproduction steps are concrete
+- [ ] Expected and actual behavior are both described
+- [ ] Environment details are filled in
+- [ ] Priority is set

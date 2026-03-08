@@ -1,10 +1,6 @@
-# Agentic-SDD
 .DS_Store
-.agent/agents/*.local.md
 .claude/settings.local.json
-.agentic-sdd/
 .venv/
-.opencode/
 .codex/
 
 # Killer-7 artifacts
